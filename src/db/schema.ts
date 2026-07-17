@@ -107,6 +107,15 @@ export const productVariants = pgTable("product_variants", {
   active: boolean("active").notNull().default(true),
 });
 
+// NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`
+// (migración 0002_cash_sessions_one_open_idx.sql) que garantiza a nivel de DB
+// que como máximo una fila tenga `closed_at IS NULL`. No se modela con
+// drizzle-kit porque requiere un índice sobre una expresión constante
+// `(1) WHERE closed_at IS NULL` (un índice único sobre la columna
+// `closed_at` filtrado por `IS NULL` NO sirve: Postgres trata cada NULL como
+// distinto en un índice único, así que no bloquearía duplicados). Ver
+// `src/domain/cash.ts` (openCashSession) para el manejo del error de
+// violación de unicidad.
 export const cashSessions = pgTable("cash_sessions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   openedAt: timestamp("opened_at").notNull().defaultNow(),

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedTestUser } from "./helpers/db";
-import { sales } from "@/db/schema";
+import { cashSessions, sales } from "@/db/schema";
 import { openCashSession, closeCashSession, getOpenSession } from "@/domain/cash";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -39,5 +39,19 @@ describe("cash sessions", () => {
     const s = await openCashSession(db, { userId: "u1", openingCash: 0 });
     await closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 0 });
     await expect(closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 0 })).rejects.toThrow("SESSION_NOT_OPEN");
+  });
+
+  it("rejects closing a session id that does not exist", async () => {
+    await expect(closeCashSession(db, { sessionId: 999999, userId: "u1", countedCash: 0 })).rejects.toThrow("SESSION_NOT_OPEN");
+  });
+
+  it("enforces at most one open session at the DB level via the partial unique index", async () => {
+    await db.insert(cashSessions).values({ openedBy: "u1", openingCash: 0 });
+    await expect(db.insert(cashSessions).values({ openedBy: "u1", openingCash: 0 })).rejects.toThrow();
+  });
+
+  it("openCashSession surfaces SESSION_ALREADY_OPEN when a row was inserted directly (bypassing the pre-check)", async () => {
+    await db.insert(cashSessions).values({ openedBy: "u1", openingCash: 0 });
+    await expect(openCashSession(db, { userId: "u1", openingCash: 100 })).rejects.toThrow("SESSION_ALREADY_OPEN");
   });
 });

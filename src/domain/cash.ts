@@ -8,12 +8,27 @@ export async function getOpenSession(db: any): Promise<CashSession | null> {
   return rows[0] ?? null;
 }
 
+// Código de error de Postgres (y PGlite) para violación de restricción
+// unique/exclusion, incluyendo índices únicos parciales.
+const PG_UNIQUE_VIOLATION = "23505";
+
 export async function openCashSession(db: any, input: { userId: string; openingCash: number }): Promise<CashSession> {
   if (await getOpenSession(db)) throw new Error("SESSION_ALREADY_OPEN");
-  const [s] = await db.insert(cashSessions)
-    .values({ openedBy: input.userId, openingCash: round2(input.openingCash) })
-    .returning();
-  return s;
+  try {
+    const [s] = await db.insert(cashSessions)
+      .values({ openedBy: input.userId, openingCash: round2(input.openingCash) })
+      .returning();
+    return s;
+  } catch (err: any) {
+    // Guarda de última instancia contra la carrera check-then-insert: si dos
+    // llamadas concurrentes pasan el pre-check de arriba, el índice único
+    // parcial `cash_sessions_one_open_idx` (ver schema.ts) rechaza la
+    // segunda inserción a nivel de DB.
+    if (err?.code === PG_UNIQUE_VIOLATION || /cash_sessions_one_open_idx/.test(String(err?.message ?? err))) {
+      throw new Error("SESSION_ALREADY_OPEN");
+    }
+    throw err;
+  }
 }
 
 export async function closeCashSession(
@@ -40,8 +55,8 @@ export async function closeCashSession(
       closedAt: new Date(),
       closedBy: input.userId,
       expectedCash,
-      totalTransfer: byMethod.transferencia ?? 0,
-      totalCard: byMethod.tarjeta ?? 0,
+      totalTransfer: round2(byMethod.transferencia ?? 0),
+      totalCard: round2(byMethod.tarjeta ?? 0),
       countedCash: round2(input.countedCash),
       difference: round2(input.countedCash - expectedCash),
       notes: input.notes,
