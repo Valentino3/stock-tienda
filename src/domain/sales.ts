@@ -1,7 +1,6 @@
 import { eq, inArray, and, isNull } from "drizzle-orm";
 import { products, productVariants, sales, saleItems, cashSessions, type Sale } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
-import { getOpenSession } from "@/domain/cash";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 

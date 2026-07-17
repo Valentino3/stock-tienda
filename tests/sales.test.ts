@@ -77,6 +77,11 @@ describe("voidSale", () => {
     await expect(voidSale(db, { saleId: sale.id, userId: "u1" })).rejects.toThrow("ALREADY_VOIDED");
   });
 
+  // NOTE: PGlite serializes db.transaction() calls on its single connection,
+  // so these two voids do not truly overlap here — this asserts logical
+  // correctness (exactly-once outcome), not the concurrent race itself. The
+  // race protection lives in the conditional `UPDATE ... WHERE voided=false`
+  // in voidSale and only holds under a real multi-connection Postgres.
   it("concurrent double void is safe: exactly one succeeds, stock restored exactly once", async () => {
     await openCashSession(db, { userId: "u1", openingCash: 0 });
     const sale = await createSale(db, { sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 2 }] });
