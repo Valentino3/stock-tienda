@@ -1,5 +1,5 @@
-import { eq, inArray } from "drizzle-orm";
-import { products, productVariants, sales, saleItems, type Sale } from "@/db/schema";
+import { eq, inArray, and, isNull } from "drizzle-orm";
+import { products, productVariants, sales, saleItems, cashSessions, type Sale } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 import { getOpenSession } from "@/domain/cash";
 
@@ -15,10 +15,10 @@ export async function createSale(db: any, input: SaleInput): Promise<Sale> {
   if (input.items.length === 0) throw new Error("EMPTY_SALE");
   if (input.items.some((i) => i.quantity <= 0)) throw new Error("INVALID_QUANTITY");
 
-  const session = await getOpenSession(db);
-  if (!session) throw new Error("NO_OPEN_SESSION");
-
   return db.transaction(async (tx: any) => {
+    const [session] = await tx.select().from(cashSessions)
+      .where(isNull(cashSessions.closedAt)).limit(1).for("update");
+    if (!session) throw new Error("NO_OPEN_SESSION");
     const variantRows = await tx
       .select({
         id: productVariants.id,
@@ -62,9 +62,14 @@ export async function createSale(db: any, input: SaleInput): Promise<Sale> {
 
 export async function voidSale(db: any, input: { saleId: number; userId: string }): Promise<void> {
   await db.transaction(async (tx: any) => {
-    const [sale] = await tx.select().from(sales).where(eq(sales.id, input.saleId));
-    if (!sale) throw new Error("SALE_NOT_FOUND");
-    if (sale.voided) throw new Error("ALREADY_VOIDED");
+    const [voided] = await tx.update(sales)
+      .set({ voided: true, voidedAt: new Date(), voidedBy: input.userId })
+      .where(and(eq(sales.id, input.saleId), eq(sales.voided, false)))
+      .returning();
+    if (!voided) {
+      const [existing] = await tx.select().from(sales).where(eq(sales.id, input.saleId));
+      throw new Error(existing ? "ALREADY_VOIDED" : "SALE_NOT_FOUND");
+    }
 
     const items = await tx.select().from(saleItems).where(eq(saleItems.saleId, input.saleId));
     for (const item of items) {
@@ -76,8 +81,5 @@ export async function voidSale(db: any, input: { saleId: number; userId: string 
         saleId: input.saleId,
       });
     }
-    await tx.update(sales)
-      .set({ voided: true, voidedAt: new Date(), voidedBy: input.userId })
-      .where(eq(sales.id, input.saleId));
   });
 }

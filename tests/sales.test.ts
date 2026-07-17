@@ -76,4 +76,22 @@ describe("voidSale", () => {
     await voidSale(db, { saleId: sale.id, userId: "u1" });
     await expect(voidSale(db, { saleId: sale.id, userId: "u1" })).rejects.toThrow("ALREADY_VOIDED");
   });
+
+  it("concurrent double void is safe: exactly one succeeds, stock restored exactly once", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, { sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 2 }] });
+    const results = await Promise.allSettled([
+      voidSale(db, { saleId: sale.id, userId: "u1" }),
+      voidSale(db, { saleId: sale.id, userId: "u1" }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason.message).toBe("ALREADY_VOIDED");
+    const [v1] = await db.select().from(productVariants).where(eq(productVariants.id, vId));
+    expect(v1.stock).toBe(5); // restored exactly once, not twice
+    const movs = await db.select().from(stockMovements).where(eq(stockMovements.type, "anulacion"));
+    expect(movs).toHaveLength(1); // exactly one anulacion movement
+  });
 });
