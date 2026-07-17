@@ -93,4 +93,22 @@ describe("executeImport", () => {
     const [newVariant] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-L"));
     expect(newVariant.productId).toBe(remera.id);
   });
+
+  it("preserves the imported variant price instead of silently inheriting the reused product's basePrice", async () => {
+    const [remera] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ productId: remera.id, name: "M", sku: "R-M", stock: 5 });
+
+    const validated = await validateImportRows(db, [
+      row(2, { product: "Remera", variant: "XL", sku: "R-XL", price: 1500, stock: 2 }),
+    ]);
+    const res = await executeImport(db, validated, "u1");
+    expect(res).toEqual({ created: 1, updated: 0, skipped: 0 });
+
+    const remeras = await db.select().from(products).where(eq(products.name, "Remera"));
+    expect(remeras).toHaveLength(1); // still no duplicate product
+
+    const [newVariant] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-XL"));
+    expect(newVariant.productId).toBe(remera.id);
+    expect(newVariant.price).toBe(1500); // NOT null, NOT inheriting the 1000 basePrice
+  });
 });

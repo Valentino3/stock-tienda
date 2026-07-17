@@ -93,12 +93,18 @@ export async function executeImport(
       const product = existingProduct
         ?? (await tx.insert(products).values({ name, basePrice: group[0].price! }).returning())[0];
       for (const r of group) {
+        // Comparar contra el basePrice REAL del producto resuelto (reusado o recién
+        // insertado), no contra `group[0].price`: si el producto se reusa, su
+        // basePrice puede diferir del precio de la primera fila del grupo, y usar
+        // ese precio como referencia perdía silenciosamente el precio importado
+        // (quedaba `null` => heredaba el basePrice existente en vez del importado).
+        const price = r.price !== null && r.price !== product.basePrice ? r.price : null;
         const [variant] = await tx.insert(productVariants).values({
           productId: product.id,
           name: r.variant.trim(),
           sku: r.sku,
           stock: 0,
-          price: group.length > 1 && r.price !== group[0].price ? r.price : null,
+          price,
         }).returning();
         if (r.stock > 0) {
           await applyStockMovement(tx, {
