@@ -24,8 +24,27 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
   const [newStock, setNewStock] = useState(String(variant.stock));
   const [reason, setReason] = useState("");
 
+  // VariantRow is keyed by variant.id and reused across revalidatePath
+  // re-renders, so the mount-time useState above can go stale (e.g. after a
+  // restock while this row's "Ajustar" panel was left open). Re-sync
+  // `newStock` whenever the live stock prop changes by adjusting state
+  // during render (the React-recommended alternative to an effect for this:
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes),
+  // so the adjust input never submits a stale value that would silently
+  // revert stock via adjustStock's delta computation.
+  const [prevStock, setPrevStock] = useState(variant.stock);
+  if (variant.stock !== prevStock) {
+    setPrevStock(variant.stock);
+    setNewStock(String(variant.stock));
+  }
+
   const effectivePrice = variant.price ?? basePrice;
   const lowStock = variant.stock <= lowStockThreshold;
+
+  function openAdjust() {
+    setNewStock(String(variant.stock));
+    setPanel((p) => (p === "adjust" ? null : "adjust"));
+  }
 
   function closePanel() {
     setPanel(null);
@@ -83,7 +102,7 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
           <div className="ml-auto flex gap-2">
             <button className="text-blue-600 hover:underline" onClick={() => setPanel(panel === "edit" ? null : "edit")}>Editar</button>
             <button className="text-blue-600 hover:underline" onClick={() => setPanel(panel === "restock" ? null : "restock")}>Reponer</button>
-            <button className="text-blue-600 hover:underline" onClick={() => setPanel(panel === "adjust" ? null : "adjust")}>Ajustar</button>
+            <button className="text-blue-600 hover:underline" onClick={openAdjust}>Ajustar</button>
             <button className="text-gray-600 hover:underline" disabled={pending} onClick={toggleActive}>
               {variant.active ? "Desactivar" : "Activar"}
             </button>
