@@ -50,8 +50,26 @@ describe("cash sessions", () => {
     await expect(db.insert(cashSessions).values({ openedBy: "u1", openingCash: 0 })).rejects.toThrow();
   });
 
-  it("openCashSession surfaces SESSION_ALREADY_OPEN when a row was inserted directly (bypassing the pre-check)", async () => {
+  it("openCashSession's pre-check throws SESSION_ALREADY_OPEN when a row was inserted directly beforehand", async () => {
     await db.insert(cashSessions).values({ openedBy: "u1", openingCash: 0 });
     await expect(openCashSession(db, { userId: "u1", openingCash: 100 })).rejects.toThrow("SESSION_ALREADY_OPEN");
+  });
+
+  it("closes the check-then-insert race: concurrent opens yield exactly one session", async () => {
+    // Both calls start before either resolves its pre-check, so both see no
+    // open session and both attempt to insert. Only the DB-level unique
+    // index (and the catch block in openCashSession that translates its
+    // violation) prevents two open sessions from being created here — the
+    // pre-check alone cannot, since it already raced past.
+    const results = await Promise.allSettled([
+      openCashSession(db, { userId: "u1", openingCash: 100 }),
+      openCashSession(db, { userId: "u1", openingCash: 200 }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason.message).toBe("SESSION_ALREADY_OPEN");
+    expect(await db.select().from(cashSessions)).toHaveLength(1);
   });
 });

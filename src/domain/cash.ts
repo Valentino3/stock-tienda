@@ -23,8 +23,12 @@ export async function openCashSession(db: any, input: { userId: string; openingC
     // Guarda de última instancia contra la carrera check-then-insert: si dos
     // llamadas concurrentes pasan el pre-check de arriba, el índice único
     // parcial `cash_sessions_one_open_idx` (ver schema.ts) rechaza la
-    // segunda inserción a nivel de DB.
-    if (err?.code === PG_UNIQUE_VIOLATION || /cash_sessions_one_open_idx/.test(String(err?.message ?? err))) {
+    // segunda inserción a nivel de DB. Drizzle envuelve el error real del
+    // driver (con el `code` de Postgres) en `err.cause`, así que hay que
+    // mirar tanto `err` como `err.cause`.
+    const code = err?.code ?? err?.cause?.code;
+    const message = String(err?.message ?? err?.cause?.message ?? err ?? "");
+    if (code === PG_UNIQUE_VIOLATION || /cash_sessions_one_open_idx/.test(message)) {
       throw new Error("SESSION_ALREADY_OPEN");
     }
     throw err;
