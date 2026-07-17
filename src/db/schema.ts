@@ -1,33 +1,44 @@
 import {
-  pgTable, text, timestamp, boolean, integer, numeric, pgEnum,
+  pgTable, text, timestamp, boolean, integer, numeric, pgEnum, index,
 } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 
-// ---- better-auth (generado según docs de better-auth drizzle adapter + admin plugin) ----
+// ---- better-auth ----
+// Reconciliado contra `npx @better-auth/cli generate` corrido con la config
+// real de Task 3 (src/lib/auth.ts: drizzleAdapter + admin plugin). El
+// generador no aplica NOT NULL/DEFAULT a nivel de DB en `role`/`banned`
+// (better-auth los resuelve en la capa de aplicación vía `defaultRole`) y
+// agrega `$onUpdate` en `updatedAt` + índices; se mantuvo tal cual generó.
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").notNull().default(false),
   image: text("image"),
-  role: text("role").notNull().default("employee"), // 'owner' | 'employee'
-  banned: boolean("banned").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+  role: text("role"), // 'owner' | 'employee' (default "employee" aplicado por better-auth)
+  banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export const session = pgTable("session", {
   id: text("id").primaryKey(),
   expiresAt: timestamp("expires_at").notNull(),
   token: text("token").notNull().unique(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at")
+    .notNull()
+    .$onUpdate(() => new Date()),
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
-  impersonatedBy: text("impersonated_by"),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  impersonatedBy: text("impersonated_by"),
+}, (table) => [index("session_userId_idx").on(table.userId)]);
 
 export const account = pgTable("account", {
   id: text("id").primaryKey(),
@@ -42,8 +53,10 @@ export const account = pgTable("account", {
   scope: text("scope"),
   password: text("password"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  updatedAt: timestamp("updated_at")
+    .notNull()
+    .$onUpdate(() => new Date()),
+}, (table) => [index("account_userId_idx").on(table.userId)]);
 
 export const verification = pgTable("verification", {
   id: text("id").primaryKey(),
@@ -51,12 +64,24 @@ export const verification = pgTable("verification", {
   value: text("value").notNull(),
   expiresAt: timestamp("expires_at").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+  updatedAt: timestamp("updated_at")
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+}, (table) => [index("verification_identifier_idx").on(table.identifier)]);
 
-// IMPORTANTE: antes de dar por buena esta sección, correr
-// `npx @better-auth/cli generate` con la config de Task 3 y comparar:
-// si el generador difiere en columnas, gana el generador.
+export const userRelations = relations(user, ({ many }) => ({
+  sessions: many(session),
+  accounts: many(account),
+}));
+
+export const sessionRelations = relations(session, ({ one }) => ({
+  user: one(user, { fields: [session.userId], references: [user.id] }),
+}));
+
+export const accountRelations = relations(account, ({ one }) => ({
+  user: one(user, { fields: [account.userId], references: [user.id] }),
+}));
 
 // ---- dominio ----
 export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta"]);

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "seed:owner": "tsx scripts/seed-owner.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
