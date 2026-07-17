@@ -40,6 +40,15 @@ describe("validateImportRows", () => {
     expect(out[0].action).toBe("update");
     expect(out[1].action).toBe("create");
   });
+
+  it("does not flag a valid row as duplicate SKU when an earlier row with the same SKU errored for another reason", async () => {
+    const out = await validateImportRows(db, [
+      row(2, { product: "", sku: "X1" }),
+      row(3, { sku: "X1" }),
+    ]);
+    expect(out[0].error).toMatch(/producto/i);
+    expect(out[1].error).toBeNull();
+  });
 });
 
 describe("executeImport", () => {
@@ -66,5 +75,22 @@ describe("executeImport", () => {
     const adjustments = await db.select().from(stockMovements).where(eq(stockMovements.type, "ajuste"));
     expect(adjustments.length).toBeGreaterThanOrEqual(3); // R-M, R-L, G1
     expect(adjustments.every((m) => m.reason === "importación")).toBe(true);
+  });
+
+  it("attaches a new variant to an existing active product instead of creating a duplicate", async () => {
+    const [remera] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ productId: remera.id, name: "M", sku: "R-M", stock: 5 });
+
+    const validated = await validateImportRows(db, [
+      row(2, { product: "Remera", variant: "L", sku: "R-L", stock: 7 }),
+    ]);
+    const res = await executeImport(db, validated, "u1");
+    expect(res).toEqual({ created: 1, updated: 0, skipped: 0 });
+
+    const remeras = await db.select().from(products).where(eq(products.name, "Remera"));
+    expect(remeras).toHaveLength(1); // no duplicate "Remera" product created
+
+    const [newVariant] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-L"));
+    expect(newVariant.productId).toBe(remera.id);
   });
 });
