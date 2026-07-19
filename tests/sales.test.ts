@@ -54,6 +54,13 @@ describe("createSale", () => {
     await openCashSession(db, { userId: "u1", openingCash: 0 });
     await expect(createSale(db, { sellerId: "u1", paymentMethod: "efectivo", items: [] })).rejects.toThrow("EMPTY_SALE");
   });
+
+  it("rejects fractional quantity", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    await expect(
+      createSale(db, { sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 1.5 }] })
+    ).rejects.toThrow("INVALID_QUANTITY");
+  });
 });
 
 describe("voidSale", () => {

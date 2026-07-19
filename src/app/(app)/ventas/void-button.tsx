@@ -6,11 +6,7 @@ export function VoidButton({ saleId }: { saleId: number }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
 
-  function handleClick(e: React.MouseEvent) {
-    // Evita que el click "burbujee" hasta el <summary> padre y colapse/expanda
-    // la fila de detalle en lugar de (o además de) anular la venta.
-    e.preventDefault();
-    e.stopPropagation();
+  function handleClick() {
     if (!confirm("¿Anular esta venta? Esta acción no se puede deshacer.")) return;
     startTransition(async () => {
       const res = await voidSaleAction(saleId);

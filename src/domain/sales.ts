@@ -12,7 +12,7 @@ export type SaleInput = {
 
 export async function createSale(db: any, input: SaleInput): Promise<Sale> {
   if (input.items.length === 0) throw new Error("EMPTY_SALE");
-  if (input.items.some((i) => i.quantity <= 0)) throw new Error("INVALID_QUANTITY");
+  if (input.items.some((i) => i.quantity <= 0 || !Number.isInteger(i.quantity))) throw new Error("INVALID_QUANTITY");
 
   return db.transaction(async (tx: any) => {
     const [session] = await tx.select().from(cashSessions)

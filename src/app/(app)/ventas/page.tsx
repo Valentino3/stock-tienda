@@ -42,6 +42,7 @@ export default async function VentasPage({
   const itemRows = saleIds.length
     ? await db
         .select({
+          id: saleItems.id,
           saleId: saleItems.saleId,
           quantity: saleItems.quantity,
           unitPrice: saleItems.unitPrice,
@@ -126,22 +127,24 @@ export default async function VentasPage({
                   <span>{sellerName}</span>
                   <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
                   <span>${sale.total.toFixed(2)}</span>
-                  <span className="flex items-center gap-2">
-                    {sale.voided ? "Anulada" : "Activa"}
-                    {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
-                  </span>
+                  <span>{sale.voided ? "Anulada" : "Activa"}</span>
                 </span>
               </summary>
               <div className="bg-gray-50 p-3 pl-6 text-sm">
                 <ul className="space-y-1">
-                  {(itemsBySale.get(sale.id) ?? []).map((item, idx) => (
-                    <li key={idx}>
+                  {(itemsBySale.get(sale.id) ?? []).map((item) => (
+                    <li key={item.id}>
                       {item.productName}
                       {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
                       {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
                     </li>
                   ))}
                 </ul>
+                {isOwner && !sale.voided && (
+                  <div className="mt-2">
+                    <VoidButton saleId={sale.id} />
+                  </div>
+                )}
               </div>
             </details>
           ))}

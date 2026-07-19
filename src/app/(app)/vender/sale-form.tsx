@@ -142,10 +142,11 @@ export function SaleForm() {
                     <input
                       type="number"
                       min="1"
+                      step="1"
                       className="w-16 rounded border p-1"
                       value={item.quantity}
                       onChange={(e) =>
-                        updateQuantity(item.variantId, Math.max(1, Number(e.target.value) || 1))
+                        updateQuantity(item.variantId, Math.max(1, Math.trunc(Number(e.target.value) || 1)))
                       }
                     />
                   </td>

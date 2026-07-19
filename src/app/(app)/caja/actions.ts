@@ -21,7 +21,12 @@ export async function closeSession(countedCash: number, notes: string) {
   if (countedCash < 0) return { error: "Monto inválido" };
   const open = await getOpenSession(db);
   if (!open) return { error: "No hay caja abierta" };
-  const closed = await closeCashSession(db, { sessionId: open.id, userId: user.id, countedCash, notes: notes || undefined });
+  let closed;
+  try {
+    closed = await closeCashSession(db, { sessionId: open.id, userId: user.id, countedCash, notes: notes || undefined });
+  } catch (e) {
+    return { error: e instanceof Error && e.message === "SESSION_NOT_OPEN" ? "La caja ya fue cerrada" : "No se pudo cerrar la caja" };
+  }
   revalidatePath("/caja"); revalidatePath("/vender");
   return { ok: true as const, expectedCash: closed.expectedCash, difference: closed.difference };
 }
