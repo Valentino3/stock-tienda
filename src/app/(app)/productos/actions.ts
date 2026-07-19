@@ -37,7 +37,11 @@ export async function saveProduct(input: { id?: number; name: string; basePrice:
 
 export async function saveVariant(input: { id?: number; productId: number; name: string; sku: string | null; price: number | null }) {
   await requireOwner();
-  if (!input.name.trim() || (input.price !== null && input.price < 0)) return { error: "Datos inválidos" };
+  // Empty name is legitimate on UPDATE: every product gets a hidden "default"
+  // variant with `name: ""` (see saveProduct above), and its SKU/price must
+  // stay editable without forcing the owner to name it. Only INSERT (a new,
+  // explicit variant) requires a non-empty name.
+  if ((!input.id && !input.name.trim()) || (input.price !== null && input.price < 0)) return { error: "Datos inválidos" };
   const values = { name: input.name.trim(), sku: input.sku?.trim() || null, price: input.price };
   try {
     if (input.id) await db.update(productVariants).set(values).where(eq(productVariants.id, input.id));
