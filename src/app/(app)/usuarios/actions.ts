@@ -23,8 +23,12 @@ export async function setUserActive(userId: string, active: boolean) {
   const owner = await requireOwner();
   if (!active && userId === owner.id) return { error: "No podés desactivarte a vos mismo" };
   const h = await headers();
-  if (active) await auth.api.unbanUser({ headers: h, body: { userId } });
-  else await auth.api.banUser({ headers: h, body: { userId, banReason: "Desactivado" } });
+  try {
+    if (active) await auth.api.unbanUser({ headers: h, body: { userId } });
+    else await auth.api.banUser({ headers: h, body: { userId, banReason: "Desactivado" } });
+  } catch {
+    return { error: active ? "No se pudo activar el usuario" : "No se pudo desactivar el usuario" };
+  }
   revalidatePath("/usuarios");
   return { ok: true };
 }
