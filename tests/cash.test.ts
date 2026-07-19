@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import { eq } from "drizzle-orm";
 import { createTestDb, seedTestUser } from "./helpers/db";
-import { cashSessions, sales } from "@/db/schema";
+import { cashSessions, sales, type CashSession } from "@/db/schema";
 import { openCashSession, closeCashSession, getOpenSession } from "@/domain/cash";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -39,6 +40,28 @@ describe("cash sessions", () => {
     const s = await openCashSession(db, { userId: "u1", openingCash: 0 });
     await closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 0 });
     await expect(closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 0 })).rejects.toThrow("SESSION_NOT_OPEN");
+  });
+
+  it("closes the concurrent-close race: exactly one close wins, its countedCash sticks", async () => {
+    // PGlite serializes transactions (single connection, no real concurrent
+    // execution), so this doesn't exercise true DB-level concurrency the way
+    // Postgres would under load. It does still exercise the real code path:
+    // both calls run the same transaction with the same FOR UPDATE + guarded
+    // final UPDATE, and the test asserts the logical exactly-once outcome
+    // (one winner, one SESSION_NOT_OPEN loser, no lost update).
+    const s = await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const results = await Promise.allSettled([
+      closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 111 }),
+      closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 222 }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === "fulfilled") as PromiseFulfilledResult<CashSession>[];
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason.message).toBe("SESSION_NOT_OPEN");
+
+    const [stored] = await db.select().from(cashSessions).where(eq(cashSessions.id, s.id));
+    expect(stored.countedCash).toBe(fulfilled[0].value.countedCash);
   });
 
   it("rejects closing a session id that does not exist", async () => {

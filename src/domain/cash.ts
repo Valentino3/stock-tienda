@@ -39,33 +39,40 @@ export async function closeCashSession(
   db: any,
   input: { sessionId: number; userId: string; countedCash: number; notes?: string }
 ): Promise<CashSession> {
-  const [session] = await db.select().from(cashSessions).where(eq(cashSessions.id, input.sessionId));
-  if (!session || session.closedAt) throw new Error("SESSION_NOT_OPEN");
+  return db.transaction(async (tx: any) => {
+    // Lock the session row so a concurrent close (or a sale committing
+    // between the totals select and the final update) serializes against
+    // this transaction — same FOR UPDATE pattern as createSale in sales.ts.
+    const [session] = await tx.select().from(cashSessions)
+      .where(eq(cashSessions.id, input.sessionId)).for("update");
+    if (!session || session.closedAt) throw new Error("SESSION_NOT_OPEN");
 
-  const totals = await db
-    .select({
-      method: sales.paymentMethod,
-      total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
-    })
-    .from(sales)
-    .where(and(eq(sales.cashSessionId, input.sessionId), eq(sales.voided, false)))
-    .groupBy(sales.paymentMethod);
+    const totals = await tx
+      .select({
+        method: sales.paymentMethod,
+        total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
+      })
+      .from(sales)
+      .where(and(eq(sales.cashSessionId, input.sessionId), eq(sales.voided, false)))
+      .groupBy(sales.paymentMethod);
 
-  const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
-  const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0));
+    const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
+    const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0));
 
-  const [closed] = await db.update(cashSessions)
-    .set({
-      closedAt: new Date(),
-      closedBy: input.userId,
-      expectedCash,
-      totalTransfer: round2(byMethod.transferencia ?? 0),
-      totalCard: round2(byMethod.tarjeta ?? 0),
-      countedCash: round2(input.countedCash),
-      difference: round2(input.countedCash - expectedCash),
-      notes: input.notes,
-    })
-    .where(eq(cashSessions.id, input.sessionId))
-    .returning();
-  return closed;
+    const [closed] = await tx.update(cashSessions)
+      .set({
+        closedAt: new Date(),
+        closedBy: input.userId,
+        expectedCash,
+        totalTransfer: round2(byMethod.transferencia ?? 0),
+        totalCard: round2(byMethod.tarjeta ?? 0),
+        countedCash: round2(input.countedCash),
+        difference: round2(input.countedCash - expectedCash),
+        notes: input.notes,
+      })
+      .where(and(eq(cashSessions.id, input.sessionId), isNull(cashSessions.closedAt)))
+      .returning();
+    if (!closed) throw new Error("SESSION_NOT_OPEN");
+    return closed;
+  });
 }
