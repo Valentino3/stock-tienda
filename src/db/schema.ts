@@ -105,6 +105,10 @@ export const productVariants = pgTable("product_variants", {
   stock: integer("stock").notNull().default(0),
   price: numeric("price", { precision: 12, scale: 2, mode: "number" }), // null => hereda basePrice
   active: boolean("active").notNull().default(true),
+  setName: text("set_name"),
+  condition: text("condition"),
+  foil: boolean("foil").notNull().default(false),
+  language: text("language"),
 });
 
 // NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`
