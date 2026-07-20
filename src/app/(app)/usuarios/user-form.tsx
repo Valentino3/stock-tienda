@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,6 +58,7 @@ export function UserForm() {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Nuevo empleado</DialogTitle>
+          <DialogDescription>Creá una cuenta de empleado con acceso limitado.</DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-2">

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -130,6 +131,7 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Editar variante</DialogTitle>
+                  <DialogDescription>Editá el nombre, SKU o precio de la variante.</DialogDescription>
                 </DialogHeader>
                 <form onSubmit={submitEdit} className="space-y-3">
                   <div className="space-y-2">

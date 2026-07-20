@@ -3,6 +3,7 @@ import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, saleItems, productVariants, products, user } from "@/db/schema";
 import { requireUser } from "@/lib/session";
+import { isoDate } from "@/lib/dates";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VoidButton } from "./void-button";
@@ -14,10 +15,6 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 type Params = { from?: string; to?: string; seller?: string };
-
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
-}
 
 export default async function VentasPage({
   searchParams,

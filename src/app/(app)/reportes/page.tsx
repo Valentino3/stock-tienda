@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { requireOwner } from "@/lib/session";
+import { isoDate } from "@/lib/dates";
 import { getSalesReport, getTopProducts, getLowStock, getCashSessionHistory } from "@/domain/reports";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,10 +17,6 @@ const PAYMENT_LABELS: Record<string, string> = {
 
 function money(n: number | null | undefined) {
   return `$${(n ?? 0).toFixed(2)}`;
-}
-
-function isoDate(d: Date) {
-  return d.toISOString().slice(0, 10);
 }
 
 type Params = { from?: string; to?: string };

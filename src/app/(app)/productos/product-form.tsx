@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -89,6 +90,7 @@ export function ProductForm({ product }: Props) {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>{isEdit ? "Editar producto" : "Nuevo producto"}</DialogTitle>
+              <DialogDescription>Completá los datos del producto.</DialogDescription>
             </DialogHeader>
             <form onSubmit={submitProduct} className="space-y-3">
               <div className="space-y-2">
