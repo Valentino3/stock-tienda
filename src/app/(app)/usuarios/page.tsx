@@ -2,6 +2,8 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { user } from "@/db/schema";
 import { requireOwner } from "@/lib/session";
+import { Badge } from "@/components/ui/badge";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UserForm, ToggleActiveButton } from "./user-form";
 
 export default async function UsuariosPage() {
@@ -26,30 +28,48 @@ export default async function UsuariosPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Usuarios</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Usuarios</h1>
         <UserForm />
       </div>
 
-      <div className="divide-y rounded border">
-        <div className="grid grid-cols-5 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-          <span>Nombre</span>
-          <span>Email</span>
-          <span>Rol</span>
-          <span>Estado</span>
-          <span></span>
-        </div>
-        {users.map((u) => (
-          <div key={u.id} className="grid grid-cols-5 items-center gap-2 p-2 text-sm">
-            <span>{u.name}</span>
-            <span>{u.email}</span>
-            <span>{u.role === "owner" ? "Dueño" : "Empleado"}</span>
-            <span className={u.banned ? "text-red-600" : "text-green-700"}>
-              {u.banned ? "Desactivado" : "Activo"}
-            </span>
-            <ToggleActiveButton userId={u.id} banned={Boolean(u.banned)} />
-          </div>
-        ))}
-      </div>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Nombre</TableHead>
+            <TableHead>Email</TableHead>
+            <TableHead>Rol</TableHead>
+            <TableHead>Estado</TableHead>
+            <TableHead></TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {users.map((u) => (
+            <TableRow key={u.id}>
+              <TableCell>{u.name}</TableCell>
+              <TableCell>{u.email}</TableCell>
+              <TableCell>
+                <Badge variant={u.role === "owner" ? "default" : "secondary"}>
+                  {u.role === "owner" ? "Dueño" : "Empleado"}
+                </Badge>
+              </TableCell>
+              <TableCell>
+                {u.banned ? (
+                  <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                    Desactivado
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="border-green-300 bg-green-50 text-green-800">
+                    Activo
+                  </Badge>
+                )}
+              </TableCell>
+              <TableCell className="text-right">
+                <ToggleActiveButton userId={u.id} banned={Boolean(u.banned)} />
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }

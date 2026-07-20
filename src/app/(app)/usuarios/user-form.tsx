@@ -1,5 +1,28 @@
 "use client";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { createEmployee, setUserActive } from "./actions";
 
 export function UserForm() {
@@ -27,58 +50,51 @@ export function UserForm() {
   }
 
   return (
-    <div>
-      <button type="button" className="rounded border px-2 py-1 text-sm" onClick={() => setOpen(true)}>
-        + Nuevo empleado
-      </button>
-
-      {open && (
-        <div
-          className="fixed inset-0 z-10 flex items-center justify-center bg-black/30"
-          onClick={() => setOpen(false)}
-        >
-          <form
-            onSubmit={submit}
-            onClick={(e) => e.stopPropagation()}
-            className="w-80 space-y-3 rounded bg-white p-4 shadow"
-          >
-            <h3 className="font-semibold">Nuevo empleado</h3>
-            <input
-              className="w-full rounded border p-2 text-sm"
-              placeholder="Nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-            <input
-              className="w-full rounded border p-2 text-sm"
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button size="sm">+ Nuevo empleado</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Nuevo empleado</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="new-employee-name">Nombre</Label>
+            <Input id="new-employee-name" value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="new-employee-email">Email</Label>
+            <Input
+              id="new-employee-email"
               type="email"
-              placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
             />
-            <input
-              className="w-full rounded border p-2 text-sm"
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="new-employee-password">Contraseña (mínimo 8 caracteres)</Label>
+            <Input
+              id="new-employee-password"
               type="password"
-              placeholder="Contraseña (mínimo 8 caracteres)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
             />
-            {error && <p className="text-xs text-red-600">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <button type="button" className="text-sm" onClick={() => setOpen(false)}>
-                Cancelar
-              </button>
-              <button type="submit" disabled={pending} className="rounded bg-black px-3 py-1 text-sm text-white">
-                Crear
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-    </div>
+          </div>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={pending}>
+              Crear
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -90,27 +106,40 @@ export function ToggleActiveButton({
   banned: boolean;
 }) {
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState("");
 
-  function handleClick() {
+  function handleConfirm() {
     startTransition(async () => {
       const res = await setUserActive(userId, banned);
-      if ("error" in res && res.error) setError(res.error);
-      else setError("");
+      if ("error" in res && res.error) toast.error(res.error);
     });
   }
 
+  if (banned) {
+    // Reactivating is non-destructive — no confirmation needed.
+    return (
+      <Button variant="link" size="sm" className="text-green-700" disabled={pending} onClick={handleConfirm}>
+        {pending ? "..." : "Activar"}
+      </Button>
+    );
+  }
+
   return (
-    <span className="inline-flex items-center gap-1 justify-self-end">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={pending}
-        className={`text-xs hover:underline disabled:opacity-50 ${banned ? "text-green-700" : "text-red-600"}`}
-      >
-        {pending ? "..." : banned ? "Activar" : "Desactivar"}
-      </button>
-      {error && <span className="text-xs text-red-600">{error}</span>}
-    </span>
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="link" size="sm" className="text-destructive" disabled={pending}>
+          {pending ? "..." : "Desactivar"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>¿Desactivar este usuario?</AlertDialogTitle>
+          <AlertDialogDescription>No va a poder iniciar sesión hasta que lo reactives.</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction onClick={handleConfirm}>Desactivar</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
