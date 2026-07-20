@@ -1,5 +1,16 @@
 "use client";
 import { useState, useTransition } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { saveProduct, saveVariant, toggleProductActive } from "./actions";
 import type { Product } from "@/db/schema";
 
@@ -69,77 +80,90 @@ export function ProductForm({ product }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
-        <button className="rounded border px-2 py-1 text-sm" onClick={() => setOpen(true)}>
-          {isEdit ? "Editar" : "+ Nuevo producto"}
-        </button>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild>
+            <Button variant={isEdit ? "outline" : "default"} size="sm">
+              {isEdit ? "Editar" : "+ Nuevo producto"}
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{isEdit ? "Editar producto" : "Nuevo producto"}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={submitProduct} className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="product-name">Nombre</Label>
+                <Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="product-price">Precio base</Label>
+                <Input
+                  id="product-price"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={basePrice}
+                  onChange={(e) => setBasePrice(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="product-threshold">Umbral stock bajo</Label>
+                <Input
+                  id="product-threshold"
+                  type="number"
+                  min="0"
+                  value={lowStockThreshold}
+                  onChange={(e) => setLowStockThreshold(e.target.value)}
+                  required
+                />
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={pending}>
+                  Guardar
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         {isEdit && (
           <>
-            <button className="text-sm text-blue-600 hover:underline" onClick={() => setAddingVariant((v) => !v)}>
+            <Button variant="link" size="sm" onClick={() => setAddingVariant((v) => !v)}>
               + Variante
-            </button>
-            <button className="text-sm text-gray-600 hover:underline" disabled={pending} onClick={toggleActive}>
+            </Button>
+            <Button variant="ghost" size="sm" disabled={pending} onClick={toggleActive}>
               {product.active ? "Desactivar" : "Activar"}
-            </button>
+            </Button>
           </>
         )}
       </div>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-10 flex items-center justify-center bg-black/30"
-          onClick={() => setOpen(false)}
-        >
-          <form
-            onSubmit={submitProduct}
-            onClick={(e) => e.stopPropagation()}
-            className="w-80 space-y-3 rounded bg-white p-4 shadow"
-          >
-            <h3 className="font-semibold">{isEdit ? "Editar producto" : "Nuevo producto"}</h3>
-            <input
-              className="w-full rounded border p-2 text-sm"
-              placeholder="Nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-            <input
-              className="w-full rounded border p-2 text-sm"
-              type="number"
-              step="0.01"
-              min="0"
-              placeholder="Precio base"
-              value={basePrice}
-              onChange={(e) => setBasePrice(e.target.value)}
-              required
-            />
-            <input
-              className="w-full rounded border p-2 text-sm"
-              type="number"
-              min="0"
-              placeholder="Umbral stock bajo"
-              value={lowStockThreshold}
-              onChange={(e) => setLowStockThreshold(e.target.value)}
-              required
-            />
-            {error && <p className="text-xs text-red-600">{error}</p>}
-            <div className="flex justify-end gap-2">
-              <button type="button" className="text-sm" onClick={() => setOpen(false)}>Cancelar</button>
-              <button type="submit" disabled={pending} className="rounded bg-black px-3 py-1 text-sm text-white">
-                Guardar
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
       {addingVariant && product && (
-        <form onSubmit={submitVariant} className="flex flex-wrap items-end gap-2 rounded border p-2">
-          <input className="rounded border p-1 text-sm" placeholder="Nombre variante" value={vName} onChange={(e) => setVName(e.target.value)} required />
-          <input className="rounded border p-1 text-sm" placeholder="SKU" value={vSku} onChange={(e) => setVSku(e.target.value)} />
-          <input className="w-32 rounded border p-1 text-sm" type="number" step="0.01" placeholder="Precio (opcional)" value={vPrice} onChange={(e) => setVPrice(e.target.value)} />
-          {vError && <p className="text-xs text-red-600">{vError}</p>}
-          <button type="submit" disabled={pending} className="rounded bg-black px-2 py-1 text-sm text-white">Agregar</button>
-          <button type="button" className="text-sm" onClick={() => setAddingVariant(false)}>Cancelar</button>
+        <form onSubmit={submitVariant} className="flex flex-wrap items-end gap-2 rounded-md border p-3">
+          <div className="space-y-1">
+            <Label className="text-xs">Nombre variante</Label>
+            <Input className="h-8" value={vName} onChange={(e) => setVName(e.target.value)} required />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">SKU</Label>
+            <Input className="h-8" value={vSku} onChange={(e) => setVSku(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Precio (opcional)</Label>
+            <Input className="h-8 w-32" type="number" step="0.01" value={vPrice} onChange={(e) => setVPrice(e.target.value)} />
+          </div>
+          {vError && <p className="text-xs text-destructive">{vError}</p>}
+          <Button type="submit" size="sm" disabled={pending}>
+            Agregar
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setAddingVariant(false)}>
+            Cancelar
+          </Button>
         </form>
       )}
     </div>

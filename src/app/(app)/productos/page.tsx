@@ -4,7 +4,7 @@ import { products, productVariants } from "@/db/schema";
 import type { Product, ProductVariant } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { ProductForm } from "./product-form";
-import { VariantRow } from "./variant-row";
+import { ProductList } from "./product-list";
 
 export type ProductWithVariants = Product & { variants: ProductVariant[] };
 
@@ -37,39 +37,15 @@ export default async function ProductosPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Productos</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Productos</h1>
         {isOwner && <ProductForm />}
       </div>
 
-      {productList.length === 0 && <p className="text-sm text-gray-500">No hay productos cargados.</p>}
-
-      <div className="space-y-4">
-        {productList.map((product) => (
-          <div key={product.id} className={`rounded border p-4 ${!product.active ? "opacity-60" : ""}`}>
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="font-semibold">{product.name}</h2>
-                <p className="text-xs text-gray-500">
-                  Precio base: ${product.basePrice.toFixed(2)} · Umbral stock bajo: {product.lowStockThreshold}
-                  {!product.active && " · Inactivo"}
-                </p>
-              </div>
-              {isOwner && <ProductForm product={product} />}
-            </div>
-            <div className="mt-3 divide-y">
-              {product.variants.map((variant) => (
-                <VariantRow
-                  key={variant.id}
-                  variant={variant}
-                  basePrice={product.basePrice}
-                  lowStockThreshold={product.lowStockThreshold}
-                  isOwner={isOwner}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+      {productList.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No hay productos cargados.</p>
+      ) : (
+        <ProductList products={productList} isOwner={isOwner} />
+      )}
     </div>
   );
 }
