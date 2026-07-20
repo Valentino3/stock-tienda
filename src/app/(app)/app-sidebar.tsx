@@ -2,20 +2,40 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, type LucideIcon } from "lucide-react";
+import {
+  Menu,
+  ShoppingCart,
+  Package,
+  Receipt,
+  Wallet,
+  Upload,
+  BarChart3,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { BUSINESS_NAME } from "@/lib/config";
 import { LogoutButton } from "./logout-button";
 
-export type NavLink = { href: string; label: string; icon: LucideIcon };
+export type NavLink = { href: string; label: string };
+
+const ICONS: Record<string, LucideIcon> = {
+  "/vender": ShoppingCart,
+  "/productos": Package,
+  "/ventas": Receipt,
+  "/caja": Wallet,
+  "/importar": Upload,
+  "/reportes": BarChart3,
+  "/usuarios": Users,
+};
 
 function NavList({ links, pathname, onNavigate }: { links: NavLink[]; pathname: string; onNavigate?: () => void }) {
   return (
     <nav className="flex flex-col gap-1">
       {links.map((link) => {
-        const Icon = link.icon;
+        const Icon = ICONS[link.href];
         const active = pathname === link.href;
         return (
           <Link
@@ -26,7 +46,7 @@ function NavList({ links, pathname, onNavigate }: { links: NavLink[]; pathname: 
               active ? "bg-primary text-primary-foreground" : "text-foreground/80 hover:bg-muted hover:text-foreground"
             }`}
           >
-            <Icon className="size-4 shrink-0" />
+            {Icon && <Icon className="size-4 shrink-0" />}
             {link.label}
           </Link>
         );
