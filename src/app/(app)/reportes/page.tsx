@@ -3,6 +3,10 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { requireOwner } from "@/lib/session";
 import { getSalesReport, getTopProducts, getLowStock, getCashSessionHistory } from "@/domain/reports";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -12,6 +16,10 @@ const PAYMENT_LABELS: Record<string, string> = {
 
 function money(n: number | null | undefined) {
   return `$${(n ?? 0).toFixed(2)}`;
+}
+
+function isoDate(d: Date) {
+  return d.toISOString().slice(0, 10);
 }
 
 type Params = { from?: string; to?: string };
@@ -24,6 +32,10 @@ export default async function ReportesPage({
   try {
     await requireOwner();
   } catch (err) {
+    // requireOwner() -> requireUser() can itself throw Next's internal
+    // redirect("/login") error when there's no session at all; that must
+    // propagate untouched. Only a genuine FORBIDDEN (logged in, not owner)
+    // should be redirected to /vender here.
     unstable_rethrow(err);
     redirect("/vender");
   }
@@ -51,151 +63,240 @@ export default async function ReportesPage({
     getCashSessionHistory(db, { limit: 30 }),
   ]);
 
+  const totalPeriodo = byDay.reduce((acc: number, r: { total: number }) => acc + r.total, 0);
+  const cierresConDiferencia = cashHistory.filter(
+    (s: { difference: number | null }) => s.difference !== null && s.difference !== 0
+  ).length;
+
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+
   return (
     <div className="space-y-8">
-      <h1 className="text-xl font-bold">Reportes</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Reportes</h1>
 
-      <form method="get" className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-gray-500">Desde</span>
-          <input type="date" name="from" defaultValue={fromValue} className="rounded border p-1 text-sm" />
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-gray-500">Hasta</span>
-          <input type="date" name="to" defaultValue={toValue} className="rounded border p-1 text-sm" />
-        </label>
-        <button type="submit" className="rounded border px-3 py-1 text-sm">
-          Filtrar
-        </button>
-        {(params.from || params.to) && (
-          <Link href="/reportes" className="text-sm text-blue-600 hover:underline">
-            Limpiar
-          </Link>
-        )}
-      </form>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Total del período</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-2xl font-semibold">{money(totalPeriodo)}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Productos con stock bajo</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className={`text-2xl font-semibold ${lowStock.length > 0 ? "text-destructive" : ""}`}>
+              {lowStock.length}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Cierres con diferencia</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className={`text-2xl font-semibold ${cierresConDiferencia > 0 ? "text-destructive" : "text-green-600"}`}>
+              {cierresConDiferencia}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
 
-      <section className="space-y-2">
-        <h2 className="font-semibold">Ventas por día</h2>
-        {byDay.length === 0 && <p className="text-sm text-gray-500">Sin ventas en el rango seleccionado.</p>}
-        {byDay.length > 0 && (
-          <div className="divide-y rounded border">
-            <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-              <span>Fecha</span>
-              <span>Cantidad</span>
-              <span>Total</span>
-            </div>
-            {byDay.map((row: { day: string; count: number; total: number }) => (
-              <div key={row.day} className="grid grid-cols-3 gap-2 p-2 text-sm">
-                <span>{row.day}</span>
-                <span>{row.count}</span>
-                <span>{money(row.total)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="font-semibold">Totales por medio de pago</h2>
-        {byMethod.length === 0 && <p className="text-sm text-gray-500">Sin ventas en el rango seleccionado.</p>}
-        {byMethod.length > 0 && (
-          <div className="divide-y rounded border">
-            <div className="grid grid-cols-3 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-              <span>Medio de pago</span>
-              <span>Cantidad</span>
-              <span>Total</span>
-            </div>
-            {byMethod.map((row: { method: string; count: number; total: number }) => (
-              <div key={row.method} className="grid grid-cols-3 gap-2 p-2 text-sm">
-                <span>{PAYMENT_LABELS[row.method] ?? row.method}</span>
-                <span>{row.count}</span>
-                <span>{money(row.total)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="font-semibold">Top 10 productos</h2>
-        {topProducts.length === 0 && <p className="text-sm text-gray-500">Sin ventas en el rango seleccionado.</p>}
-        {topProducts.length > 0 && (
-          <div className="divide-y rounded border">
-            <div className="grid grid-cols-4 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-              <span>Producto</span>
-              <span>Variante</span>
-              <span>Unidades vendidas</span>
-              <span>Ingresos</span>
-            </div>
-            {topProducts.map(
-              (row: { productName: string; variantName: string; unitsSold: number; revenue: number }, i: number) => (
-                <div key={i} className="grid grid-cols-4 gap-2 p-2 text-sm">
-                  <span>{row.productName}</span>
-                  <span>{row.variantName || "—"}</span>
-                  <span>{row.unitsSold}</span>
-                  <span>{money(row.revenue)}</span>
-                </div>
-              )
-            )}
-          </div>
-        )}
-      </section>
+      <div className="flex flex-wrap items-end gap-3">
+        <form method="get" className="flex flex-wrap items-end gap-3">
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-muted-foreground">Desde</span>
+            <input
+              type="date"
+              name="from"
+              defaultValue={fromValue}
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-muted-foreground">Hasta</span>
+            <input
+              type="date"
+              name="to"
+              defaultValue={toValue}
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+            />
+          </label>
+          <Button type="submit" variant="outline" size="sm">
+            Filtrar
+          </Button>
+          {(params.from || params.to) && (
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/reportes">Limpiar</Link>
+            </Button>
+          )}
+        </form>
+        <div className="ml-auto flex gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/reportes?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/reportes?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+          </Button>
+        </div>
+      </div>
 
       <section className="space-y-2">
-        <h2 className="font-semibold">Stock bajo</h2>
-        {lowStock.length === 0 && <p className="text-sm text-gray-500">No hay productos con stock bajo.</p>}
-        {lowStock.length > 0 && (
-          <div className="divide-y rounded border">
-            <div className="grid grid-cols-4 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-              <span>Producto</span>
-              <span>Variante</span>
-              <span>Stock</span>
-              <span>Umbral</span>
-            </div>
-            {lowStock.map(
-              (row: { productName: string; variantName: string; stock: number; threshold: number }, i: number) => (
-                <div key={i} className="grid grid-cols-4 gap-2 p-2 text-sm text-red-600">
-                  <span>{row.productName}</span>
-                  <span>{row.variantName || "—"}</span>
-                  <span>{row.stock}</span>
-                  <span>{row.threshold}</span>
-                </div>
-              )
-            )}
-          </div>
+        <h2 className="text-lg font-semibold">Ventas por día</h2>
+        {byDay.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin ventas en el rango seleccionado.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Fecha</TableHead>
+                <TableHead>Cantidad</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {byDay.map((row: { day: string; count: number; total: number }) => (
+                <TableRow key={row.day}>
+                  <TableCell>{row.day}</TableCell>
+                  <TableCell>{row.count}</TableCell>
+                  <TableCell className="text-right">{money(row.total)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         )}
       </section>
 
       <section className="space-y-2">
-        <h2 className="font-semibold">Cierres de caja</h2>
-        {cashHistory.length === 0 && <p className="text-sm text-gray-500">No hay cierres de caja registrados.</p>}
-        {cashHistory.length > 0 && (
-          <div className="divide-y rounded border">
-            <div className="grid grid-cols-4 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-              <span>Fecha</span>
-              <span>Esperado</span>
-              <span>Contado</span>
-              <span>Diferencia</span>
-            </div>
-            {cashHistory.map(
-              (session: {
-                id: number;
-                closedAt: Date | null;
-                expectedCash: number | null;
-                countedCash: number | null;
-                difference: number | null;
-              }) => (
-                <div key={session.id} className="grid grid-cols-4 gap-2 p-2 text-sm">
-                  <span>{session.closedAt?.toLocaleString("es-AR") ?? "—"}</span>
-                  <span>{money(session.expectedCash)}</span>
-                  <span>{money(session.countedCash)}</span>
-                  <span className={session.difference && session.difference !== 0 ? "text-red-600 font-semibold" : ""}>
-                    {money(session.difference)}
-                  </span>
-                </div>
-              )
-            )}
-          </div>
+        <h2 className="text-lg font-semibold">Totales por medio de pago</h2>
+        {byMethod.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin ventas en el rango seleccionado.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Medio de pago</TableHead>
+                <TableHead>Cantidad</TableHead>
+                <TableHead className="text-right">Total</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {byMethod.map((row: { method: string; count: number; total: number }) => (
+                <TableRow key={row.method}>
+                  <TableCell>{PAYMENT_LABELS[row.method] ?? row.method}</TableCell>
+                  <TableCell>{row.count}</TableCell>
+                  <TableCell className="text-right">{money(row.total)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Top 10 productos</h2>
+        {topProducts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Sin ventas en el rango seleccionado.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Producto</TableHead>
+                <TableHead>Variante</TableHead>
+                <TableHead>Unidades vendidas</TableHead>
+                <TableHead className="text-right">Ingresos</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {topProducts.map(
+                (row: { productName: string; variantName: string; unitsSold: number; revenue: number }, i: number) => (
+                  <TableRow key={i}>
+                    <TableCell>{row.productName}</TableCell>
+                    <TableCell>{row.variantName || "—"}</TableCell>
+                    <TableCell>{row.unitsSold}</TableCell>
+                    <TableCell className="text-right">{money(row.revenue)}</TableCell>
+                  </TableRow>
+                )
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Stock bajo</h2>
+        {lowStock.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay productos con stock bajo.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Producto</TableHead>
+                <TableHead>Variante</TableHead>
+                <TableHead>Stock</TableHead>
+                <TableHead>Umbral</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {lowStock.map(
+                (row: { productName: string; variantName: string; stock: number; threshold: number }, i: number) => (
+                  <TableRow key={i}>
+                    <TableCell>{row.productName}</TableCell>
+                    <TableCell>{row.variantName || "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant="destructive">{row.stock}</Badge>
+                    </TableCell>
+                    <TableCell>{row.threshold}</TableCell>
+                  </TableRow>
+                )
+              )}
+            </TableBody>
+          </Table>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Cierres de caja</h2>
+        {cashHistory.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hay cierres de caja registrados.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Fecha</TableHead>
+                <TableHead>Esperado</TableHead>
+                <TableHead>Contado</TableHead>
+                <TableHead className="text-right">Diferencia</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {cashHistory.map(
+                (session: {
+                  id: number;
+                  closedAt: Date | null;
+                  expectedCash: number | null;
+                  countedCash: number | null;
+                  difference: number | null;
+                }) => (
+                  <TableRow key={session.id}>
+                    <TableCell>{session.closedAt?.toLocaleString("es-AR") ?? "—"}</TableCell>
+                    <TableCell>{money(session.expectedCash)}</TableCell>
+                    <TableCell>{money(session.countedCash)}</TableCell>
+                    <TableCell
+                      className={`text-right ${session.difference && session.difference !== 0 ? "font-semibold text-destructive" : ""}`}
+                    >
+                      {money(session.difference)}
+                    </TableCell>
+                  </TableRow>
+                )
+              )}
+            </TableBody>
+          </Table>
         )}
       </section>
     </div>
