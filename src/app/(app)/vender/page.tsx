@@ -11,10 +11,10 @@ export default async function VenderPage() {
   if (!session) {
     return (
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">Vender</h1>
-        <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+        <h1 className="text-2xl font-bold tracking-tight">Vender</h1>
+        <p className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
           No hay caja abierta.{" "}
-          <Link href="/caja" className="font-medium text-blue-600 hover:underline">
+          <Link href="/caja" className="font-medium underline underline-offset-4">
             Abrí la caja
           </Link>{" "}
           antes de vender.
@@ -25,7 +25,7 @@ export default async function VenderPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Vender</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Vender</h1>
       <SaleForm />
     </div>
   );
