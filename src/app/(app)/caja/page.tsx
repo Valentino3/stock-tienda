@@ -12,7 +12,7 @@ export default async function CajaPage() {
   if (!session) {
     return (
       <div className="space-y-4">
-        <h1 className="text-xl font-bold">Caja</h1>
+        <h1 className="text-2xl font-bold tracking-tight">Caja</h1>
         <CajaClient session={null} openedByName={null} totals={[]} />
       </div>
     );
@@ -32,7 +32,7 @@ export default async function CajaPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Caja</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Caja</h1>
       <CajaClient
         session={{ id: session.id, openedAt: session.openedAt, openingCash: session.openingCash }}
         openedByName={openedByUser?.name ?? null}

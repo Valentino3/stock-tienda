@@ -1,6 +1,10 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { openSession, closeSession } from "./actions";
 
 const METHOD_LABEL: Record<string, string> = {
@@ -68,87 +72,111 @@ export function CajaClient({ session, openedByName, totals }: Props) {
   if (closedResult) {
     const matches = closedResult.difference === 0;
     return (
-      <div className="max-w-md space-y-2 rounded border p-4">
-        <h2 className="font-semibold">Caja cerrada</h2>
-        <p className="text-sm">Esperado: ${closedResult.expectedCash.toFixed(2)}</p>
-        <p className="text-sm">Contado: ${closedResult.countedCash.toFixed(2)}</p>
-        <p className={`text-sm font-semibold ${matches ? "text-green-600" : "text-red-600"}`}>
-          Diferencia: ${closedResult.difference.toFixed(2)}
-        </p>
-      </div>
+      <Card className="max-w-md">
+        <CardHeader>
+          <CardTitle className="text-base">Caja cerrada</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-1 text-sm">
+          <p>Esperado: ${closedResult.expectedCash.toFixed(2)}</p>
+          <p>Contado: ${closedResult.countedCash.toFixed(2)}</p>
+          <p className={`text-lg font-semibold ${matches ? "text-green-600" : "text-destructive"}`}>
+            Diferencia: ${closedResult.difference.toFixed(2)}
+          </p>
+        </CardContent>
+      </Card>
     );
   }
 
   if (!session) {
     return (
-      <form onSubmit={submitOpen} className="max-w-xs space-y-3 rounded border p-4">
-        <h2 className="font-semibold">Abrir caja</h2>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          required
-          placeholder="Monto inicial"
-          value={openingCash}
-          onChange={(e) => setOpeningCash(e.target.value)}
-          className="w-full rounded border p-2 text-sm"
-        />
-        {openError && <p className="text-xs text-red-600">{openError}</p>}
-        <button disabled={pending} className="rounded bg-black px-3 py-1 text-sm text-white disabled:opacity-50">
-          {pending ? "Abriendo…" : "Abrir caja"}
-        </button>
-      </form>
+      <Card className="max-w-xs">
+        <CardHeader>
+          <CardTitle className="text-base">Abrir caja</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submitOpen} className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="opening-cash">Monto inicial</Label>
+              <Input
+                id="opening-cash"
+                type="number"
+                step="0.01"
+                min="0"
+                required
+                value={openingCash}
+                onChange={(e) => setOpeningCash(e.target.value)}
+              />
+            </div>
+            {openError && <p className="text-sm text-destructive">{openError}</p>}
+            <Button type="submit" disabled={pending} className="w-full">
+              {pending ? "Abriendo…" : "Abrir caja"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
     <div className="max-w-md space-y-4">
-      <div className="rounded border p-4">
-        <h2 className="font-semibold">Caja abierta</h2>
-        <p className="text-xs text-gray-500">
-          Abierta el {session.openedAt.toLocaleString("es-AR")} por {openedByName ?? "—"}
-        </p>
-        <p className="text-xs text-gray-500">Monto inicial: ${session.openingCash.toFixed(2)}</p>
-      </div>
+      <Card className="border-l-4 border-l-green-500">
+        <CardHeader>
+          <CardTitle className="text-base">Caja abierta</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-1 text-sm text-muted-foreground">
+          <p>Abierta el {session.openedAt.toLocaleString("es-AR")} por {openedByName ?? "—"}</p>
+          <p>Monto inicial: ${session.openingCash.toFixed(2)}</p>
+        </CardContent>
+      </Card>
 
-      <div className="rounded border p-4">
-        <h3 className="mb-2 text-sm font-semibold">Ventas de la sesión</h3>
-        {totals.length === 0 ? (
-          <p className="text-xs text-gray-500">Sin ventas todavía.</p>
-        ) : (
-          <ul className="space-y-1 text-sm">
-            {totals.map((t) => (
-              <li key={t.method}>
-                {METHOD_LABEL[t.method] ?? t.method}: {t.count} venta(s) — ${t.total.toFixed(2)}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Ventas de la sesión</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {totals.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Sin ventas todavía.</p>
+          ) : (
+            <ul className="space-y-1 text-sm">
+              {totals.map((t) => (
+                <li key={t.method}>
+                  {METHOD_LABEL[t.method] ?? t.method}: {t.count} venta(s) — ${t.total.toFixed(2)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
 
-      <form onSubmit={submitClose} className="space-y-2 rounded border p-4">
-        <h3 className="text-sm font-semibold">Cerrar caja</h3>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          required
-          placeholder="Efectivo contado"
-          value={countedCash}
-          onChange={(e) => setCountedCash(e.target.value)}
-          className="w-full rounded border p-2 text-sm"
-        />
-        <textarea
-          placeholder="Notas (opcional)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          className="w-full rounded border p-2 text-sm"
-        />
-        {closeError && <p className="text-xs text-red-600">{closeError}</p>}
-        <button disabled={pending} className="rounded bg-black px-3 py-1 text-sm text-white disabled:opacity-50">
-          {pending ? "Cerrando…" : "Cerrar caja"}
-        </button>
-      </form>
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cerrar caja</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={submitClose} className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="counted-cash">Efectivo contado</Label>
+              <Input
+                id="counted-cash"
+                type="number"
+                step="0.01"
+                min="0"
+                required
+                value={countedCash}
+                onChange={(e) => setCountedCash(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notas (opcional)</Label>
+              <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            {closeError && <p className="text-sm text-destructive">{closeError}</p>}
+            <Button type="submit" disabled={pending} className="w-full">
+              {pending ? "Cerrando…" : "Cerrar caja"}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }
