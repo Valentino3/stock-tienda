@@ -1,30 +1,27 @@
-import Link from "next/link";
+import { ShoppingCart, Package, Receipt, Wallet, Upload, BarChart3, Users } from "lucide-react";
 import { requireUser } from "@/lib/session";
-import { LogoutButton } from "./logout-button";
+import { AppSidebar, type NavLink } from "./app-sidebar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const links = [
-    { href: "/vender", label: "Vender" },
-    { href: "/productos", label: "Productos" },
-    { href: "/ventas", label: "Ventas" },
-    { href: "/caja", label: "Caja" },
-    ...(user.role === "owner" ? [
-      { href: "/importar", label: "Importar" },
-      { href: "/reportes", label: "Reportes" },
-      { href: "/usuarios", label: "Usuarios" },
-    ] : []),
+  const links: NavLink[] = [
+    { href: "/vender", label: "Vender", icon: ShoppingCart },
+    { href: "/productos", label: "Productos", icon: Package },
+    { href: "/ventas", label: "Ventas", icon: Receipt },
+    { href: "/caja", label: "Caja", icon: Wallet },
+    ...(user.role === "owner"
+      ? [
+          { href: "/importar", label: "Importar", icon: Upload },
+          { href: "/reportes", label: "Reportes", icon: BarChart3 },
+          { href: "/usuarios", label: "Usuarios", icon: Users },
+        ]
+      : []),
   ];
+
   return (
-    <div className="min-h-screen">
-      <nav className="flex flex-wrap items-center gap-3 border-b px-4 py-2">
-        {links.map((l) => (
-          <Link key={l.href} href={l.href} className="text-sm font-medium hover:underline">{l.label}</Link>
-        ))}
-        <span className="ml-auto text-sm text-gray-500">{user.name}</span>
-        <LogoutButton />
-      </nav>
-      <main className="p-4">{children}</main>
+    <div className="flex min-h-screen">
+      <AppSidebar links={links} userName={user.name} />
+      <main className="flex-1 p-4 lg:p-8">{children}</main>
     </div>
   );
 }
