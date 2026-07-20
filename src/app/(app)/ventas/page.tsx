@@ -3,6 +3,9 @@ import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, saleItems, productVariants, products, user } from "@/db/schema";
 import { requireUser } from "@/lib/session";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { VoidButton } from "./void-button";
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -12,6 +15,10 @@ const PAYMENT_LABELS: Record<string, string> = {
 };
 
 type Params = { from?: string; to?: string; seller?: string };
+
+function isoDate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
 
 export default async function VentasPage({
   searchParams,
@@ -68,87 +75,126 @@ export default async function VentasPage({
 
   const hasFilters = Boolean(params.from || params.to || params.seller);
 
+  const today = new Date();
+  const weekAgo = new Date(today);
+  weekAgo.setDate(weekAgo.getDate() - 7);
+
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Ventas</h1>
+      <h1 className="text-2xl font-bold tracking-tight">Ventas</h1>
 
-      <form method="get" className="flex flex-wrap items-end gap-3">
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-gray-500">Desde</span>
-          <input type="date" name="from" defaultValue={params.from ?? ""} className="rounded border p-1 text-sm" />
-        </label>
-        <label className="text-sm">
-          <span className="mb-1 block text-xs text-gray-500">Hasta</span>
-          <input type="date" name="to" defaultValue={params.to ?? ""} className="rounded border p-1 text-sm" />
-        </label>
-        {isOwner && (
+      <div className="flex flex-wrap items-end gap-3">
+        <form method="get" className="flex flex-wrap items-end gap-3">
           <label className="text-sm">
-            <span className="mb-1 block text-xs text-gray-500">Vendedor</span>
-            <select name="seller" defaultValue={params.seller ?? ""} className="rounded border p-1 text-sm">
-              <option value="">Todos</option>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <span className="mb-1 block text-xs text-muted-foreground">Desde</span>
+            <input
+              type="date"
+              name="from"
+              defaultValue={params.from ?? ""}
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+            />
           </label>
-        )}
-        <button type="submit" className="rounded border px-3 py-1 text-sm">
-          Filtrar
-        </button>
-        {hasFilters && (
-          <Link href="/ventas" className="text-sm text-blue-600 hover:underline">
-            Limpiar
-          </Link>
-        )}
-      </form>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-muted-foreground">Hasta</span>
+            <input
+              type="date"
+              name="to"
+              defaultValue={params.to ?? ""}
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+            />
+          </label>
+          {isOwner && (
+            <label className="text-sm">
+              <span className="mb-1 block text-xs text-muted-foreground">Vendedor</span>
+              <select
+                name="seller"
+                defaultValue={params.seller ?? ""}
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+              >
+                <option value="">Todos</option>
+                {sellers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <Button type="submit" variant="outline" size="sm">
+            Filtrar
+          </Button>
+          {hasFilters && (
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/ventas">Limpiar</Link>
+            </Button>
+          )}
+        </form>
 
-      {rows.length === 0 && <p className="text-sm text-gray-500">No hay ventas para el filtro seleccionado.</p>}
+        <div className="ml-auto flex gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/ventas?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
+            <Link href={`/ventas?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+          </Button>
+        </div>
+      </div>
+
+      {rows.length === 0 && <p className="text-sm text-muted-foreground">No hay ventas para el filtro seleccionado.</p>}
 
       {rows.length > 0 && (
-        <div className="divide-y rounded border">
-          <div className="grid grid-cols-6 gap-2 bg-gray-50 p-2 text-xs font-semibold text-gray-500">
-            <span>Fecha</span>
-            <span>N°</span>
-            <span>Vendedor</span>
-            <span>Medio de pago</span>
-            <span>Total</span>
-            <span>Estado</span>
-          </div>
-          {rows.map(({ sale, sellerName }) => (
-            <details key={sale.id}>
-              <summary
-                className={`cursor-pointer p-2 text-sm ${sale.voided ? "text-gray-400 line-through" : ""}`}
-              >
-                <span className="ml-1 grid grid-cols-6 gap-2 align-middle">
-                  <span>{sale.createdAt.toLocaleString("es-AR")}</span>
-                  <span>#{sale.id}</span>
-                  <span>{sellerName}</span>
-                  <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
-                  <span>${sale.total.toFixed(2)}</span>
-                  <span>{sale.voided ? "Anulada" : "Activa"}</span>
-                </span>
-              </summary>
-              <div className="bg-gray-50 p-3 pl-6 text-sm">
-                <ul className="space-y-1">
-                  {(itemsBySale.get(sale.id) ?? []).map((item) => (
-                    <li key={item.id}>
-                      {item.productName}
-                      {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
-                      {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
-                    </li>
-                  ))}
-                </ul>
-                {isOwner && !sale.voided && (
-                  <div className="mt-2">
-                    <VoidButton saleId={sale.id} />
-                  </div>
-                )}
-              </div>
-            </details>
-          ))}
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Fecha</TableHead>
+              <TableHead>N°</TableHead>
+              <TableHead>Vendedor</TableHead>
+              <TableHead>Medio de pago</TableHead>
+              <TableHead className="text-right">Total</TableHead>
+              <TableHead>Estado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map(({ sale, sellerName }) => (
+              <TableRow key={sale.id} className={sale.voided ? "opacity-60" : ""}>
+                <TableCell colSpan={6} className="p-0">
+                  <details>
+                    <summary className={`grid cursor-pointer grid-cols-6 gap-2 px-4 py-3 text-sm ${sale.voided ? "line-through" : ""}`}>
+                      <span>{sale.createdAt.toLocaleString("es-AR")}</span>
+                      <span>#{sale.id}</span>
+                      <span>{sellerName}</span>
+                      <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
+                      <span className="text-right">${sale.total.toFixed(2)}</span>
+                      <span>
+                        {sale.voided ? (
+                          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                            Anulada
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-green-300 bg-green-50 text-green-800">
+                            Activa
+                          </Badge>
+                        )}
+                      </span>
+                    </summary>
+                    <div className="space-y-2 border-t bg-muted/30 px-4 py-3 pl-8 text-sm">
+                      <ul className="space-y-1">
+                        {(itemsBySale.get(sale.id) ?? []).map((item) => (
+                          <li key={item.id}>
+                            {item.productName}
+                            {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
+                            {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
+                          </li>
+                        ))}
+                      </ul>
+                      {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
+                    </div>
+                  </details>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
     </div>
   );
