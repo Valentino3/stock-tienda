@@ -5,7 +5,6 @@ import { sales, saleItems, productVariants, products, user } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { VoidButton } from "./void-button";
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -143,58 +142,52 @@ export default async function VentasPage({
       {rows.length === 0 && <p className="text-sm text-muted-foreground">No hay ventas para el filtro seleccionado.</p>}
 
       {rows.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Fecha</TableHead>
-              <TableHead>N°</TableHead>
-              <TableHead>Vendedor</TableHead>
-              <TableHead>Medio de pago</TableHead>
-              <TableHead className="text-right">Total</TableHead>
-              <TableHead>Estado</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+        <div className="rounded-md border">
+          <div className="grid grid-cols-6 gap-2 border-b bg-muted/50 px-4 py-3 text-sm font-medium text-muted-foreground">
+            <span>Fecha</span>
+            <span>N°</span>
+            <span>Vendedor</span>
+            <span>Medio de pago</span>
+            <span className="text-right">Total</span>
+            <span>Estado</span>
+          </div>
+          <div className="divide-y">
             {rows.map(({ sale, sellerName }) => (
-              <TableRow key={sale.id} className={sale.voided ? "opacity-60" : ""}>
-                <TableCell colSpan={6} className="p-0">
-                  <details>
-                    <summary className={`grid cursor-pointer grid-cols-6 gap-2 px-4 py-3 text-sm ${sale.voided ? "line-through" : ""}`}>
-                      <span>{sale.createdAt.toLocaleString("es-AR")}</span>
-                      <span>#{sale.id}</span>
-                      <span>{sellerName}</span>
-                      <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
-                      <span className="text-right">${sale.total.toFixed(2)}</span>
-                      <span>
-                        {sale.voided ? (
-                          <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
-                            Anulada
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-green-300 bg-green-50 text-green-800">
-                            Activa
-                          </Badge>
-                        )}
-                      </span>
-                    </summary>
-                    <div className="space-y-2 border-t bg-muted/30 px-4 py-3 pl-8 text-sm">
-                      <ul className="space-y-1">
-                        {(itemsBySale.get(sale.id) ?? []).map((item) => (
-                          <li key={item.id}>
-                            {item.productName}
-                            {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
-                            {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
-                          </li>
-                        ))}
-                      </ul>
-                      {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
-                    </div>
-                  </details>
-                </TableCell>
-              </TableRow>
+              <details key={sale.id} className={sale.voided ? "opacity-60" : ""}>
+                <summary className={`grid cursor-pointer grid-cols-6 gap-2 px-4 py-3 text-sm ${sale.voided ? "line-through" : ""}`}>
+                  <span>{sale.createdAt.toLocaleString("es-AR")}</span>
+                  <span>#{sale.id}</span>
+                  <span>{sellerName}</span>
+                  <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
+                  <span className="text-right">${sale.total.toFixed(2)}</span>
+                  <span>
+                    {sale.voided ? (
+                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
+                        Anulada
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="border-green-300 bg-green-50 text-green-800">
+                        Activa
+                      </Badge>
+                    )}
+                  </span>
+                </summary>
+                <div className="space-y-2 border-t bg-muted/30 px-4 py-3 pl-8 text-sm">
+                  <ul className="space-y-1">
+                    {(itemsBySale.get(sale.id) ?? []).map((item) => (
+                      <li key={item.id}>
+                        {item.productName}
+                        {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
+                        {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
+                      </li>
+                    ))}
+                  </ul>
+                  {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
+                </div>
+              </details>
             ))}
-          </TableBody>
-        </Table>
+          </div>
+        </div>
       )}
     </div>
   );
