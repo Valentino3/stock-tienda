@@ -7,6 +7,10 @@ export default async function ImportarPage() {
   try {
     await requireOwner();
   } catch (err) {
+    // requireOwner() -> requireUser() can itself throw Next's internal
+    // redirect("/login") error when there's no session at all; that must
+    // propagate untouched. Only a genuine FORBIDDEN (logged in, not owner)
+    // should be redirected to /vender here.
     unstable_rethrow(err);
     redirect("/vender");
   }
