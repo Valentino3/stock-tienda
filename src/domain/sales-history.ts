@@ -24,7 +24,7 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
     .from(sales)
     .innerJoin(user, eq(sales.sellerId, user.id))
     .where(and(...conditions))
-    .orderBy(desc(sales.createdAt))
+    .orderBy(desc(sales.createdAt), desc(sales.id))
     .limit(PAGE_SIZE + 1)
     .offset((opts.page - 1) * PAGE_SIZE);
 
