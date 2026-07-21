@@ -1,4 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 import { drizzle } from "drizzle-orm/pglite";
 import { sql } from "drizzle-orm";
 import fs from "node:fs";
@@ -6,7 +7,7 @@ import path from "node:path";
 import * as schema from "@/db/schema";
 
 export async function createTestDb() {
-  const client = new PGlite();
+  const client = new PGlite({ extensions: { pg_trgm } });
   const db = drizzle(client, { schema });
   const dir = path.resolve(__dirname, "../../drizzle");
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();

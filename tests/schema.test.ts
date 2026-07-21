@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { sql } from "drizzle-orm";
 import { createTestDb, seedTestUser } from "./helpers/db";
 import { products, productVariants } from "@/db/schema";
 
@@ -28,5 +29,15 @@ describe("schema", () => {
     const [defaults] = await db.insert(productVariants).values({ productId: p.id, name: "sin atributos" }).returning();
     expect(defaults.foil).toBe(false);
     expect(defaults.setName).toBeNull();
+  });
+
+  it("pg_trgm indexes are created and support ILIKE with a leading wildcard", async () => {
+    const db = await createTestDb();
+    await seedTestUser(db);
+    const [p] = await db.insert(products).values({ name: "Charizard Base Set", basePrice: 50000 }).returning();
+    await db.insert(productVariants).values({ productId: p.id, name: "NM Foil", sku: "CHAR-BS-NM-F", stock: 1 });
+
+    const found = await db.execute(sql`SELECT id FROM products WHERE name ILIKE '%izard%'`);
+    expect(found.rows).toHaveLength(1);
   });
 });
