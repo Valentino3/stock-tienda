@@ -40,4 +40,14 @@ describe("schema", () => {
     const found = await db.execute(sql`SELECT id FROM products WHERE name ILIKE '%izard%'`);
     expect(found.rows).toHaveLength(1);
   });
+
+  it("set_name trgm index supports ILIKE search on the set name", async () => {
+    const db = await createTestDb();
+    await seedTestUser(db);
+    const [p] = await db.insert(products).values({ name: "Charizard", basePrice: 50000 }).returning();
+    await db.insert(productVariants).values({ productId: p.id, name: "NM", stock: 1, setName: "Base Set" });
+
+    const found = await db.execute(sql`SELECT id FROM product_variants WHERE set_name ILIKE '%base%'`);
+    expect(found.rows).toHaveLength(1);
+  });
 });
