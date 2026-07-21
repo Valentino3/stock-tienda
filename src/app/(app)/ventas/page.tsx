@@ -1,9 +1,9 @@
 import Link from "next/link";
-import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
-import { sales, saleItems, productVariants, products, user } from "@/db/schema";
+import { user } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
+import { getSalesHistory } from "@/domain/sales-history";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VoidButton } from "./void-button";
@@ -14,7 +14,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   tarjeta: "Tarjeta",
 };
 
-type Params = { from?: string; to?: string; seller?: string };
+type Params = { from?: string; to?: string; seller?: string; all?: string; page?: string };
 
 export default async function VentasPage({
   searchParams,
@@ -24,39 +24,13 @@ export default async function VentasPage({
   const params = await searchParams;
   const currentUser = await requireUser();
   const isOwner = currentUser.role === "owner";
+  const page = Math.max(1, Number(params.page) || 1);
 
-  const conditions = [];
-  if (params.from) conditions.push(gte(sales.createdAt, new Date(`${params.from}T00:00:00`)));
-  if (params.to) {
-    const exclusiveEnd = new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000);
-    conditions.push(lt(sales.createdAt, exclusiveEnd));
-  }
-  if (!isOwner) conditions.push(eq(sales.sellerId, currentUser.id));
-  else if (params.seller) conditions.push(eq(sales.sellerId, params.seller));
+  const from = params.from ? new Date(`${params.from}T00:00:00`) : (params.all ? new Date(0) : undefined);
+  const to = params.to ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined;
+  const sellerId = !isOwner ? currentUser.id : params.seller || undefined;
 
-  const rows = await db
-    .select({ sale: sales, sellerName: user.name })
-    .from(sales)
-    .innerJoin(user, eq(sales.sellerId, user.id))
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(sales.createdAt));
-
-  const saleIds = rows.map((r) => r.sale.id);
-  const itemRows = saleIds.length
-    ? await db
-        .select({
-          id: saleItems.id,
-          saleId: saleItems.saleId,
-          quantity: saleItems.quantity,
-          unitPrice: saleItems.unitPrice,
-          productName: products.name,
-          variantName: productVariants.name,
-        })
-        .from(saleItems)
-        .innerJoin(productVariants, eq(saleItems.variantId, productVariants.id))
-        .innerJoin(products, eq(productVariants.productId, products.id))
-        .where(inArray(saleItems.saleId, saleIds))
-    : [];
+  const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, { from, to, sellerId, page });
 
   const itemsBySale = new Map<number, typeof itemRows>();
   for (const item of itemRows) {
@@ -70,10 +44,26 @@ export default async function VentasPage({
     : [];
 
   const hasFilters = Boolean(params.from || params.to || params.seller);
+  const usingDefaultWindow = !params.from && !params.to && !params.all;
 
   const today = new Date();
   const weekAgo = new Date(today);
   weekAgo.setDate(weekAgo.getDate() - 7);
+
+  // Construye el querystring de paginación a mano en vez de
+  // `new URLSearchParams({...params, page})`: `params` puede tener
+  // `from`/`to`/`seller`/`all` en `undefined`, y pasar un objeto con
+  // valores `undefined` a `URLSearchParams` los serializa como el string
+  // literal "undefined" en vez de omitirlos.
+  function pageHref(page: number) {
+    const sp = new URLSearchParams();
+    if (params.from) sp.set("from", params.from);
+    if (params.to) sp.set("to", params.to);
+    if (params.seller) sp.set("seller", params.seller);
+    if (params.all) sp.set("all", params.all);
+    sp.set("page", String(page));
+    return `/ventas?${sp.toString()}`;
+  }
 
   return (
     <div className="space-y-4">
@@ -136,6 +126,15 @@ export default async function VentasPage({
         </div>
       </div>
 
+      {usingDefaultWindow && (
+        <p className="text-xs text-muted-foreground">
+          Mostrando los últimos 30 días.{" "}
+          <Link href="/ventas?all=1" className="underline underline-offset-4">
+            Ver todo el historial
+          </Link>
+        </p>
+      )}
+
       {rows.length === 0 && <p className="text-sm text-muted-foreground">No hay ventas para el filtro seleccionado.</p>}
 
       {rows.length > 0 && (
@@ -149,7 +148,7 @@ export default async function VentasPage({
             <span>Estado</span>
           </div>
           <div className="divide-y">
-            {rows.map(({ sale, sellerName }) => (
+            {rows.map(({ sale, sellerName }: any) => (
               <details key={sale.id} className={sale.voided ? "opacity-60" : ""}>
                 <summary className={`grid cursor-pointer grid-cols-6 gap-2 px-4 py-3 text-sm ${sale.voided ? "line-through" : ""}`}>
                   <span>{sale.createdAt.toLocaleString("es-AR")}</span>
@@ -171,7 +170,7 @@ export default async function VentasPage({
                 </summary>
                 <div className="space-y-2 border-t bg-muted/30 px-4 py-3 pl-8 text-sm">
                   <ul className="space-y-1">
-                    {(itemsBySale.get(sale.id) ?? []).map((item) => (
+                    {(itemsBySale.get(sale.id) ?? []).map((item: any) => (
                       <li key={item.id}>
                         {item.productName}
                         {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
@@ -184,6 +183,26 @@ export default async function VentasPage({
               </details>
             ))}
           </div>
+        </div>
+      )}
+
+      {(page > 1 || hasNextPage) && (
+        <div className="flex justify-center gap-2">
+          {page > 1 ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={pageHref(page - 1)}>Anterior</Link>
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" disabled>Anterior</Button>
+          )}
+          <span className="flex items-center text-sm text-muted-foreground">Página {page}</span>
+          {hasNextPage ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={pageHref(page + 1)}>Siguiente</Link>
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" disabled>Siguiente</Button>
+          )}
         </div>
       )}
     </div>
