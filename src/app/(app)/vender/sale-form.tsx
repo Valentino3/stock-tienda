@@ -14,6 +14,10 @@ type CartItem = {
   variantId: number;
   productName: string;
   variantName: string;
+  setName: string | null;
+  condition: string | null;
+  foil: boolean;
+  language: string | null;
   price: number;
   quantity: number;
 };
@@ -24,8 +28,16 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "tarjeta", label: "Tarjeta" },
 ];
 
-function label(item: { productName: string; variantName: string }) {
-  return item.variantName ? `${item.productName} — ${item.variantName}` : item.productName;
+function label(item: {
+  productName: string;
+  variantName: string;
+  setName?: string | null;
+  condition?: string | null;
+  foil?: boolean;
+  language?: string | null;
+}) {
+  const parts = [item.variantName, item.setName, item.condition, item.foil ? "Foil" : null, item.language].filter(Boolean);
+  return parts.length ? `${item.productName} — ${parts.join(" ")}` : item.productName;
 }
 
 export function SaleForm() {
@@ -61,6 +73,10 @@ export function SaleForm() {
           variantId: r.variantId,
           productName: r.productName,
           variantName: r.variantName,
+          setName: r.setName,
+          condition: r.condition,
+          foil: r.foil,
+          language: r.language,
           price: r.price ?? r.basePrice,
           quantity: 1,
         },

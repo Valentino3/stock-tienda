@@ -1,31 +1,12 @@
 "use server";
-import { and, eq, ilike, or } from "drizzle-orm";
 import { db } from "@/db";
-import { products, productVariants } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { createSale } from "@/domain/sales";
+import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 
 export async function searchVariants(term: string) {
   await requireUser();
-  if (term.trim().length < 2) return [];
-  const t = `%${term.trim()}%`;
-  return db
-    .select({
-      variantId: productVariants.id,
-      productName: products.name,
-      variantName: productVariants.name,
-      sku: productVariants.sku,
-      stock: productVariants.stock,
-      price: productVariants.price,
-      basePrice: products.basePrice,
-    })
-    .from(productVariants)
-    .innerJoin(products, eq(productVariants.productId, products.id))
-    .where(and(
-      eq(products.active, true), eq(productVariants.active, true),
-      or(ilike(products.name, t), ilike(productVariants.sku, t))
-    ))
-    .limit(20);
+  return searchVariantsQuery(db, term);
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
