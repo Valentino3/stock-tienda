@@ -84,6 +84,10 @@ export function ImportForm() {
                   <TableHead>SKU</TableHead>
                   <TableHead>Precio</TableHead>
                   <TableHead>Stock</TableHead>
+                  <TableHead>Set</TableHead>
+                  <TableHead>Condición</TableHead>
+                  <TableHead>Foil</TableHead>
+                  <TableHead>Idioma</TableHead>
                   <TableHead>Estado</TableHead>
                 </TableRow>
               </TableHeader>
@@ -96,6 +100,10 @@ export function ImportForm() {
                     <TableCell>{r.sku ?? ""}</TableCell>
                     <TableCell>{r.price ?? ""}</TableCell>
                     <TableCell>{r.stock}</TableCell>
+                    <TableCell>{r.setName ?? ""}</TableCell>
+                    <TableCell>{r.condition ?? ""}</TableCell>
+                    <TableCell>{r.foil ? "Sí" : ""}</TableCell>
+                    <TableCell>{r.language ?? ""}</TableCell>
                     <TableCell>
                       {r.error ? (
                         <span className="text-sm text-destructive">{r.error}</span>

@@ -111,4 +111,52 @@ describe("executeImport", () => {
     expect(newVariant.productId).toBe(remera.id);
     expect(newVariant.price).toBe(1500); // NOT null, NOT inheriting the 1000 basePrice
   });
+
+  it("stores card attributes on create and syncs them on update when provided", async () => {
+    const validated = await validateImportRows(db, [
+      row(2, {
+        product: "Charizard", variant: "Base Set NM", sku: "CHAR-BS-NM", stock: 3,
+        setName: "Base Set", condition: "NM", foil: true, language: "EN",
+      }),
+    ]);
+    await executeImport(db, validated, "u1");
+    const [created] = await db.select().from(productVariants).where(eq(productVariants.sku, "CHAR-BS-NM"));
+    expect(created.setName).toBe("Base Set");
+    expect(created.condition).toBe("NM");
+    expect(created.foil).toBe(true);
+    expect(created.language).toBe("EN");
+    expect(created.stock).toBe(3); // stock real al crear, no 0 + movimiento
+
+    const reimport = await validateImportRows(db, [
+      row(3, { product: "Charizard", variant: "Base Set NM", sku: "CHAR-BS-NM", stock: 3, condition: "LP" }),
+    ]);
+    await executeImport(db, reimport, "u1");
+    const [updated] = await db.select().from(productVariants).where(eq(productVariants.sku, "CHAR-BS-NM"));
+    expect(updated.condition).toBe("LP"); // sincronizado en el update
+    expect(updated.setName).toBe("Base Set"); // no se borró por no venir en la segunda fila... espera, ver Step 3
+  });
+
+  it("handles a large batch of create rows correctly (batching sanity check)", async () => {
+    const rows = Array.from({ length: 150 }, (_, i) =>
+      row(i + 2, { product: `Carta ${i}`, variant: "NM", sku: `BULK-${i}`, price: 100 + i, stock: i })
+    );
+    const validated = await validateImportRows(db, rows);
+    const res = await executeImport(db, validated, "u1");
+    expect(res).toEqual({ created: 150, updated: 0, skipped: 0 });
+
+    const allVariants = await db.select().from(productVariants).where(eq(productVariants.sku, "BULK-100"));
+    expect(allVariants[0].stock).toBe(100);
+    // Cada producto de este batch tiene una sola fila, por lo que su basePrice recién
+    // creado (group[0].price) coincide siempre con el price de esa fila. Por contrato
+    // (ver "creates agrupados"), el price de la variante se guarda como null cuando
+    // coincide con el basePrice del producto resuelto — null == "hereda basePrice",
+    // no un bug de la variante. El precio efectivo (200) sigue viniendo del producto.
+    expect(allVariants[0].price).toBeNull();
+    const [bulkProduct] = await db.select().from(products).where(eq(products.name, "Carta 100"));
+    expect(bulkProduct.basePrice).toBe(200);
+
+    const movements = await db.select().from(stockMovements).where(eq(stockMovements.reason, "importación"));
+    // 149 filas con stock > 0 (la fila 0 tiene stock: 0, no genera movimiento)
+    expect(movements.length).toBe(149);
+  });
 });

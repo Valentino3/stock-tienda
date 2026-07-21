@@ -1,5 +1,5 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { products, productVariants } from "@/db/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { products, productVariants, stockMovements } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 
 export type ImportRow = {
@@ -9,6 +9,10 @@ export type ImportRow = {
   sku: string | null;
   price: number | null;
   stock: number;
+  setName?: string | null;
+  condition?: string | null;
+  foil?: boolean;
+  language?: string | null;
 };
 
 export type ValidatedRow = ImportRow & { error: string | null; action: "create" | "update" | null };
@@ -51,30 +55,68 @@ export async function executeImport(
   const valid = rows.filter((r) => !r.error);
 
   await db.transaction(async (tx: any) => {
-    // updates por SKU
-    for (const r of valid.filter((r) => r.action === "update")) {
-      const [variant] = await tx.select().from(productVariants).where(eq(productVariants.sku, r.sku!));
-      if (!variant) {
-        // El SKU existía al validar pero desapareció antes de ejecutar (fila borrada
-        // concurrentemente, etc.): error de dominio explícito en vez de un TypeError
-        // crudo al desreferenciar `variant.id`. La tx hace rollback de todo lo hecho.
-        throw new Error("VARIANT_GONE");
+    // ---- updates por SKU ----
+    const updateRows = valid.filter((r) => r.action === "update");
+    if (updateRows.length) {
+      const skus = updateRows.map((r) => r.sku!) ;
+      const existingVariants = await tx.select().from(productVariants).where(inArray(productVariants.sku, skus));
+      const bySku = new Map(existingVariants.map((v: any) => [v.sku, v]));
+
+      // Batch: precio en un solo UPDATE ... FROM (VALUES ...) en vez de un
+      // UPDATE por fila — con miles de filas esto evita miles de round-trips
+      // secuenciales. Verificado en esta sesión que `sql.join` + `UPDATE ...
+      // FROM (VALUES ...)` funciona con drizzle-orm 0.45.2 + PGlite/Neon.
+      const priceUpdates = updateRows
+        .map((r) => ({ variant: bySku.get(r.sku!), row: r }))
+        .filter(({ variant, row }) => variant && row.price !== null);
+      if (priceUpdates.length) {
+        const valuesSql = sql.join(
+          priceUpdates.map(({ variant, row }) => sql`(${(variant as any).id}::int, ${row.price}::numeric)`),
+          sql`, `
+        );
+        await tx.execute(sql`
+          UPDATE product_variants AS pv
+          SET price = data.price
+          FROM (VALUES ${valuesSql}) AS data(id, price)
+          WHERE pv.id = data.id
+        `);
       }
-      if (r.price !== null) {
-        await tx.update(productVariants).set({ price: r.price }).where(eq(productVariants.id, variant.id));
+
+      // Stock y atributos de carta: por fila, porque el delta de stock pasa
+      // por `applyStockMovement` (guarda atómica contra escrituras
+      // concurrentes — sí relevante acá, a diferencia del camino de
+      // creación, porque la fila YA existía y algo más pudo estar
+      // tocando su stock).
+      for (const r of updateRows) {
+        const variant = bySku.get(r.sku!) as any;
+        if (!variant) {
+          // El SKU existía al validar pero desapareció antes de ejecutar
+          // (fila borrada concurrentemente, etc.): error de dominio
+          // explícito en vez de un TypeError crudo. La tx hace rollback
+          // de todo lo hecho.
+          throw new Error("VARIANT_GONE");
+        }
+        const attrUpdates: Record<string, unknown> = {};
+        if (r.setName) attrUpdates.setName = r.setName;
+        if (r.condition) attrUpdates.condition = r.condition;
+        if (r.foil !== undefined) attrUpdates.foil = r.foil;
+        if (r.language) attrUpdates.language = r.language;
+        if (Object.keys(attrUpdates).length) {
+          await tx.update(productVariants).set(attrUpdates).where(eq(productVariants.id, variant.id));
+        }
+        const delta = r.stock - variant.stock;
+        // Nota: no se registra movimiento de ajuste cuando delta === 0 (sin
+        // cambio real de stock no hay nada que auditar).
+        if (delta !== 0) {
+          await applyStockMovement(tx, {
+            variantId: variant.id, type: "ajuste", quantity: delta, userId, reason: "importación",
+          });
+        }
+        updated++;
       }
-      const delta = r.stock - variant.stock;
-      // Nota: no se registra movimiento de ajuste cuando delta === 0 (sin cambio real
-      // de stock no hay nada que auditar; evita ruido de movimientos con quantity 0).
-      if (delta !== 0) {
-        await applyStockMovement(tx, {
-          variantId: variant.id, type: "ajuste", quantity: delta, userId, reason: "importación",
-        });
-      }
-      updated++;
     }
 
-    // creates agrupados por nombre de producto
+    // ---- creates agrupados por nombre de producto ----
     const creates = valid.filter((r) => r.action === "create");
     const byProduct = new Map<string, ValidatedRow[]>();
     for (const r of creates) {
@@ -92,27 +134,44 @@ export async function executeImport(
         .limit(1);
       const product = existingProduct
         ?? (await tx.insert(products).values({ name, basePrice: group[0].price! }).returning())[0];
-      for (const r of group) {
-        // Comparar contra el basePrice REAL del producto resuelto (reusado o recién
-        // insertado), no contra `group[0].price`: si el producto se reusa, su
-        // basePrice puede diferir del precio de la primera fila del grupo, y usar
-        // ese precio como referencia perdía silenciosamente el precio importado
-        // (quedaba `null` => heredaba el basePrice existente en vez del importado).
-        const price = r.price !== null && r.price !== product.basePrice ? r.price : null;
-        const [variant] = await tx.insert(productVariants).values({
+
+      // Batch: un solo insert multi-fila por grupo de producto en vez de un
+      // insert por variante. El stock real se inserta directo (no 0 +
+      // movimiento después) porque una fila recién creada no tiene con qué
+      // competir — nadie más puede estar escribiendo el stock de una
+      // variante que no existía hace un instante.
+      const insertedVariants = await tx.insert(productVariants).values(
+        group.map((r) => ({
           productId: product.id,
           name: r.variant.trim(),
           sku: r.sku,
-          stock: 0,
-          price,
-        }).returning();
-        if (r.stock > 0) {
-          await applyStockMovement(tx, {
-            variantId: variant.id, type: "ajuste", quantity: r.stock, userId, reason: "importación",
-          });
-        }
-        created++;
+          stock: r.stock,
+          // Comparar contra el basePrice REAL del producto resuelto (reusado
+          // o recién insertado), no contra `group[0].price`: si el producto
+          // se reusa, su basePrice puede diferir del precio de la primera
+          // fila del grupo.
+          price: r.price !== null && r.price !== product.basePrice ? r.price : null,
+          setName: r.setName ?? null,
+          condition: r.condition ?? null,
+          foil: r.foil ?? false,
+          language: r.language ?? null,
+        }))
+      ).returning();
+
+      // Postgres preserva el orden de entrada en RETURNING para un único
+      // INSERT ... VALUES (...), (...) — verificado en esta sesión con
+      // PGlite. Seguro correlacionar por índice.
+      const movementValues = group
+        .map((r, i) => ({ variantId: insertedVariants[i].id, quantity: r.stock }))
+        .filter(({ quantity }) => quantity > 0);
+      if (movementValues.length) {
+        await tx.insert(stockMovements).values(
+          movementValues.map(({ variantId, quantity }) => ({
+            variantId, type: "ajuste" as const, quantity, userId, reason: "importación",
+          }))
+        );
       }
+      created += group.length;
     }
   });
 

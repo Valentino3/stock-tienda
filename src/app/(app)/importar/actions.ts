@@ -39,11 +39,17 @@ export async function parseAndValidate(formData: FormData): Promise<{ rows?: Val
     const sku = cellText(row.getCell(3).value).trim() || null;
     const priceRaw = cellText(row.getCell(4).value).trim();
     const stockRaw = cellText(row.getCell(5).value).trim();
+    const setName = cellText(row.getCell(6).value).trim() || null;
+    const condition = cellText(row.getCell(7).value).trim() || null;
+    const foilRaw = cellText(row.getCell(8).value).trim().toLowerCase();
+    const foil = ["true", "1", "sí", "si", "x"].includes(foilRaw);
+    const language = cellText(row.getCell(9).value).trim() || null;
     if (!product && !variant && !sku && !priceRaw && !stockRaw) return; // fila vacía
     rows.push({
       rowNumber, product, variant, sku,
       price: priceRaw === "" ? null : Number(priceRaw.replace(",", ".")),
       stock: stockRaw === "" ? 0 : Number(stockRaw),
+      setName, condition, foil, language,
     });
   });
   if (rows.length === 0) return { error: "El archivo no tiene filas de datos" };
