@@ -14,6 +14,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveVariant, restock, adjustStock, toggleVariantActive } from "./actions";
+import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
 import type { ProductVariant } from "@/db/schema";
 
 type Props = {
@@ -34,6 +35,10 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
   const [name, setName] = useState(variant.name);
   const [sku, setSku] = useState(variant.sku ?? "");
   const [price, setPrice] = useState(variant.price != null ? String(variant.price) : "");
+  const [setNameField, setSetNameField] = useState(variant.setName ?? "");
+  const [condition, setCondition] = useState(variant.condition ?? "");
+  const [foil, setFoil] = useState(variant.foil);
+  const [language, setLanguage] = useState(variant.language ?? "");
   const [qty, setQty] = useState("1");
   const [newStock, setNewStock] = useState(String(variant.stock));
   const [reason, setReason] = useState("");
@@ -74,6 +79,10 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         name,
         sku: sku || null,
         price: price === "" ? null : Number(price),
+        setName: setNameField || null,
+        condition: condition || null,
+        foil,
+        language: language || null,
       });
       if ("error" in res && res.error) setError(res.error);
       else {
@@ -118,6 +127,10 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         ) : (
           <span className="text-muted-foreground">Stock: {variant.stock}</span>
         )}
+        {variant.setName && <span className="text-muted-foreground">{variant.setName}</span>}
+        {variant.condition && <Badge variant="outline">{variant.condition}</Badge>}
+        {variant.foil && <Badge variant="secondary">Foil</Badge>}
+        {variant.language && <Badge variant="outline">{variant.language}</Badge>}
         {!variant.active && <Badge variant="outline">Inactivo</Badge>}
 
         {isOwner && (
@@ -152,6 +165,38 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
                       onChange={(e) => setPrice(e.target.value)}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={`variant-set-${variant.id}`}>Set</Label>
+                    <Input id={`variant-set-${variant.id}`} value={setNameField} onChange={(e) => setSetNameField(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={`variant-condition-${variant.id}`}>Condición</Label>
+                    <Input
+                      id={`variant-condition-${variant.id}`}
+                      list="condition-suggestions"
+                      value={condition}
+                      onChange={(e) => setCondition(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={`variant-language-${variant.id}`}>Idioma</Label>
+                    <Input
+                      id={`variant-language-${variant.id}`}
+                      list="language-suggestions"
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                    />
+                  </div>
+                  <label className="flex items-center gap-1.5 text-sm">
+                    <input type="checkbox" checked={foil} onChange={(e) => setFoil(e.target.checked)} />
+                    Foil
+                  </label>
+                  <datalist id="condition-suggestions">
+                    {CONDITION_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+                  </datalist>
+                  <datalist id="language-suggestions">
+                    {LANGUAGE_SUGGESTIONS.map((l) => <option key={l} value={l} />)}
+                  </datalist>
                   {error && <p className="text-sm text-destructive">{error}</p>}
                   <DialogFooter>
                     <Button type="button" variant="outline" onClick={() => setEditOpen(false)}>

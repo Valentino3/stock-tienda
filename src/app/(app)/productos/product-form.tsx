@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveProduct, saveVariant, toggleProductActive } from "./actions";
+import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
 import type { Product } from "@/db/schema";
 
 type Props = { product?: Product };
@@ -31,6 +32,10 @@ export function ProductForm({ product }: Props) {
   const [vName, setVName] = useState("");
   const [vSku, setVSku] = useState("");
   const [vPrice, setVPrice] = useState("");
+  const [vSetName, setVSetName] = useState("");
+  const [vCondition, setVCondition] = useState("");
+  const [vFoil, setVFoil] = useState(false);
+  const [vLanguage, setVLanguage] = useState("");
   const [vError, setVError] = useState("");
 
   function submitProduct(e: React.FormEvent) {
@@ -59,6 +64,10 @@ export function ProductForm({ product }: Props) {
         name: vName,
         sku: vSku || null,
         price: vPrice === "" ? null : Number(vPrice),
+        setName: vSetName || null,
+        condition: vCondition || null,
+        foil: vFoil,
+        language: vLanguage || null,
       });
       if ("error" in res && res.error) setVError(res.error);
       else {
@@ -66,6 +75,10 @@ export function ProductForm({ product }: Props) {
         setVName("");
         setVSku("");
         setVPrice("");
+        setVSetName("");
+        setVCondition("");
+        setVFoil(false);
+        setVLanguage("");
         setAddingVariant(false);
       }
     });
@@ -159,6 +172,22 @@ export function ProductForm({ product }: Props) {
             <Label className="text-xs">Precio (opcional)</Label>
             <Input className="h-8 w-32" type="number" step="0.01" value={vPrice} onChange={(e) => setVPrice(e.target.value)} />
           </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Set</Label>
+            <Input className="h-8" value={vSetName} onChange={(e) => setVSetName(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Condición</Label>
+            <Input className="h-8" list="condition-suggestions" value={vCondition} onChange={(e) => setVCondition(e.target.value)} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Idioma</Label>
+            <Input className="h-8" list="language-suggestions" value={vLanguage} onChange={(e) => setVLanguage(e.target.value)} />
+          </div>
+          <label className="flex items-center gap-1.5 text-xs">
+            <input type="checkbox" checked={vFoil} onChange={(e) => setVFoil(e.target.checked)} />
+            Foil
+          </label>
           {vError && <p className="text-xs text-destructive">{vError}</p>}
           <Button type="submit" size="sm" disabled={pending}>
             Agregar
@@ -168,6 +197,12 @@ export function ProductForm({ product }: Props) {
           </Button>
         </form>
       )}
+      <datalist id="condition-suggestions">
+        {CONDITION_SUGGESTIONS.map((c) => <option key={c} value={c} />)}
+      </datalist>
+      <datalist id="language-suggestions">
+        {LANGUAGE_SUGGESTIONS.map((l) => <option key={l} value={l} />)}
+      </datalist>
     </div>
   );
 }
