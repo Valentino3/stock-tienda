@@ -40,7 +40,7 @@ async function getProducts(opts: { q?: string; page: number }): Promise<{ produc
     .select()
     .from(products)
     .where(where)
-    .orderBy(products.name)
+    .orderBy(products.name, products.id)
     .limit(PAGE_SIZE + 1)
     .offset((opts.page - 1) * PAGE_SIZE);
 
