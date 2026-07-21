@@ -1,4 +1,4 @@
-import { and, between, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, between, desc, eq, ilike, isNotNull, sql } from "drizzle-orm";
 import { cashSessions, products, productVariants, sales, saleItems } from "@/db/schema";
 
 export async function getSalesReport(db: any, range: { from: Date; to: Date }) {
@@ -22,11 +22,12 @@ export async function getSalesReport(db: any, range: { from: Date; to: Date }) {
   return { byDay, byMethod };
 }
 
-export async function getTopProducts(db: any, opts: { from: Date; to: Date; limit?: number }) {
+export async function getTopProducts(db: any, opts: { from: Date; to: Date; limit?: number; setName?: string }) {
   return db
     .select({
       productName: products.name,
       variantName: productVariants.name,
+      setName: productVariants.setName,
       unitsSold: sql<number>`sum(${saleItems.quantity})`.mapWith(Number),
       revenue: sql<number>`sum(${saleItems.quantity} * ${saleItems.unitPrice})`.mapWith(Number),
     })
@@ -34,17 +35,22 @@ export async function getTopProducts(db: any, opts: { from: Date; to: Date; limi
     .innerJoin(sales, eq(saleItems.saleId, sales.id))
     .innerJoin(productVariants, eq(saleItems.variantId, productVariants.id))
     .innerJoin(products, eq(productVariants.productId, products.id))
-    .where(and(eq(sales.voided, false), between(sales.createdAt, opts.from, opts.to)))
-    .groupBy(products.name, productVariants.name)
+    .where(and(
+      eq(sales.voided, false),
+      between(sales.createdAt, opts.from, opts.to),
+      opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
+    ))
+    .groupBy(products.name, productVariants.name, productVariants.setName)
     .orderBy(desc(sql`sum(${saleItems.quantity})`))
     .limit(opts.limit ?? 10);
 }
 
-export async function getLowStock(db: any) {
+export async function getLowStock(db: any, opts: { setName?: string } = {}) {
   return db
     .select({
       productName: products.name,
       variantName: productVariants.name,
+      setName: productVariants.setName,
       stock: productVariants.stock,
       threshold: products.lowStockThreshold,
     })
@@ -52,7 +58,8 @@ export async function getLowStock(db: any) {
     .innerJoin(products, eq(productVariants.productId, products.id))
     .where(and(
       eq(products.active, true), eq(productVariants.active, true),
-      sql`${productVariants.stock} <= ${products.lowStockThreshold}`
+      sql`${productVariants.stock} <= ${products.lowStockThreshold}`,
+      opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
     ))
     .orderBy(productVariants.stock);
 }

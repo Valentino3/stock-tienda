@@ -19,7 +19,7 @@ function money(n: number | null | undefined) {
   return `$${(n ?? 0).toFixed(2)}`;
 }
 
-type Params = { from?: string; to?: string };
+type Params = { from?: string; to?: string; set?: string };
 
 export default async function ReportesPage({
   searchParams,
@@ -55,8 +55,8 @@ export default async function ReportesPage({
 
   const [{ byDay, byMethod }, topProducts, lowStock, cashHistory] = await Promise.all([
     getSalesReport(db, { from, to }),
-    getTopProducts(db, { from, to, limit: 10 }),
-    getLowStock(db),
+    getTopProducts(db, { from, to, limit: 10, setName: params.set || undefined }),
+    getLowStock(db, { setName: params.set || undefined }),
     getCashSessionHistory(db, { limit: 30 }),
   ]);
 
@@ -121,6 +121,16 @@ export default async function ReportesPage({
               type="date"
               name="to"
               defaultValue={toValue}
+              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-muted-foreground">Set</span>
+            <input
+              type="text"
+              name="set"
+              defaultValue={params.set ?? ""}
+              placeholder="Ej: Base Set"
               className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
             />
           </label>
@@ -205,16 +215,18 @@ export default async function ReportesPage({
               <TableRow>
                 <TableHead>Producto</TableHead>
                 <TableHead>Variante</TableHead>
+                <TableHead>Set</TableHead>
                 <TableHead>Unidades vendidas</TableHead>
                 <TableHead className="text-right">Ingresos</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {topProducts.map(
-                (row: { productName: string; variantName: string; unitsSold: number; revenue: number }, i: number) => (
+                (row: { productName: string; variantName: string; setName: string | null; unitsSold: number; revenue: number }, i: number) => (
                   <TableRow key={i}>
                     <TableCell>{row.productName}</TableCell>
                     <TableCell>{row.variantName || "—"}</TableCell>
+                    <TableCell>{row.setName || "—"}</TableCell>
                     <TableCell>{row.unitsSold}</TableCell>
                     <TableCell className="text-right">{money(row.revenue)}</TableCell>
                   </TableRow>
@@ -235,16 +247,18 @@ export default async function ReportesPage({
               <TableRow>
                 <TableHead>Producto</TableHead>
                 <TableHead>Variante</TableHead>
+                <TableHead>Set</TableHead>
                 <TableHead>Stock</TableHead>
                 <TableHead>Umbral</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {lowStock.map(
-                (row: { productName: string; variantName: string; stock: number; threshold: number }, i: number) => (
+                (row: { productName: string; variantName: string; setName: string | null; stock: number; threshold: number }, i: number) => (
                   <TableRow key={i}>
                     <TableCell>{row.productName}</TableCell>
                     <TableCell>{row.variantName || "—"}</TableCell>
+                    <TableCell>{row.setName || "—"}</TableCell>
                     <TableCell>
                       <Badge variant="destructive">{row.stock}</Badge>
                     </TableCell>
