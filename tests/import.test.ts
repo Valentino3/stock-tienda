@@ -136,6 +136,34 @@ describe("executeImport", () => {
     expect(updated.setName).toBe("Base Set"); // no se borró por no venir en la segunda fila... espera, ver Step 3
   });
 
+  it("leaves foil untouched when a re-import row omits it (blank Foil cell), but still honors an explicit false", async () => {
+    const created = await validateImportRows(db, [
+      row(2, {
+        product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4, foil: true,
+      }),
+    ]);
+    await executeImport(db, created, "u1");
+    const [afterCreate] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
+    expect(afterCreate.foil).toBe(true);
+
+    // Simula una fila de re-importación con la celda Foil en blanco (foil: undefined,
+    // como produce actions.ts para una celda vacía): NO debe pisar el foil existente.
+    const blankFoilReimport = await validateImportRows(db, [
+      row(3, { product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4 }),
+    ]);
+    await executeImport(db, blankFoilReimport, "u1");
+    const [afterBlankReimport] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
+    expect(afterBlankReimport.foil).toBe(true); // no se pisó por una celda Foil en blanco
+
+    // Un valor explícito (foil: false) sí debe sincronizarse.
+    const explicitFalseReimport = await validateImportRows(db, [
+      row(4, { product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4, foil: false }),
+    ]);
+    await executeImport(db, explicitFalseReimport, "u1");
+    const [afterExplicitFalse] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
+    expect(afterExplicitFalse.foil).toBe(false); // explicit false still syncs
+  });
+
   it("handles a large batch of create rows correctly (batching sanity check)", async () => {
     const rows = Array.from({ length: 150 }, (_, i) =>
       row(i + 2, { product: `Carta ${i}`, variant: "NM", sku: `BULK-${i}`, price: 100 + i, stock: i })

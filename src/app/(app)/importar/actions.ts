@@ -42,7 +42,7 @@ export async function parseAndValidate(formData: FormData): Promise<{ rows?: Val
     const setName = cellText(row.getCell(6).value).trim() || null;
     const condition = cellText(row.getCell(7).value).trim() || null;
     const foilRaw = cellText(row.getCell(8).value).trim().toLowerCase();
-    const foil = ["true", "1", "sí", "si", "x"].includes(foilRaw);
+    const foil = foilRaw === "" ? undefined : ["true", "1", "sí", "si", "x"].includes(foilRaw);
     const language = cellText(row.getCell(9).value).trim() || null;
     if (!product && !variant && !sku && !priceRaw && !stockRaw) return; // fila vacía
     rows.push({
