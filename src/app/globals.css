@@ -2,6 +2,17 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+/*
+  DIRECTION — "Libro mayor" (Operate). See DESIGN.md.
+  THESIS: los números son la interfaz; cifras tabulares en las que confiar de un
+    vistazo. Rechaza la grilla de cards grises del default de shadcn.
+  OWN-WORLD: fondo casi-blanco frío, reglas de 1px sobre cards con sombra,
+    primarios en negro tinta, acento cobalto solo en el detalle (foco, nav
+    activo, enlaces, cifra clave). Geist Mono + tabular-nums para toda cifra.
+  STORY: el operador escanea plata/stock/SKU y actúa sin fricción.
+  COLOR: Restrained — neutros fríos + cobalto + esmeralda/rojo semánticos. Claro.
+*/
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -19,6 +30,12 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-muted: var(--brand-muted);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -41,56 +58,72 @@
 }
 
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  /* Cool near-white ground; pure-white cards sit a hair above it. */
+  --background: oklch(0.985 0.003 264);
+  --foreground: oklch(0.21 0.014 266);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.21 0.014 266);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: var(--color-indigo-600);
-  --primary-foreground: var(--color-indigo-50);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: var(--primary);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --popover-foreground: oklch(0.21 0.014 266);
+  /* Primary = ink black (action buttons). */
+  --primary: oklch(0.24 0.012 266);
+  --primary-foreground: oklch(0.985 0.003 264);
+  --secondary: oklch(0.966 0.004 264);
+  --secondary-foreground: oklch(0.24 0.012 266);
+  --muted: oklch(0.966 0.004 264);
+  --muted-foreground: oklch(0.48 0.018 264);
+  --accent: oklch(0.958 0.006 262);
+  --accent-foreground: oklch(0.24 0.012 266);
+  /* Cobalt — brand accent, lives in details only. */
+  --brand: oklch(0.505 0.17 260);
+  --brand-foreground: oklch(0.99 0.01 260);
+  --brand-muted: oklch(0.955 0.028 260);
+  /* Semantics. */
+  --destructive: oklch(0.555 0.216 26);
+  --destructive-foreground: oklch(0.99 0.01 26);
+  --success: oklch(0.55 0.13 156);
+  --success-foreground: oklch(0.99 0.02 156);
+  --border: oklch(0.905 0.006 262);
+  --input: oklch(0.905 0.006 262);
+  --ring: var(--brand);
+  --chart-1: oklch(0.55 0.16 260);
+  --chart-2: oklch(0.6 0.13 160);
+  --chart-3: oklch(0.72 0.15 70);
+  --chart-4: oklch(0.55 0.18 300);
+  --chart-5: oklch(0.6 0.2 15);
   --radius: 0.625rem;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: var(--color-indigo-500);
-  --primary-foreground: var(--color-indigo-950);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
+  --background: oklch(0.185 0.012 266);
+  --foreground: oklch(0.97 0.004 264);
+  --card: oklch(0.225 0.013 266);
+  --card-foreground: oklch(0.97 0.004 264);
+  --popover: oklch(0.225 0.013 266);
+  --popover-foreground: oklch(0.97 0.004 264);
+  --primary: oklch(0.97 0.004 264);
+  --primary-foreground: oklch(0.2 0.012 266);
+  --secondary: oklch(0.28 0.012 266);
+  --secondary-foreground: oklch(0.97 0.004 264);
+  --muted: oklch(0.28 0.012 266);
+  --muted-foreground: oklch(0.7 0.015 264);
+  --accent: oklch(0.3 0.014 266);
+  --accent-foreground: oklch(0.97 0.004 264);
+  --brand: oklch(0.62 0.16 262);
+  --brand-foreground: oklch(0.15 0.02 262);
+  --brand-muted: oklch(0.3 0.05 262);
+  --destructive: oklch(0.68 0.19 24);
+  --destructive-foreground: oklch(0.15 0.02 24);
+  --success: oklch(0.68 0.13 158);
+  --success-foreground: oklch(0.15 0.02 158);
+  --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 15%);
-  --ring: var(--primary);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --ring: var(--brand);
+  --chart-1: oklch(0.62 0.16 262);
+  --chart-2: oklch(0.68 0.13 160);
+  --chart-3: oklch(0.75 0.15 70);
+  --chart-4: oklch(0.62 0.18 300);
+  --chart-5: oklch(0.66 0.2 15);
 }
 
 @layer base {
@@ -99,5 +132,23 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  /* Every figure — money, stock, SKU, counts, data dates — is tabular mono. */
+  .figure {
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  /* Ledger section label: the chosen sectioning grammar, used deliberately. */
+  .ledger-label {
+    font-size: 0.6875rem;
+    line-height: 1;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
   }
 }

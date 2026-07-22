@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { createTestDb, seedTestUser } from "./helpers/db";
 import { cashSessions, sales, type CashSession } from "@/db/schema";
-import { openCashSession, closeCashSession, getOpenSession } from "@/domain/cash";
+import { openCashSession, closeCashSession, getOpenSession, createCashMovement, getSessionCashMovements } from "@/domain/cash";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 
@@ -34,6 +34,32 @@ describe("cash sessions", () => {
     expect(closed.totalCard).toBe(3000);
     expect(closed.difference).toBe(-100);
     expect(await getOpenSession(db)).toBeNull();
+  });
+
+  it("registra gastos/egresos y los resta del efectivo esperado al cerrar", async () => {
+    const s = await openCashSession(db, { userId: "u1", openingCash: 1000 });
+    await db.insert(sales).values([
+      { sellerId: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
+    ]);
+    await createCashMovement(db, { sessionId: s.id, kind: "gasto", amount: 300, description: "insumos", userId: "u1" });
+    await createCashMovement(db, { sessionId: s.id, kind: "egreso", amount: 200, description: "retiro", userId: "u1" });
+
+    const movements = await getSessionCashMovements(db, s.id);
+    expect(movements).toHaveLength(2);
+
+    const closed = await closeCashSession(db, { sessionId: s.id, userId: "u1", countedCash: 2500 });
+    expect(closed.expectedCash).toBe(2500); // 1000 + 2000 − 300 − 200
+    expect(closed.difference).toBe(0);
+  });
+
+  it("rechaza gasto sin caja abierta y con monto inválido", async () => {
+    await expect(
+      createCashMovement(db, { sessionId: 1, kind: "gasto", amount: 100, description: "x", userId: "u1" })
+    ).rejects.toThrow("NO_OPEN_SESSION");
+    const s = await openCashSession(db, { userId: "u1", openingCash: 0 });
+    await expect(
+      createCashMovement(db, { sessionId: s.id, kind: "gasto", amount: 0, description: "x", userId: "u1" })
+    ).rejects.toThrow("INVALID_AMOUNT");
   });
 
   it("rejects closing an already closed session", async () => {

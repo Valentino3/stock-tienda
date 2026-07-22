@@ -63,6 +63,48 @@ describe("createSale", () => {
   });
 });
 
+describe("createSale con descuentos", () => {
+  it("aplica descuento por línea (monto fijo) y guarda el descuento en el ítem", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      sellerId: "u1", paymentMethod: "efectivo",
+      items: [{ variantId: vId, quantity: 2, discount: { kind: "amount", value: 300 } }], // 2*1000 - 300
+    });
+    expect(sale.total).toBe(1700);
+    const [item] = await db.select().from(saleItems).where(eq(saleItems.saleId, sale.id));
+    expect(item.discountAmount).toBe(300);
+  });
+
+  it("aplica descuento por línea en porcentaje", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      sellerId: "u1", paymentMethod: "efectivo",
+      items: [{ variantId: vId, quantity: 1, discount: { kind: "percent", value: 10 } }], // 1000 - 10%
+    });
+    expect(sale.total).toBe(900);
+  });
+
+  it("aplica descuento general sobre el subtotal ya neto", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      sellerId: "u1", paymentMethod: "efectivo",
+      items: [{ variantId: vId, quantity: 1 }, { variantId: vId2, quantity: 1 }], // 1000 + 1200 = 2200
+      saleDiscount: { kind: "percent", value: 50 },
+    });
+    expect(sale.total).toBe(1100);
+    expect(sale.discountAmount).toBe(1100);
+  });
+
+  it("acota el descuento para no dejar la línea negativa", async () => {
+    await openCashSession(db, { userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      sellerId: "u1", paymentMethod: "efectivo",
+      items: [{ variantId: vId, quantity: 1, discount: { kind: "amount", value: 99999 } }],
+    });
+    expect(sale.total).toBe(0);
+  });
+});
+
 describe("voidSale", () => {
   it("restores stock and marks voided", async () => {
     await openCashSession(db, { userId: "u1", openingCash: 0 });

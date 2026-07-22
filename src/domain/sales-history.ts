@@ -39,6 +39,7 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
           saleId: saleItems.saleId,
           quantity: saleItems.quantity,
           unitPrice: saleItems.unitPrice,
+          discountAmount: saleItems.discountAmount,
           productName: products.name,
           variantName: productVariants.name,
         })

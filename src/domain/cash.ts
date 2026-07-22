@@ -1,11 +1,37 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
-import { cashSessions, sales, type CashSession } from "@/db/schema";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { cashMovements, cashSessions, sales, type CashMovement, type CashSession } from "@/db/schema";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export async function getOpenSession(db: any): Promise<CashSession | null> {
   const rows = await db.select().from(cashSessions).where(isNull(cashSessions.closedAt)).limit(1);
   return rows[0] ?? null;
+}
+
+// Registra una salida de efectivo (gasto o egreso) contra la caja abierta.
+// Ambos tipos restan del efectivo esperado al cerrar (ver closeCashSession).
+export async function createCashMovement(
+  db: any,
+  input: { sessionId: number; kind: "gasto" | "egreso"; amount: number; description: string; userId: string }
+): Promise<CashMovement> {
+  if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
+  if (!input.description.trim()) throw new Error("EMPTY_DESCRIPTION");
+  const session = await getOpenSession(db);
+  if (!session || session.id !== input.sessionId) throw new Error("NO_OPEN_SESSION");
+  const [row] = await db.insert(cashMovements).values({
+    cashSessionId: input.sessionId,
+    kind: input.kind,
+    amount: round2(input.amount),
+    description: input.description.trim(),
+    createdBy: input.userId,
+  }).returning();
+  return row;
+}
+
+export async function getSessionCashMovements(db: any, sessionId: number): Promise<CashMovement[]> {
+  return db.select().from(cashMovements)
+    .where(eq(cashMovements.cashSessionId, sessionId))
+    .orderBy(desc(cashMovements.createdAt));
 }
 
 // Código de error de Postgres (y PGlite) para violación de restricción
@@ -56,8 +82,14 @@ export async function closeCashSession(
       .where(and(eq(sales.cashSessionId, input.sessionId), eq(sales.voided, false)))
       .groupBy(sales.paymentMethod);
 
+    // Gastos + egresos: efectivo que salió de la caja, resta del esperado.
+    const [{ out }] = await tx
+      .select({ out: sql<number>`coalesce(sum(${cashMovements.amount}), 0)`.mapWith(Number) })
+      .from(cashMovements)
+      .where(eq(cashMovements.cashSessionId, input.sessionId));
+
     const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
-    const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0));
+    const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0) - out);
 
     const [closed] = await tx.update(cashSessions)
       .set({

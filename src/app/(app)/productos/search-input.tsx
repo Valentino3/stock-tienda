@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
 export function SearchInput({ defaultValue }: { defaultValue: string }) {
@@ -29,11 +30,14 @@ export function SearchInput({ defaultValue }: { defaultValue: string }) {
   }, [value, pathname, router]);
 
   return (
-    <Input
-      placeholder="Buscar producto o SKU..."
-      value={value}
-      onChange={(e) => setValue(e.target.value)}
-      className="max-w-sm"
-    />
+    <div className="relative max-w-sm">
+      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Input
+        placeholder="Buscar producto o SKU…"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        className="pl-9"
+      />
+    </div>
   );
 }

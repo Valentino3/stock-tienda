@@ -164,6 +164,42 @@ describe("executeImport", () => {
     expect(afterExplicitFalse.foil).toBe(false); // explicit false still syncs
   });
 
+  it("modo 'add': suma la cantidad al stock existente en vez de reemplazarlo", async () => {
+    const [p] = await db.insert(products).values({ name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ productId: p.id, name: "", sku: "G1", stock: 10 });
+
+    const validated = await validateImportRows(db, [row(2, { sku: "G1", product: "Gorra", variant: "", stock: 4, price: null })]);
+    expect(validated[0].action).toBe("update");
+    await executeImport(db, validated, "u1", { mode: "add" });
+
+    const [g1] = await db.select().from(productVariants).where(eq(productVariants.sku, "G1"));
+    expect(g1.stock).toBe(14); // 10 + 4 (no reemplaza por 4)
+    const movs = await db.select().from(stockMovements).where(eq(stockMovements.type, "reposicion"));
+    expect(movs).toHaveLength(1);
+    expect(movs[0].quantity).toBe(4);
+  });
+
+  it("matchByName: sin SKU, matchea variante existente por nombre y la marca update", async () => {
+    const [p] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ productId: p.id, name: "M", stock: 5 });
+
+    const validated = await validateImportRows(
+      db,
+      [
+        row(2, { product: "Remera", variant: "M", sku: null, price: null, stock: 3 }), // sin precio: ok porque es update
+        row(3, { product: "Remera", variant: "XXL", sku: null, price: 1200, stock: 2 }), // no existe: create
+      ],
+      { matchByName: true }
+    );
+    expect(validated[0].action).toBe("update");
+    expect(validated[0].error).toBeNull();
+    expect(validated[1].action).toBe("create");
+
+    await executeImport(db, validated, "u1", { mode: "add" });
+    const [m] = await db.select().from(productVariants).where(eq(productVariants.name, "M"));
+    expect(m.stock).toBe(8); // 5 + 3
+  });
+
   it("handles a large batch of create rows correctly (batching sanity check)", async () => {
     const rows = Array.from({ length: 150 }, (_, i) =>
       row(i + 2, { product: `Carta ${i}`, variant: "NM", sku: `BULK-${i}`, price: 100 + i, stock: i })

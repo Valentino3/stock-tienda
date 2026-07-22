@@ -1,8 +1,17 @@
 "use server";
 import { db } from "@/db";
 import { requireUser } from "@/lib/session";
-import { createSale } from "@/domain/sales";
+import { createSale, type Discount } from "@/domain/sales";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
+
+// Un descuento es válido si es monto ≥ 0, o porcentaje entre 0 y 100.
+function validDiscount(d: Discount | undefined): boolean {
+  if (d === undefined) return true;
+  if (d.kind !== "amount" && d.kind !== "percent") return false;
+  if (typeof d.value !== "number" || Number.isNaN(d.value) || d.value < 0) return false;
+  if (d.kind === "percent" && d.value > 100) return false;
+  return true;
+}
 
 export async function searchVariants(term: string) {
   await requireUser();
@@ -19,13 +28,18 @@ const ERROR_MESSAGES: Record<string, string> = {
 
 export async function submitSale(input: {
   paymentMethod: "efectivo" | "transferencia" | "tarjeta";
-  items: { variantId: number; quantity: number }[];
+  items: { variantId: number; quantity: number; discount?: Discount }[];
+  saleDiscount?: Discount;
 }) {
   const user = await requireUser();
   const invalid = input.items.some(
-    (i) => !Number.isInteger(i.variantId) || !Number.isInteger(i.quantity) || i.quantity <= 0
+    (i) =>
+      !Number.isInteger(i.variantId) ||
+      !Number.isInteger(i.quantity) ||
+      i.quantity <= 0 ||
+      !validDiscount(i.discount)
   );
-  if (invalid) return { error: "Cantidad inválida" };
+  if (invalid || !validDiscount(input.saleDiscount)) return { error: "Cantidad o descuento inválido" };
   try {
     const sale = await createSale(db, { sellerId: user.id, ...input });
     return { ok: true as const, saleId: sale.id, total: sale.total };

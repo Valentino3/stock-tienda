@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveVariant, restock, adjustStock, toggleVariantActive } from "./actions";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
+import { money, number } from "@/lib/format";
 import type { ProductVariant } from "@/db/schema";
 
 type Props = {
@@ -120,12 +121,12 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
     <div className={`py-2 text-sm ${!variant.active ? "opacity-60" : ""}`}>
       <div className="flex flex-wrap items-center gap-3">
         {variant.name && <span className="font-medium">{variant.name}</span>}
-        {variant.sku && <span className="text-muted-foreground">SKU: {variant.sku}</span>}
-        <span>${effectivePrice.toFixed(2)}</span>
+        {variant.sku && <span className="figure text-xs text-muted-foreground">SKU {variant.sku}</span>}
+        <span className="figure font-medium">{money(effectivePrice)}</span>
         {lowStock ? (
-          <Badge variant="destructive">Stock: {variant.stock}</Badge>
+          <Badge variant="destructive" className="font-mono">Stock {number(variant.stock)}</Badge>
         ) : (
-          <span className="text-muted-foreground">Stock: {variant.stock}</span>
+          <span className="text-muted-foreground">Stock <span className="figure text-foreground">{number(variant.stock)}</span></span>
         )}
         {variant.setName && <span className="text-muted-foreground">{variant.setName}</span>}
         {variant.condition && <Badge variant="outline">{variant.condition}</Badge>}
@@ -223,7 +224,7 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
       </div>
 
       {panel === "restock" && (
-        <form onSubmit={submitRestock} className="mt-2 flex items-end gap-2 rounded-md border p-3">
+        <form onSubmit={submitRestock} className="mt-2 mb-1 flex items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1">
             <Label className="text-xs">Cantidad a reponer</Label>
             <Input className="h-8 w-24" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
@@ -238,7 +239,7 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
       )}
 
       {panel === "adjust" && (
-        <form onSubmit={submitAdjust} className="mt-2 flex flex-wrap items-end gap-2 rounded-md border p-3">
+        <form onSubmit={submitAdjust} className="mt-2 mb-1 flex flex-wrap items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1">
             <Label className="text-xs">Nuevo stock</Label>
             <Input className="h-8 w-24" type="number" min="0" value={newStock} onChange={(e) => setNewStock(e.target.value)} />
