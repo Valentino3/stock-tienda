@@ -3,10 +3,16 @@ import { db } from "@/db";
 import { user } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
+import { money } from "@/lib/format";
 import { getSalesHistory } from "@/domain/sales-history";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
 import { VoidButton } from "./void-button";
+
+const SELECT_CLASS =
+  "h-9 w-44 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -66,118 +72,125 @@ export default async function VentasPage({
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold tracking-tight">Ventas</h1>
-
-      <div className="flex flex-wrap items-end gap-3">
-        <form method="get" className="flex flex-wrap items-end gap-3">
-          <label className="text-sm">
-            <span className="mb-1 block text-xs text-muted-foreground">Desde</span>
-            <input
-              type="date"
-              name="from"
-              defaultValue={params.from ?? ""}
-              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="mb-1 block text-xs text-muted-foreground">Hasta</span>
-            <input
-              type="date"
-              name="to"
-              defaultValue={params.to ?? ""}
-              className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-            />
-          </label>
-          {isOwner && (
-            <label className="text-sm">
-              <span className="mb-1 block text-xs text-muted-foreground">Vendedor</span>
-              <select
-                name="seller"
-                defaultValue={params.seller ?? ""}
-                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs"
-              >
-                <option value="">Todos</option>
-                {sellers.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <Button type="submit" variant="outline" size="sm">
-            Filtrar
-          </Button>
-          {hasFilters && (
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/ventas">Limpiar</Link>
+    <div className="space-y-6">
+      <PageHeader
+        title="Ventas"
+        description="Historial de ventas con filtros por fecha y vendedor."
+        actions={
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/ventas?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
             </Button>
-          )}
-        </form>
+            <Button asChild variant="outline" size="sm">
+              <Link href={`/ventas?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+            </Button>
+          </div>
+        }
+      />
 
-        <div className="ml-auto flex gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/ventas?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
+      <form
+        method="get"
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
+      >
+        <label className="flex flex-col gap-1.5">
+          <span className="ledger-label">Desde</span>
+          <Input type="date" name="from" defaultValue={params.from ?? ""} className="w-40" />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="ledger-label">Hasta</span>
+          <Input type="date" name="to" defaultValue={params.to ?? ""} className="w-40" />
+        </label>
+        {isOwner && (
+          <label className="flex flex-col gap-1.5">
+            <span className="ledger-label">Vendedor</span>
+            <select name="seller" defaultValue={params.seller ?? ""} className={SELECT_CLASS}>
+              <option value="">Todos</option>
+              {sellers.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <Button type="submit" size="sm">
+          Filtrar
+        </Button>
+        {hasFilters && (
+          <Button asChild variant="ghost" size="sm">
+            <Link href="/ventas">Limpiar</Link>
           </Button>
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/ventas?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
-          </Button>
-        </div>
-      </div>
+        )}
+      </form>
 
       {usingDefaultWindow && (
         <p className="text-xs text-muted-foreground">
           Mostrando los últimos 30 días.{" "}
-          <Link href="/ventas?all=1" className="underline underline-offset-4">
+          <Link href="/ventas?all=1" className="text-brand underline underline-offset-4">
             Ver todo el historial
           </Link>
         </p>
       )}
 
-      {rows.length === 0 && <p className="text-sm text-muted-foreground">No hay ventas para el filtro seleccionado.</p>}
-
-      {rows.length > 0 && (
-        <div className="rounded-md border">
-          <div className="grid grid-cols-6 gap-2 border-b bg-muted/50 px-4 py-3 text-sm font-medium text-muted-foreground">
-            <span>Fecha</span>
-            <span>N°</span>
-            <span>Vendedor</span>
-            <span>Medio de pago</span>
-            <span className="text-right">Total</span>
-            <span>Estado</span>
+      {rows.length === 0 ? (
+        <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
+          No hay ventas para el filtro seleccionado.
+        </p>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div className="grid grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem] gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
+            <span className="ledger-label">Fecha</span>
+            <span className="ledger-label">N°</span>
+            <span className="ledger-label">Vendedor</span>
+            <span className="ledger-label">Medio</span>
+            <span className="ledger-label text-right">Total</span>
+            <span className="ledger-label">Estado</span>
           </div>
-          <div className="divide-y">
+          <div className="divide-y divide-border">
             {rows.map(({ sale, sellerName }: any) => (
-              <details key={sale.id} className={sale.voided ? "opacity-60" : ""}>
-                <summary className={`grid cursor-pointer grid-cols-6 gap-2 px-4 py-3 text-sm ${sale.voided ? "line-through" : ""}`}>
-                  <span>{sale.createdAt.toLocaleString("es-AR")}</span>
-                  <span>#{sale.id}</span>
-                  <span>{sellerName}</span>
-                  <span>{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
-                  <span className="text-right">${sale.total.toFixed(2)}</span>
+              <details key={sale.id} className={`group ${sale.voided ? "opacity-70" : ""}`}>
+                <summary className="grid cursor-pointer grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem] items-center gap-3 px-4 py-3 text-sm transition-colors marker:content-none hover:bg-accent">
+                  <span className={`figure text-muted-foreground ${sale.voided ? "line-through" : ""}`}>
+                    {sale.createdAt.toLocaleString("es-AR")}
+                  </span>
+                  <span className="figure font-medium">#{sale.id}</span>
+                  <span className="truncate">{sellerName}</span>
+                  <span className="text-muted-foreground">{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
+                  <span className={`figure text-right font-medium ${sale.voided ? "line-through" : ""}`}>
+                    {money(sale.total)}
+                  </span>
                   <span>
                     {sale.voided ? (
-                      <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-800">
-                        Anulada
-                      </Badge>
+                      <Badge variant="destructive">Anulada</Badge>
                     ) : (
-                      <Badge variant="outline" className="border-green-300 bg-green-50 text-green-800">
-                        Activa
-                      </Badge>
+                      <Badge variant="success">Activa</Badge>
                     )}
                   </span>
                 </summary>
-                <div className="space-y-2 border-t bg-muted/30 px-4 py-3 pl-8 text-sm">
-                  <ul className="space-y-1">
-                    {(itemsBySale.get(sale.id) ?? []).map((item: any) => (
-                      <li key={item.id}>
-                        {item.productName}
-                        {item.variantName ? ` — ${item.variantName}` : ""} × {item.quantity} — $
-                        {item.unitPrice.toFixed(2)} c/u = ${(item.quantity * item.unitPrice).toFixed(2)}
-                      </li>
-                    ))}
+                <div className="space-y-3 border-t border-border bg-muted/30 px-4 py-3 text-sm">
+                  <ul className="space-y-1.5">
+                    {(itemsBySale.get(sale.id) ?? []).map((item: any) => {
+                      const lineNet = item.quantity * item.unitPrice - (item.discountAmount ?? 0);
+                      return (
+                        <li key={item.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span>
+                            {item.productName}
+                            {item.variantName ? ` — ${item.variantName}` : ""}{" "}
+                            <span className="text-muted-foreground">× {item.quantity}</span>
+                          </span>
+                          <span className="figure text-muted-foreground">
+                            {money(item.unitPrice)} c/u
+                            {item.discountAmount > 0 && ` − ${money(item.discountAmount)} desc.`} = {money(lineNet)}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
+                  {sale.discountAmount > 0 && (
+                    <p className="figure text-xs text-muted-foreground">
+                      Descuento general: −{money(sale.discountAmount)}
+                    </p>
+                  )}
                   {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
                 </div>
               </details>
@@ -187,7 +200,7 @@ export default async function VentasPage({
       )}
 
       {(page > 1 || hasNextPage) && (
-        <div className="flex justify-center gap-2">
+        <div className="flex items-center justify-center gap-3">
           {page > 1 ? (
             <Button asChild variant="outline" size="sm">
               <Link href={pageHref(page - 1)}>Anterior</Link>
@@ -195,7 +208,7 @@ export default async function VentasPage({
           ) : (
             <Button variant="outline" size="sm" disabled>Anterior</Button>
           )}
-          <span className="flex items-center text-sm text-muted-foreground">Página {page}</span>
+          <span className="ledger-label">Página {page}</span>
           {hasNextPage ? (
             <Button asChild variant="outline" size="sm">
               <Link href={pageHref(page + 1)}>Siguiente</Link>

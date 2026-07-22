@@ -3,10 +3,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BUSINESS_NAME } from "@/lib/config";
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return (parts.slice(0, 2).map((p) => p[0]).join("") || "·").toUpperCase();
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -25,19 +29,27 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>{BUSINESS_NAME}</CardTitle>
-          <CardDescription>Ingresá con tu cuenta para continuar.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={onSubmit} className="space-y-4">
+    <main className="grid min-h-screen place-items-center bg-background p-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+          <span className="flex size-11 items-center justify-center rounded-lg bg-brand font-mono text-base font-semibold tracking-tight text-brand-foreground">
+            {initials(BUSINESS_NAME)}
+          </span>
+          <div className="space-y-1">
+            <h1 className="text-xl font-semibold tracking-tight">{BUSINESS_NAME}</h1>
+            <p className="text-sm text-muted-foreground">Ingresá con tu cuenta para continuar.</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
+          <form onSubmit={onSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
                 type="email"
+                autoComplete="username"
+                placeholder="vos@comercio.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -48,18 +60,27 @@ export default function LoginPage() {
               <Input
                 id="password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" className="w-full" disabled={pending}>
+            {error && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {error}
+              </p>
+            )}
+            <Button type="submit" size="lg" className="w-full" disabled={pending}>
               {pending ? "Ingresando…" : "Entrar"}
             </Button>
           </form>
-        </CardContent>
-      </Card>
+        </div>
+
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          Sistema de stock y ventas
+        </p>
+      </div>
     </main>
   );
 }

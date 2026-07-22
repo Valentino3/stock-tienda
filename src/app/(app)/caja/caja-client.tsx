@@ -5,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { openSession, closeSession } from "./actions";
+import { Notice } from "@/components/ui/notice";
+import { StatTile } from "@/components/ui/stat-tile";
+import { money, number } from "@/lib/format";
+import { openSession, closeSession, addGasto, addEgreso } from "./actions";
 
 const METHOD_LABEL: Record<string, string> = {
   efectivo: "Efectivo",
@@ -13,17 +16,22 @@ const METHOD_LABEL: Record<string, string> = {
   tarjeta: "Tarjeta",
 };
 
+const MOVEMENT_LABEL: Record<string, string> = { gasto: "Gasto", egreso: "Egreso" };
+
 type SessionInfo = { id: number; openedAt: Date; openingCash: number };
 type MethodTotal = { method: string; count: number; total: number };
+type MovementInfo = { id: number; kind: "gasto" | "egreso"; amount: number; description: string; createdAt: Date };
 type ClosedResult = { expectedCash: number; countedCash: number; difference: number };
 
 type Props = {
   session: SessionInfo | null;
   openedByName: string | null;
   totals: MethodTotal[];
+  movements: MovementInfo[];
+  isOwner: boolean;
 };
 
-export function CajaClient({ session, openedByName, totals }: Props) {
+export function CajaClient({ session, openedByName, totals, movements, isOwner }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -34,6 +42,27 @@ export function CajaClient({ session, openedByName, totals }: Props) {
   const [notes, setNotes] = useState("");
   const [closeError, setCloseError] = useState("");
   const [closedResult, setClosedResult] = useState<ClosedResult | null>(null);
+
+  const [movKind, setMovKind] = useState<"gasto" | "egreso">("gasto");
+  const [movAmount, setMovAmount] = useState("");
+  const [movDescription, setMovDescription] = useState("");
+  const [movError, setMovError] = useState("");
+
+  function submitMovement(e: React.FormEvent) {
+    e.preventDefault();
+    startTransition(async () => {
+      const action = movKind === "egreso" ? addEgreso : addGasto;
+      const res = await action(Number(movAmount), movDescription);
+      if ("error" in res && res.error) {
+        setMovError(res.error);
+        return;
+      }
+      setMovError("");
+      setMovAmount("");
+      setMovDescription("");
+      router.refresh();
+    });
+  }
 
   function submitOpen(e: React.FormEvent) {
     e.preventDefault();
@@ -76,12 +105,23 @@ export function CajaClient({ session, openedByName, totals }: Props) {
         <CardHeader>
           <CardTitle className="text-base">Caja cerrada</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-1 text-sm">
-          <p>Esperado: ${closedResult.expectedCash.toFixed(2)}</p>
-          <p>Contado: ${closedResult.countedCash.toFixed(2)}</p>
-          <p className={`text-lg font-semibold ${matches ? "text-green-600" : "text-destructive"}`}>
-            Diferencia: ${closedResult.difference.toFixed(2)}
-          </p>
+        <CardContent className="space-y-4">
+          <dl className="space-y-2 text-sm">
+            <div className="flex items-baseline justify-between">
+              <dt className="text-muted-foreground">Esperado</dt>
+              <dd className="figure font-medium">{money(closedResult.expectedCash)}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-muted-foreground">Contado</dt>
+              <dd className="figure font-medium">{money(closedResult.countedCash)}</dd>
+            </div>
+          </dl>
+          <StatTile
+            label="Diferencia"
+            value={money(closedResult.difference)}
+            tone={matches ? "success" : "destructive"}
+            hint={matches ? "La caja cuadra." : "Revisar el conteo."}
+          />
         </CardContent>
       </Card>
     );
@@ -89,26 +129,31 @@ export function CajaClient({ session, openedByName, totals }: Props) {
 
   if (!session) {
     return (
-      <Card className="max-w-xs">
+      <Card className="max-w-sm">
         <CardHeader>
           <CardTitle className="text-base">Abrir caja</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={submitOpen} className="space-y-3">
+          <form onSubmit={submitOpen} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="opening-cash">Monto inicial</Label>
+              <Label htmlFor="opening-cash">Monto inicial en efectivo</Label>
               <Input
                 id="opening-cash"
                 type="number"
                 step="0.01"
                 min="0"
                 required
+                placeholder="0,00"
                 value={openingCash}
                 onChange={(e) => setOpeningCash(e.target.value)}
               />
             </div>
-            {openError && <p className="text-sm text-destructive">{openError}</p>}
-            <Button type="submit" disabled={pending} className="w-full">
+            {openError && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {openError}
+              </p>
+            )}
+            <Button type="submit" size="lg" disabled={pending} className="w-full">
               {pending ? "Abriendo…" : "Abrir caja"}
             </Button>
           </form>
@@ -117,43 +162,138 @@ export function CajaClient({ session, openedByName, totals }: Props) {
     );
   }
 
-  return (
-    <div className="max-w-md space-y-4">
-      <Card className="border-l-4 border-l-green-500">
-        <CardHeader>
-          <CardTitle className="text-base">Caja abierta</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-1 text-sm text-muted-foreground">
-          <p>Abierta el {session.openedAt.toLocaleString("es-AR")} por {openedByName ?? "—"}</p>
-          <p>Monto inicial: ${session.openingCash.toFixed(2)}</p>
-        </CardContent>
-      </Card>
+  const sessionTotal = totals.reduce((acc, t) => acc + t.total, 0);
+  const movementsTotal = movements.reduce((acc, m) => acc + m.amount, 0);
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Ventas de la sesión</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {totals.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sin ventas todavía.</p>
-          ) : (
-            <ul className="space-y-1 text-sm">
-              {totals.map((t) => (
-                <li key={t.method}>
-                  {METHOD_LABEL[t.method] ?? t.method}: {t.count} venta(s) — ${t.total.toFixed(2)}
+  return (
+    <div className="grid items-start gap-6 lg:grid-cols-2">
+      <div className="space-y-6">
+        <Notice tone="success">
+          <div className="flex items-center gap-2 font-medium text-success">
+            <span className="size-2 rounded-full bg-success" aria-hidden />
+            Caja abierta
+          </div>
+          <p className="mt-1.5 text-muted-foreground">
+            Abierta el {session.openedAt.toLocaleString("es-AR")} por {openedByName ?? "—"}.
+          </p>
+          <p className="mt-0.5 text-muted-foreground">
+            Monto inicial <span className="figure text-foreground">{money(session.openingCash)}</span>
+          </p>
+        </Notice>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Ventas de la sesión</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {totals.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin ventas todavía.</p>
+            ) : (
+              <ul className="divide-y divide-border text-sm">
+                {totals.map((t) => (
+                  <li key={t.method} className="flex items-baseline justify-between py-2 first:pt-0 last:pb-0">
+                    <span>
+                      {METHOD_LABEL[t.method] ?? t.method}{" "}
+                      <span className="text-muted-foreground">· {number(t.count)} venta(s)</span>
+                    </span>
+                    <span className="figure font-medium">{money(t.total)}</span>
+                  </li>
+                ))}
+                <li className="flex items-baseline justify-between border-t-2 border-foreground/80 py-2 pb-0">
+                  <span className="ledger-label">Total</span>
+                  <span className="figure font-semibold">{money(sessionTotal)}</span>
                 </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Gastos y egresos</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {movements.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Sin gastos ni egresos en esta caja.</p>
+            ) : (
+              <ul className="divide-y divide-border text-sm">
+                {movements.map((m) => (
+                  <li key={m.id} className="flex items-baseline justify-between gap-3 py-2 first:pt-0">
+                    <span className="min-w-0">
+                      <span className="ledger-label mr-2">{MOVEMENT_LABEL[m.kind]}</span>
+                      {m.description}
+                    </span>
+                    <span className="figure shrink-0 font-medium text-destructive">−{money(m.amount)}</span>
+                  </li>
+                ))}
+                <li className="flex items-baseline justify-between border-t-2 border-foreground/80 py-2 pb-0">
+                  <span className="ledger-label">Total salidas</span>
+                  <span className="figure font-semibold text-destructive">−{money(movementsTotal)}</span>
+                </li>
+              </ul>
+            )}
+
+            <form onSubmit={submitMovement} className="space-y-3 border-t border-border pt-4">
+              {isOwner && (
+                <div className="flex gap-2">
+                  {(["gasto", "egreso"] as const).map((k) => (
+                    <Button
+                      key={k}
+                      type="button"
+                      variant={movKind === k ? "brand" : "outline"}
+                      size="sm"
+                      onClick={() => setMovKind(k)}
+                    >
+                      {MOVEMENT_LABEL[k]}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              <div className="flex flex-wrap items-end gap-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="mov-amount" className="ledger-label">Monto</Label>
+                  <Input
+                    id="mov-amount"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    placeholder="0,00"
+                    value={movAmount}
+                    onChange={(e) => setMovAmount(e.target.value)}
+                    className="w-28"
+                  />
+                </div>
+                <div className="min-w-40 flex-1 space-y-1.5">
+                  <Label htmlFor="mov-desc" className="ledger-label">Descripción</Label>
+                  <Input
+                    id="mov-desc"
+                    required
+                    placeholder={movKind === "egreso" ? "Ej: retiro de efectivo" : "Ej: insumos, envío"}
+                    value={movDescription}
+                    onChange={(e) => setMovDescription(e.target.value)}
+                  />
+                </div>
+                <Button type="submit" size="sm" disabled={pending}>
+                  Registrar
+                </Button>
+              </div>
+              {movError && (
+                <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                  {movError}
+                </p>
+              )}
+            </form>
+          </CardContent>
+        </Card>
+      </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Cerrar caja</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={submitClose} className="space-y-3">
+          <form onSubmit={submitClose} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="counted-cash">Efectivo contado</Label>
               <Input
@@ -162,6 +302,7 @@ export function CajaClient({ session, openedByName, totals }: Props) {
                 step="0.01"
                 min="0"
                 required
+                placeholder="0,00"
                 value={countedCash}
                 onChange={(e) => setCountedCash(e.target.value)}
               />
@@ -170,8 +311,12 @@ export function CajaClient({ session, openedByName, totals }: Props) {
               <Label htmlFor="notes">Notas (opcional)</Label>
               <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
-            {closeError && <p className="text-sm text-destructive">{closeError}</p>}
-            <Button type="submit" disabled={pending} className="w-full">
+            {closeError && (
+              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                {closeError}
+              </p>
+            )}
+            <Button type="submit" size="lg" disabled={pending} className="w-full">
               {pending ? "Cerrando…" : "Cerrar caja"}
             </Button>
           </form>

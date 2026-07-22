@@ -5,6 +5,7 @@ import { products, productVariants } from "@/db/schema";
 import type { Product, ProductVariant } from "@/db/schema";
 import { requireUser } from "@/lib/session";
 import { Button } from "@/components/ui/button";
+import { PageHeader } from "@/components/ui/page-header";
 import { ProductForm } from "./product-form";
 import { ProductList } from "./product-list";
 import { SearchInput } from "./search-input";
@@ -71,21 +72,24 @@ export default async function ProductosPage({ searchParams }: { searchParams: Pr
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Productos</h1>
-        {isOwner && <ProductForm />}
-      </div>
+      <PageHeader
+        title="Productos"
+        description="Catálogo, variantes y stock."
+        actions={isOwner ? <ProductForm /> : undefined}
+      />
 
       <SearchInput defaultValue={q} />
 
       {productList.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{q ? "Sin resultados." : "No hay productos cargados."}</p>
+        <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
+          {q ? "Sin resultados para tu búsqueda." : "No hay productos cargados todavía."}
+        </p>
       ) : (
         <ProductList products={productList} isOwner={isOwner} />
       )}
 
       {(page > 1 || hasNextPage) && (
-        <div className="flex justify-center gap-2">
+        <div className="flex items-center justify-center gap-3">
           {page > 1 ? (
             <Button asChild variant="outline" size="sm">
               <Link href={`/productos?q=${encodeURIComponent(q)}&page=${page - 1}`}>Anterior</Link>
@@ -93,7 +97,7 @@ export default async function ProductosPage({ searchParams }: { searchParams: Pr
           ) : (
             <Button variant="outline" size="sm" disabled>Anterior</Button>
           )}
-          <span className="flex items-center text-sm text-muted-foreground">Página {page}</span>
+          <span className="ledger-label">Página {page}</span>
           {hasNextPage ? (
             <Button asChild variant="outline" size="sm">
               <Link href={`/productos?q=${encodeURIComponent(q)}&page=${page + 1}`}>Siguiente</Link>

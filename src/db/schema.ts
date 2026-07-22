@@ -86,6 +86,9 @@ export const accountRelations = relations(account, ({ one }) => ({
 // ---- dominio ----
 export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
+// Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
+// gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
+export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egreso"]);
 
 export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -141,6 +144,8 @@ export const sales = pgTable("sales", {
   sellerId: text("seller_id").notNull().references(() => user.id),
   cashSessionId: integer("cash_session_id").notNull().references(() => cashSessions.id),
   total: numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  // Descuento general resuelto ($) sobre el subtotal; `total` ya es el neto final.
+  discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
   paymentMethod: paymentMethodEnum("payment_method").notNull(),
   voided: boolean("voided").notNull().default(false),
   voidedAt: timestamp("voided_at"),
@@ -153,6 +158,8 @@ export const saleItems = pgTable("sale_items", {
   variantId: integer("variant_id").notNull().references(() => productVariants.id),
   quantity: integer("quantity").notNull(),
   unitPrice: numeric("unit_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  // Descuento resuelto ($) de esta línea; total de línea = quantity*unitPrice − discountAmount.
+  discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
 });
 
 export const stockMovements = pgTable("stock_movements", {
@@ -166,9 +173,34 @@ export const stockMovements = pgTable("stock_movements", {
   reason: text("reason"),
 });
 
+// Salidas de efectivo de una caja: gastos (empleado) y egresos (dueño).
+export const cashMovements = pgTable("cash_movements", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  cashSessionId: integer("cash_session_id").notNull().references(() => cashSessions.id),
+  kind: cashMovementKindEnum("kind").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(), // positivo
+  description: text("description").notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [index("cash_movements_session_idx").on(table.cashSessionId)]);
+
+// Comisiones anotadas a mano por el dueño para un empleado y un período.
+export const commissions = pgTable("commissions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  employeeId: text("employee_id").notNull().references(() => user.id),
+  amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  periodFrom: timestamp("period_from"),
+  periodTo: timestamp("period_to"),
+  note: text("note"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [index("commissions_employee_idx").on(table.employeeId)]);
+
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type Sale = typeof sales.$inferSelect;
 export type SaleItem = typeof saleItems.$inferSelect;
 export type StockMovement = typeof stockMovements.$inferSelect;
 export type CashSession = typeof cashSessions.$inferSelect;
+export type CashMovement = typeof cashMovements.$inferSelect;
+export type Commission = typeof commissions.$inferSelect;

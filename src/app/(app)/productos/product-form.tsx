@@ -159,7 +159,7 @@ export function ProductForm({ product }: Props) {
       </div>
 
       {addingVariant && product && (
-        <form onSubmit={submitVariant} className="flex flex-wrap items-end gap-2 rounded-md border p-3">
+        <form onSubmit={submitVariant} className="flex flex-wrap items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1">
             <Label className="text-xs">Nombre variante</Label>
             <Input className="h-8" value={vName} onChange={(e) => setVName(e.target.value)} required />

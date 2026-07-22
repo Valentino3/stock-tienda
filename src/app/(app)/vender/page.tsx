@@ -2,6 +2,8 @@ import Link from "next/link";
 import { db } from "@/db";
 import { getOpenSession } from "@/domain/cash";
 import { requireUser } from "@/lib/session";
+import { PageHeader } from "@/components/ui/page-header";
+import { Notice } from "@/components/ui/notice";
 import { SaleForm } from "./sale-form";
 
 export default async function VenderPage() {
@@ -10,22 +12,22 @@ export default async function VenderPage() {
 
   if (!session) {
     return (
-      <div className="space-y-3">
-        <h1 className="text-2xl font-bold tracking-tight">Vender</h1>
-        <p className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+      <div className="space-y-6">
+        <PageHeader title="Vender" description="Punto de venta del mostrador." />
+        <Notice tone="warn">
           No hay caja abierta.{" "}
-          <Link href="/caja" className="font-medium underline underline-offset-4">
+          <Link href="/caja" className="font-semibold text-brand underline underline-offset-4">
             Abrí la caja
           </Link>{" "}
           antes de vender.
-        </p>
+        </Notice>
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-bold tracking-tight">Vender</h1>
+    <div className="space-y-6">
+      <PageHeader title="Vender" description="Buscá un producto, armá el carrito y cobrá." />
       <SaleForm />
     </div>
   );

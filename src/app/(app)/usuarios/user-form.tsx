@@ -119,7 +119,7 @@ export function ToggleActiveButton({
   if (banned) {
     // Reactivating is non-destructive — no confirmation needed.
     return (
-      <Button variant="link" size="sm" className="text-green-700" disabled={pending} onClick={handleConfirm}>
+      <Button variant="link" size="sm" className="text-success" disabled={pending} onClick={handleConfirm}>
         {pending ? "..." : "Activar"}
       </Button>
     );

@@ -1,5 +1,21 @@
 import { and, between, desc, eq, ilike, isNotNull, sql } from "drizzle-orm";
-import { cashSessions, products, productVariants, sales, saleItems } from "@/db/schema";
+import { cashMovements, cashSessions, products, productVariants, sales, saleItems, user } from "@/db/schema";
+
+// Ventas por vendedor en un rango (para decidir comisiones). Solo no anuladas.
+export async function getSellerSalesSummary(db: any, range: { from: Date; to: Date }) {
+  return db
+    .select({
+      sellerId: sales.sellerId,
+      name: user.name,
+      count: sql<number>`count(*)`.mapWith(Number),
+      total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
+    })
+    .from(sales)
+    .innerJoin(user, eq(sales.sellerId, user.id))
+    .where(and(eq(sales.voided, false), between(sales.createdAt, range.from, range.to)))
+    .groupBy(sales.sellerId, user.name)
+    .orderBy(desc(sql`coalesce(sum(${sales.total}), 0)`));
+}
 
 export async function getSalesReport(db: any, range: { from: Date; to: Date }) {
   const notVoided = and(eq(sales.voided, false), between(sales.createdAt, range.from, range.to));
@@ -29,7 +45,7 @@ export async function getTopProducts(db: any, opts: { from: Date; to: Date; limi
       variantName: productVariants.name,
       setName: productVariants.setName,
       unitsSold: sql<number>`sum(${saleItems.quantity})`.mapWith(Number),
-      revenue: sql<number>`sum(${saleItems.quantity} * ${saleItems.unitPrice})`.mapWith(Number),
+      revenue: sql<number>`sum(${saleItems.quantity} * ${saleItems.unitPrice} - ${saleItems.discountAmount})`.mapWith(Number),
     })
     .from(saleItems)
     .innerJoin(sales, eq(saleItems.saleId, sales.id))
@@ -62,6 +78,18 @@ export async function getLowStock(db: any, opts: { setName?: string } = {}) {
       opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
     ))
     .orderBy(productVariants.stock);
+}
+
+export async function getCashMovementsReport(db: any, range: { from: Date; to: Date }) {
+  return db
+    .select({
+      kind: cashMovements.kind,
+      count: sql<number>`count(*)`.mapWith(Number),
+      total: sql<number>`coalesce(sum(${cashMovements.amount}), 0)`.mapWith(Number),
+    })
+    .from(cashMovements)
+    .where(between(cashMovements.createdAt, range.from, range.to))
+    .groupBy(cashMovements.kind);
 }
 
 export async function getCashSessionHistory(db: any, opts: { limit?: number } = {}) {
