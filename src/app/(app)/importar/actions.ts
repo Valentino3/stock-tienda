@@ -4,7 +4,7 @@ import { generateObject } from "ai";
 import { openai } from "@ai-sdk/openai";
 import { z } from "zod";
 import { db } from "@/db";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { validateImportRows, executeImport, type ImportRow, type ValidatedRow } from "@/domain/import";
 import { revalidatePath } from "next/cache";
 
@@ -15,7 +15,7 @@ function cellText(v: ExcelJS.CellValue): string {
 }
 
 export async function parseAndValidate(formData: FormData): Promise<{ rows?: ValidatedRow[]; error?: string }> {
-  await requireOwner();
+  const { storeId } = await requireStoreOwner();
   const file = formData.get("file");
   if (!(file instanceof File)) return { error: "Subí un archivo .xlsx" };
   const wb = new ExcelJS.Workbook();
@@ -56,7 +56,7 @@ export async function parseAndValidate(formData: FormData): Promise<{ rows?: Val
     });
   });
   if (rows.length === 0) return { error: "El archivo no tiene filas de datos" };
-  return { rows: await validateImportRows(db, rows) };
+  return { rows: await validateImportRows(db, storeId, rows) };
 }
 
 // Import con IA: lee una factura (foto o PDF) y extrae productos, cantidad y
@@ -84,7 +84,7 @@ const extractSchema = z.object({
 export async function extractFromDocument(
   formData: FormData
 ): Promise<{ rows?: ValidatedRow[]; error?: string }> {
-  await requireOwner();
+  const { storeId } = await requireStoreOwner();
   const file = formData.get("file");
   if (!(file instanceof File)) return { error: "Subí una imagen o PDF" };
   const isImage = file.type.startsWith("image/");
@@ -123,12 +123,12 @@ export async function extractFromDocument(
   if (rows.length === 0) return { error: "No se detectaron productos en el documento" };
 
   // Match por nombre para poder editar stock de productos que ya existen.
-  return { rows: await validateImportRows(db, rows, { matchByName: true }) };
+  return { rows: await validateImportRows(db, storeId, rows, { matchByName: true }) };
 }
 
 export async function confirmImport(rows: ValidatedRow[], mode: "absolute" | "add" = "absolute") {
-  const user = await requireOwner();
-  const result = await executeImport(db, rows, user.id, { mode });
+  const user = await requireStoreOwner();
+  const result = await executeImport(db, user.storeId, rows, user.id, { mode });
   revalidatePath("/productos");
   return { ok: true as const, ...result };
 }

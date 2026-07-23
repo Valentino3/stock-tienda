@@ -11,7 +11,8 @@ import { money, number } from "@/lib/format";
 import { searchVariants, submitSale } from "./actions";
 
 type SearchResult = Awaited<ReturnType<typeof searchVariants>>[number];
-type PaymentMethod = "efectivo" | "transferencia" | "tarjeta";
+type PaymentMethod = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+type ClientOption = { id: number; name: string };
 type DiscountKind = "amount" | "percent";
 type CartItem = {
   variantId: number;
@@ -31,7 +32,11 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "efectivo", label: "Efectivo" },
   { value: "transferencia", label: "Transferencia" },
   { value: "tarjeta", label: "Tarjeta" },
+  { value: "cuenta", label: "Cuenta" },
 ];
+
+const CLIENT_SELECT_CLASS =
+  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -102,11 +107,12 @@ function DiscountControl({
   );
 }
 
-export function SaleForm() {
+export function SaleForm({ clients }: { clients: ClientOption[] }) {
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
+  const [clientId, setClientId] = useState<string>("");
   const [saleDiscountKind, setSaleDiscountKind] = useState<DiscountKind>("amount");
   const [saleDiscountValue, setSaleDiscountValue] = useState(0);
   const [pending, startTransition] = useTransition();
@@ -181,9 +187,14 @@ export function SaleForm() {
 
   function confirmSale() {
     setError("");
+    if (paymentMethod === "cuenta" && !clientId) {
+      setError("Elegí un cliente para la venta a cuenta.");
+      return;
+    }
     startTransition(async () => {
       const res = await submitSale({
         paymentMethod,
+        clientId: paymentMethod === "cuenta" ? Number(clientId) : undefined,
         items: cart.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
@@ -199,6 +210,8 @@ export function SaleForm() {
         toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
         setCart([]);
         setSaleDiscountValue(0);
+        setClientId("");
+        setPaymentMethod("efectivo");
       }
     });
   }
@@ -343,7 +356,7 @@ export function SaleForm() {
 
           <div className="space-y-2">
             <SectionLabel>Medio de pago</SectionLabel>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {PAYMENT_METHODS.map((m) => (
                 <Button
                   key={m.value}
@@ -356,6 +369,19 @@ export function SaleForm() {
                 </Button>
               ))}
             </div>
+            {paymentMethod === "cuenta" && (
+              <select
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                className={CLIENT_SELECT_CLASS}
+                aria-label="Cliente"
+              >
+                <option value="">Elegí cliente…</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {error && (

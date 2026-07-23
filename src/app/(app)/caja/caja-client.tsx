@@ -14,6 +14,7 @@ const METHOD_LABEL: Record<string, string> = {
   efectivo: "Efectivo",
   transferencia: "Transferencia",
   tarjeta: "Tarjeta",
+  cuenta: "Cuenta",
 };
 
 const MOVEMENT_LABEL: Record<string, string> = { gasto: "Gasto", egreso: "Egreso" };

@@ -1,8 +1,10 @@
 import { and, between, desc, eq, ilike, isNotNull, sql } from "drizzle-orm";
 import { cashMovements, cashSessions, products, productVariants, sales, saleItems, user } from "@/db/schema";
 
+// Todos los reportes están scopeados por tienda (storeId).
+
 // Ventas por vendedor en un rango (para decidir comisiones). Solo no anuladas.
-export async function getSellerSalesSummary(db: any, range: { from: Date; to: Date }) {
+export async function getSellerSalesSummary(db: any, storeId: number, range: { from: Date; to: Date }) {
   return db
     .select({
       sellerId: sales.sellerId,
@@ -12,13 +14,13 @@ export async function getSellerSalesSummary(db: any, range: { from: Date; to: Da
     })
     .from(sales)
     .innerJoin(user, eq(sales.sellerId, user.id))
-    .where(and(eq(sales.voided, false), between(sales.createdAt, range.from, range.to)))
+    .where(and(eq(sales.storeId, storeId), eq(sales.voided, false), between(sales.createdAt, range.from, range.to)))
     .groupBy(sales.sellerId, user.name)
     .orderBy(desc(sql`coalesce(sum(${sales.total}), 0)`));
 }
 
-export async function getSalesReport(db: any, range: { from: Date; to: Date }) {
-  const notVoided = and(eq(sales.voided, false), between(sales.createdAt, range.from, range.to));
+export async function getSalesReport(db: any, storeId: number, range: { from: Date; to: Date }) {
+  const notVoided = and(eq(sales.storeId, storeId), eq(sales.voided, false), between(sales.createdAt, range.from, range.to));
   const byDay = await db
     .select({
       day: sql<string>`to_char(${sales.createdAt}, 'YYYY-MM-DD')`,
@@ -38,7 +40,7 @@ export async function getSalesReport(db: any, range: { from: Date; to: Date }) {
   return { byDay, byMethod };
 }
 
-export async function getTopProducts(db: any, opts: { from: Date; to: Date; limit?: number; setName?: string }) {
+export async function getTopProducts(db: any, storeId: number, opts: { from: Date; to: Date; limit?: number; setName?: string }) {
   return db
     .select({
       productName: products.name,
@@ -52,6 +54,7 @@ export async function getTopProducts(db: any, opts: { from: Date; to: Date; limi
     .innerJoin(productVariants, eq(saleItems.variantId, productVariants.id))
     .innerJoin(products, eq(productVariants.productId, products.id))
     .where(and(
+      eq(sales.storeId, storeId),
       eq(sales.voided, false),
       between(sales.createdAt, opts.from, opts.to),
       opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
@@ -61,7 +64,7 @@ export async function getTopProducts(db: any, opts: { from: Date; to: Date; limi
     .limit(opts.limit ?? 10);
 }
 
-export async function getLowStock(db: any, opts: { setName?: string } = {}) {
+export async function getLowStock(db: any, storeId: number, opts: { setName?: string } = {}) {
   return db
     .select({
       productName: products.name,
@@ -73,6 +76,7 @@ export async function getLowStock(db: any, opts: { setName?: string } = {}) {
     .from(productVariants)
     .innerJoin(products, eq(productVariants.productId, products.id))
     .where(and(
+      eq(productVariants.storeId, storeId),
       eq(products.active, true), eq(productVariants.active, true),
       sql`${productVariants.stock} <= ${products.lowStockThreshold}`,
       opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
@@ -80,7 +84,8 @@ export async function getLowStock(db: any, opts: { setName?: string } = {}) {
     .orderBy(productVariants.stock);
 }
 
-export async function getCashMovementsReport(db: any, range: { from: Date; to: Date }) {
+export async function getCashMovementsReport(db: any, storeId: number, range: { from: Date; to: Date }) {
+  // cashMovements no tiene storeId directo: se filtra por la caja (cashSessions).
   return db
     .select({
       kind: cashMovements.kind,
@@ -88,13 +93,14 @@ export async function getCashMovementsReport(db: any, range: { from: Date; to: D
       total: sql<number>`coalesce(sum(${cashMovements.amount}), 0)`.mapWith(Number),
     })
     .from(cashMovements)
-    .where(between(cashMovements.createdAt, range.from, range.to))
+    .innerJoin(cashSessions, eq(cashMovements.cashSessionId, cashSessions.id))
+    .where(and(eq(cashSessions.storeId, storeId), between(cashMovements.createdAt, range.from, range.to)))
     .groupBy(cashMovements.kind);
 }
 
-export async function getCashSessionHistory(db: any, opts: { limit?: number } = {}) {
+export async function getCashSessionHistory(db: any, storeId: number, opts: { limit?: number } = {}) {
   return db.select().from(cashSessions)
-    .where(isNotNull(cashSessions.closedAt))
+    .where(and(eq(cashSessions.storeId, storeId), isNotNull(cashSessions.closedAt)))
     .orderBy(desc(cashSessions.closedAt))
     .limit(opts.limit ?? 30);
 }

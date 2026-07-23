@@ -50,6 +50,20 @@
       "when": 1784747861902,
       "tag": "0006_next_crystal",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1784809580027,
+      "tag": "0007_multi_tienda",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784826816524,
+      "tag": "0008_clientes_fiado",
+      "breakpoints": true
     }
   ]
 }

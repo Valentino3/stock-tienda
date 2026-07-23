@@ -4,6 +4,7 @@ import { sales, saleItems, productVariants, products, user } from "@/db/schema";
 const PAGE_SIZE = 50;
 
 export type SalesHistoryOpts = {
+  storeId: number;
   from?: Date;
   to?: Date;
   sellerId?: string;
@@ -16,7 +17,7 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
   const from = opts.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const to = opts.to ?? new Date();
 
-  const conditions = [gte(sales.createdAt, from), lt(sales.createdAt, to)];
+  const conditions = [eq(sales.storeId, opts.storeId), gte(sales.createdAt, from), lt(sales.createdAt, to)];
   if (opts.sellerId) conditions.push(eq(sales.sellerId, opts.sellerId));
 
   const rows = await db

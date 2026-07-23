@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user } from "@/db/schema";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money, number } from "@/lib/format";
 import { getSellerSalesSummary } from "@/domain/reports";
@@ -16,8 +17,9 @@ import { CommissionForm, DeleteCommissionButton } from "./commission-form";
 type Params = { from?: string; to?: string };
 
 export default async function ComisionesPage({ searchParams }: { searchParams: Promise<Params> }) {
+  let storeId: number;
   try {
-    await requireOwner();
+    ({ storeId } = await requireStoreOwner());
   } catch (err) {
     unstable_rethrow(err);
     redirect("/vender");
@@ -39,9 +41,10 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
   const toValue = params.to ?? defaultTo.toISOString().slice(0, 10);
 
   const [summary, commissions, employees] = await Promise.all([
-    getSellerSalesSummary(db, { from, to }),
-    listCommissions(db, { from, to }),
-    db.select({ id: user.id, name: user.name, banned: user.banned }).from(user).orderBy(user.name),
+    getSellerSalesSummary(db, storeId, { from, to }),
+    listCommissions(db, storeId, { from, to }),
+    db.select({ id: user.id, name: user.name, banned: user.banned }).from(user)
+      .where(eq(user.storeId, storeId)).orderBy(user.name),
   ]);
 
   const activeEmployees = employees

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, seedTestUser } from "./helpers/db";
+import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { sales } from "@/db/schema";
 import { createCommission, listCommissions } from "@/domain/commissions";
 import { getSellerSalesSummary } from "@/domain/reports";
@@ -7,18 +7,20 @@ import { openCashSession } from "@/domain/cash";
 import { commissionFromPercent } from "@/lib/commission";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
+let store: number;
 
 beforeEach(async () => {
   db = await createTestDb();
-  await seedTestUser(db, "owner", "owner");
-  await seedTestUser(db, "emp1", "employee");
-  await seedTestUser(db, "emp2", "employee");
+  store = await seedTestStore(db);
+  await seedTestUser(db, "owner", "owner", store);
+  await seedTestUser(db, "emp1", "employee", store);
+  await seedTestUser(db, "emp2", "employee", store);
 });
 
 describe("commissions", () => {
   it("crea y lista comisiones con el nombre del empleado", async () => {
-    await createCommission(db, { employeeId: "emp1", amount: 1500, note: "julio", createdBy: "owner" });
-    const list = await listCommissions(db, {});
+    await createCommission(db, { storeId: store, employeeId: "emp1", amount: 1500, note: "julio", createdBy: "owner" });
+    const list = await listCommissions(db, store, {});
     expect(list).toHaveLength(1);
     expect(list[0].commission.amount).toBe(1500);
     expect(list[0].employeeName).toBe("Test");
@@ -26,7 +28,7 @@ describe("commissions", () => {
 
   it("rechaza monto no positivo", async () => {
     await expect(
-      createCommission(db, { employeeId: "emp1", amount: 0, createdBy: "owner" })
+      createCommission(db, { storeId: store, employeeId: "emp1", amount: 0, createdBy: "owner" })
     ).rejects.toThrow("INVALID_AMOUNT");
   });
 });
@@ -48,16 +50,16 @@ describe("commissionFromPercent", () => {
 
 describe("getSellerSalesSummary", () => {
   it("agrupa ventas no anuladas por vendedor", async () => {
-    const s = await openCashSession(db, { userId: "owner", openingCash: 0 });
+    const s = await openCashSession(db, { storeId: store, userId: "owner", openingCash: 0 });
     await db.insert(sales).values([
-      { sellerId: "emp1", cashSessionId: s.id, total: 1000, paymentMethod: "efectivo" },
-      { sellerId: "emp1", cashSessionId: s.id, total: 500, paymentMethod: "tarjeta" },
-      { sellerId: "emp2", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
-      { sellerId: "emp2", cashSessionId: s.id, total: 999, paymentMethod: "efectivo", voided: true },
+      { storeId: store, sellerId: "emp1", cashSessionId: s.id, total: 1000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "emp1", cashSessionId: s.id, total: 500, paymentMethod: "tarjeta" },
+      { storeId: store, sellerId: "emp2", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "emp2", cashSessionId: s.id, total: 999, paymentMethod: "efectivo", voided: true },
     ]);
     const from = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const to = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const summary = await getSellerSalesSummary(db, { from, to });
+    const summary = await getSellerSalesSummary(db, store, { from, to });
 
     const byId = Object.fromEntries(summary.map((r: any) => [r.sellerId, r]));
     expect(byId["emp1"].count).toBe(2);

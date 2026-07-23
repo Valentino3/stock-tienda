@@ -5,7 +5,7 @@ import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { BUSINESS_NAME } from "@/lib/config";
+import { APP_NAME } from "@/lib/config";
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -25,7 +25,7 @@ export default function LoginPage() {
     const { error } = await authClient.signIn.email({ email, password });
     setPending(false);
     if (error) setError("Email o contraseña incorrectos");
-    else router.push("/vender");
+    else router.push("/"); // la raíz rutea por rol (super-admin vs tienda)
   }
 
   return (
@@ -33,10 +33,10 @@ export default function LoginPage() {
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
           <span className="flex size-11 items-center justify-center rounded-lg bg-brand font-mono text-base font-semibold tracking-tight text-brand-foreground">
-            {initials(BUSINESS_NAME)}
+            {initials(APP_NAME)}
           </span>
           <div className="space-y-1">
-            <h1 className="text-xl font-semibold tracking-tight">{BUSINESS_NAME}</h1>
+            <h1 className="text-xl font-semibold tracking-tight">{APP_NAME}</h1>
             <p className="text-sm text-muted-foreground">Ingresá con tu cuenta para continuar.</p>
           </div>
         </div>

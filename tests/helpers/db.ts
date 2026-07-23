@@ -20,7 +20,21 @@ export async function createTestDb() {
   return db;
 }
 
-export async function seedTestUser(db: Awaited<ReturnType<typeof createTestDb>>, id = "u1", role = "employee") {
-  await db.insert(schema.user).values({ id, name: "Test", email: `${id}@test.com`, role });
+export async function seedTestStore(
+  db: Awaited<ReturnType<typeof createTestDb>>,
+  slug = "t1",
+  name = "Tienda Test"
+) {
+  const [s] = await db.insert(schema.stores).values({ name, slug }).returning();
+  return s.id;
+}
+
+export async function seedTestUser(
+  db: Awaited<ReturnType<typeof createTestDb>>,
+  id = "u1",
+  role = "employee",
+  storeId: number | null = null
+) {
+  await db.insert(schema.user).values({ id, name: "Test", email: `${id}@test.com`, role, storeId });
   return id;
 }

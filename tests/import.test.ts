@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, seedTestUser } from "./helpers/db";
+import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants, stockMovements } from "@/db/schema";
 import { validateImportRows, executeImport, type ImportRow } from "@/domain/import";
 import { eq } from "drizzle-orm";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
+let store: number;
 
 const row = (n: number, over: Partial<ImportRow> = {}): ImportRow => ({
   rowNumber: n, product: "Remera", variant: "M", sku: null, price: 1000, stock: 5, ...over,
@@ -12,12 +13,13 @@ const row = (n: number, over: Partial<ImportRow> = {}): ImportRow => ({
 
 beforeEach(async () => {
   db = await createTestDb();
-  await seedTestUser(db, "u1");
+  store = await seedTestStore(db);
+  await seedTestUser(db, "u1", "owner", store);
 });
 
 describe("validateImportRows", () => {
   it("flags invalid rows and duplicate SKUs in file", async () => {
-    const out = await validateImportRows(db, [
+    const out = await validateImportRows(db, store, [
       row(2),
       row(3, { product: "" }),
       row(4, { price: -5 }),
@@ -34,15 +36,15 @@ describe("validateImportRows", () => {
   });
 
   it("marks update when SKU exists in db", async () => {
-    const [p] = await db.insert(products).values({ name: "Gorra", basePrice: 500 }).returning();
-    await db.insert(productVariants).values({ productId: p.id, name: "", sku: "G1", stock: 1 });
-    const out = await validateImportRows(db, [row(2, { sku: "G1" }), row(3, { sku: "NEW" })]);
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 1 });
+    const out = await validateImportRows(db, store, [row(2, { sku: "G1" }), row(3, { sku: "NEW" })]);
     expect(out[0].action).toBe("update");
     expect(out[1].action).toBe("create");
   });
 
   it("does not flag a valid row as duplicate SKU when an earlier row with the same SKU errored for another reason", async () => {
-    const out = await validateImportRows(db, [
+    const out = await validateImportRows(db, store, [
       row(2, { product: "", sku: "X1" }),
       row(3, { sku: "X1" }),
     ]);
@@ -53,16 +55,16 @@ describe("validateImportRows", () => {
 
 describe("executeImport", () => {
   it("creates products grouping variants, updates existing by sku, skips errors", async () => {
-    const [p] = await db.insert(products).values({ name: "Gorra", basePrice: 500 }).returning();
-    await db.insert(productVariants).values({ productId: p.id, name: "", sku: "G1", stock: 1 });
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 1 });
 
-    const validated = await validateImportRows(db, [
+    const validated = await validateImportRows(db, store, [
       row(2, { product: "Remera", variant: "M", sku: "R-M", stock: 5 }),
       row(3, { product: "Remera", variant: "L", sku: "R-L", stock: 3 }),
       row(4, { sku: "G1", price: 800, stock: 10, product: "Gorra", variant: "" }),
       row(5, { product: "" }),
     ]);
-    const res = await executeImport(db, validated, "u1");
+    const res = await executeImport(db, store, validated, "u1");
     expect(res).toEqual({ created: 2, updated: 1, skipped: 1 });
 
     const allProducts = await db.select().from(products);
@@ -78,13 +80,13 @@ describe("executeImport", () => {
   });
 
   it("attaches a new variant to an existing active product instead of creating a duplicate", async () => {
-    const [remera] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
-    await db.insert(productVariants).values({ productId: remera.id, name: "M", sku: "R-M", stock: 5 });
+    const [remera] = await db.insert(products).values({ storeId: store, name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: remera.id, name: "M", sku: "R-M", stock: 5 });
 
-    const validated = await validateImportRows(db, [
+    const validated = await validateImportRows(db, store, [
       row(2, { product: "Remera", variant: "L", sku: "R-L", stock: 7 }),
     ]);
-    const res = await executeImport(db, validated, "u1");
+    const res = await executeImport(db, store, validated, "u1");
     expect(res).toEqual({ created: 1, updated: 0, skipped: 0 });
 
     const remeras = await db.select().from(products).where(eq(products.name, "Remera"));
@@ -95,13 +97,13 @@ describe("executeImport", () => {
   });
 
   it("preserves the imported variant price instead of silently inheriting the reused product's basePrice", async () => {
-    const [remera] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
-    await db.insert(productVariants).values({ productId: remera.id, name: "M", sku: "R-M", stock: 5 });
+    const [remera] = await db.insert(products).values({ storeId: store, name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: remera.id, name: "M", sku: "R-M", stock: 5 });
 
-    const validated = await validateImportRows(db, [
+    const validated = await validateImportRows(db, store, [
       row(2, { product: "Remera", variant: "XL", sku: "R-XL", price: 1500, stock: 2 }),
     ]);
-    const res = await executeImport(db, validated, "u1");
+    const res = await executeImport(db, store, validated, "u1");
     expect(res).toEqual({ created: 1, updated: 0, skipped: 0 });
 
     const remeras = await db.select().from(products).where(eq(products.name, "Remera"));
@@ -113,13 +115,13 @@ describe("executeImport", () => {
   });
 
   it("stores card attributes on create and syncs them on update when provided", async () => {
-    const validated = await validateImportRows(db, [
+    const validated = await validateImportRows(db, store, [
       row(2, {
         product: "Charizard", variant: "Base Set NM", sku: "CHAR-BS-NM", stock: 3,
         setName: "Base Set", condition: "NM", foil: true, language: "EN",
       }),
     ]);
-    await executeImport(db, validated, "u1");
+    await executeImport(db, store, validated, "u1");
     const [created] = await db.select().from(productVariants).where(eq(productVariants.sku, "CHAR-BS-NM"));
     expect(created.setName).toBe("Base Set");
     expect(created.condition).toBe("NM");
@@ -127,50 +129,50 @@ describe("executeImport", () => {
     expect(created.language).toBe("EN");
     expect(created.stock).toBe(3); // stock real al crear, no 0 + movimiento
 
-    const reimport = await validateImportRows(db, [
+    const reimport = await validateImportRows(db, store, [
       row(3, { product: "Charizard", variant: "Base Set NM", sku: "CHAR-BS-NM", stock: 3, condition: "LP" }),
     ]);
-    await executeImport(db, reimport, "u1");
+    await executeImport(db, store, reimport, "u1");
     const [updated] = await db.select().from(productVariants).where(eq(productVariants.sku, "CHAR-BS-NM"));
     expect(updated.condition).toBe("LP"); // sincronizado en el update
     expect(updated.setName).toBe("Base Set"); // no se borró por no venir en la segunda fila... espera, ver Step 3
   });
 
   it("leaves foil untouched when a re-import row omits it (blank Foil cell), but still honors an explicit false", async () => {
-    const created = await validateImportRows(db, [
+    const created = await validateImportRows(db, store, [
       row(2, {
         product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4, foil: true,
       }),
     ]);
-    await executeImport(db, created, "u1");
+    await executeImport(db, store, created, "u1");
     const [afterCreate] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
     expect(afterCreate.foil).toBe(true);
 
     // Simula una fila de re-importación con la celda Foil en blanco (foil: undefined,
     // como produce actions.ts para una celda vacía): NO debe pisar el foil existente.
-    const blankFoilReimport = await validateImportRows(db, [
+    const blankFoilReimport = await validateImportRows(db, store, [
       row(3, { product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4 }),
     ]);
-    await executeImport(db, blankFoilReimport, "u1");
+    await executeImport(db, store, blankFoilReimport, "u1");
     const [afterBlankReimport] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
     expect(afterBlankReimport.foil).toBe(true); // no se pisó por una celda Foil en blanco
 
     // Un valor explícito (foil: false) sí debe sincronizarse.
-    const explicitFalseReimport = await validateImportRows(db, [
+    const explicitFalseReimport = await validateImportRows(db, store, [
       row(4, { product: "Blastoise", variant: "Base Set NM", sku: "BLAST-BS-NM", stock: 4, foil: false }),
     ]);
-    await executeImport(db, explicitFalseReimport, "u1");
+    await executeImport(db, store, explicitFalseReimport, "u1");
     const [afterExplicitFalse] = await db.select().from(productVariants).where(eq(productVariants.sku, "BLAST-BS-NM"));
     expect(afterExplicitFalse.foil).toBe(false); // explicit false still syncs
   });
 
   it("modo 'add': suma la cantidad al stock existente en vez de reemplazarlo", async () => {
-    const [p] = await db.insert(products).values({ name: "Gorra", basePrice: 500 }).returning();
-    await db.insert(productVariants).values({ productId: p.id, name: "", sku: "G1", stock: 10 });
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 10 });
 
-    const validated = await validateImportRows(db, [row(2, { sku: "G1", product: "Gorra", variant: "", stock: 4, price: null })]);
+    const validated = await validateImportRows(db, store, [row(2, { sku: "G1", product: "Gorra", variant: "", stock: 4, price: null })]);
     expect(validated[0].action).toBe("update");
-    await executeImport(db, validated, "u1", { mode: "add" });
+    await executeImport(db, store, validated, "u1", { mode: "add" });
 
     const [g1] = await db.select().from(productVariants).where(eq(productVariants.sku, "G1"));
     expect(g1.stock).toBe(14); // 10 + 4 (no reemplaza por 4)
@@ -180,11 +182,12 @@ describe("executeImport", () => {
   });
 
   it("matchByName: sin SKU, matchea variante existente por nombre y la marca update", async () => {
-    const [p] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
-    await db.insert(productVariants).values({ productId: p.id, name: "M", stock: 5 });
+    const [p] = await db.insert(products).values({ storeId: store, name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "M", stock: 5 });
 
     const validated = await validateImportRows(
       db,
+      store,
       [
         row(2, { product: "Remera", variant: "M", sku: null, price: null, stock: 3 }), // sin precio: ok porque es update
         row(3, { product: "Remera", variant: "XXL", sku: null, price: 1200, stock: 2 }), // no existe: create
@@ -195,7 +198,7 @@ describe("executeImport", () => {
     expect(validated[0].error).toBeNull();
     expect(validated[1].action).toBe("create");
 
-    await executeImport(db, validated, "u1", { mode: "add" });
+    await executeImport(db, store, validated, "u1", { mode: "add" });
     const [m] = await db.select().from(productVariants).where(eq(productVariants.name, "M"));
     expect(m.stock).toBe(8); // 5 + 3
   });
@@ -204,8 +207,8 @@ describe("executeImport", () => {
     const rows = Array.from({ length: 150 }, (_, i) =>
       row(i + 2, { product: `Carta ${i}`, variant: "NM", sku: `BULK-${i}`, price: 100 + i, stock: i })
     );
-    const validated = await validateImportRows(db, rows);
-    const res = await executeImport(db, validated, "u1");
+    const validated = await validateImportRows(db, store, rows);
+    const res = await executeImport(db, store, validated, "u1");
     expect(res).toEqual({ created: 150, updated: 0, skipped: 0 });
 
     const allVariants = await db.select().from(productVariants).where(eq(productVariants.sku, "BULK-100"));

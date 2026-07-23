@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
-import { BUSINESS_NAME } from "@/lib/config";
+import { APP_NAME } from "@/lib/config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: BUSINESS_NAME,
+  title: APP_NAME,
   description: "Sistema de stock y ventas",
 };
 
