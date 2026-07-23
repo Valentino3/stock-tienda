@@ -1,6 +1,6 @@
 "use server";
 import { db } from "@/db";
-import { requireUser } from "@/lib/session";
+import { requireStore } from "@/lib/session";
 import { createSale, type Discount } from "@/domain/sales";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 
@@ -14,8 +14,8 @@ function validDiscount(d: Discount | undefined): boolean {
 }
 
 export async function searchVariants(term: string) {
-  await requireUser();
-  return searchVariantsQuery(db, term);
+  const { storeId } = await requireStore();
+  return searchVariantsQuery(db, storeId, term);
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -24,14 +24,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   EMPTY_SALE: "El carrito está vacío.",
   INVALID_QUANTITY: "Cantidad inválida",
   VARIANT_NOT_FOUND: "Producto no encontrado",
+  CLIENT_REQUIRED: "Elegí un cliente para la venta a cuenta.",
+  CLIENT_NOT_FOUND: "Cliente no encontrado.",
 };
 
 export async function submitSale(input: {
-  paymentMethod: "efectivo" | "transferencia" | "tarjeta";
+  paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
   items: { variantId: number; quantity: number; discount?: Discount }[];
   saleDiscount?: Discount;
+  clientId?: number | null;
 }) {
-  const user = await requireUser();
+  const { id: sellerId, storeId } = await requireStore();
   const invalid = input.items.some(
     (i) =>
       !Number.isInteger(i.variantId) ||
@@ -41,7 +44,7 @@ export async function submitSale(input: {
   );
   if (invalid || !validDiscount(input.saleDiscount)) return { error: "Cantidad o descuento inválido" };
   try {
-    const sale = await createSale(db, { sellerId: user.id, ...input });
+    const sale = await createSale(db, { storeId, sellerId, ...input });
     return { ok: true as const, saleId: sale.id, total: sale.total };
   } catch (e) {
     const msg = e instanceof Error ? ERROR_MESSAGES[e.message] : undefined;

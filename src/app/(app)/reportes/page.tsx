@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money, number } from "@/lib/format";
 import { getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport } from "@/domain/reports";
@@ -17,6 +17,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
   transferencia: "Transferencia",
   tarjeta: "Tarjeta",
+  cuenta: "Cuenta",
 };
 
 type Params = { from?: string; to?: string; set?: string };
@@ -26,10 +27,11 @@ export default async function ReportesPage({
 }: {
   searchParams: Promise<Params>;
 }) {
+  let storeId: number;
   try {
-    await requireOwner();
+    ({ storeId } = await requireStoreOwner());
   } catch (err) {
-    // requireOwner() -> requireUser() can itself throw Next's internal
+    // requireStoreOwner() -> requireUser() can itself throw Next's internal
     // redirect("/login") error when there's no session at all; that must
     // propagate untouched. Only a genuine FORBIDDEN (logged in, not owner)
     // should be redirected to /vender here.
@@ -54,11 +56,11 @@ export default async function ReportesPage({
   const toValue = params.to ?? defaultTo.toISOString().slice(0, 10);
 
   const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements] = await Promise.all([
-    getSalesReport(db, { from, to }),
-    getTopProducts(db, { from, to, limit: 10, setName: params.set || undefined }),
-    getLowStock(db, { setName: params.set || undefined }),
-    getCashSessionHistory(db, { limit: 30 }),
-    getCashMovementsReport(db, { from, to }),
+    getSalesReport(db, storeId, { from, to }),
+    getTopProducts(db, storeId, { from, to, limit: 10, setName: params.set || undefined }),
+    getLowStock(db, storeId, { setName: params.set || undefined }),
+    getCashSessionHistory(db, storeId, { limit: 30 }),
+    getCashMovementsReport(db, storeId, { from, to }),
   ]);
 
   const MOVEMENT_LABELS: Record<string, string> = { gasto: "Gastos", egreso: "Egresos" };
@@ -87,6 +89,9 @@ export default async function ReportesPage({
             </Button>
             <Button asChild variant="outline" size="sm">
               <Link href={`/reportes?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+            </Button>
+            <Button asChild size="sm">
+              <a href={`/reportes/export?from=${fromValue}&to=${toValue}`}>Exportar Excel</a>
             </Button>
           </div>
         }

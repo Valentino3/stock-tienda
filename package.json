@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "seed:owner": "tsx scripts/seed-owner.ts"
+    "seed:superadmin": "tsx scripts/seed-superadmin.ts",
+    "seed:store": "tsx scripts/seed-store.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.18",

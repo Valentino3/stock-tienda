@@ -1,13 +1,13 @@
 "use server";
 import { db } from "@/db";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { voidSale } from "@/domain/sales";
 import { revalidatePath } from "next/cache";
 
 export async function voidSaleAction(saleId: number) {
-  const user = await requireOwner();
+  const { id, storeId } = await requireStoreOwner();
   try {
-    await voidSale(db, { saleId, userId: user.id });
+    await voidSale(db, { saleId, storeId, userId: id });
   } catch (e) {
     return { error: e instanceof Error && e.message === "ALREADY_VOIDED" ? "La venta ya está anulada" : "No se pudo anular" };
   }

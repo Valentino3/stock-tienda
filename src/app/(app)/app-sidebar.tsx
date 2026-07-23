@@ -12,11 +12,11 @@ import {
   BarChart3,
   HandCoins,
   Users,
+  Contact,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { BUSINESS_NAME } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import { LogoutButton } from "./logout-button";
 
@@ -27,6 +27,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/vender": ShoppingCart,
   "/productos": Package,
   "/ventas": Receipt,
+  "/clientes": Contact,
   "/caja": Wallet,
   "/importar": Upload,
   "/reportes": BarChart3,
@@ -114,10 +115,12 @@ export function AppSidebar({
   groups,
   userName,
   roleLabel,
+  storeName,
 }: {
   groups: NavGroup[];
   userName: string;
   roleLabel: string;
+  storeName: string;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -127,7 +130,7 @@ export function AppSidebar({
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex lg:w-64 lg:shrink-0 lg:flex-col lg:border-r lg:bg-card">
         <div className="px-5 py-4">
-          <Brand name={BUSINESS_NAME} />
+          <Brand name={storeName} />
         </div>
         <div className="flex-1 overflow-y-auto px-3 py-2">
           <NavList groups={groups} pathname={pathname} />
@@ -147,9 +150,9 @@ export function AppSidebar({
           </SheetTrigger>
           <SheetContent side="left" className="w-72 gap-0 p-0">
             <SheetHeader className="flex-row items-center gap-2.5 border-b px-5 py-4">
-              <Logomark name={BUSINESS_NAME} />
+              <Logomark name={storeName} />
               <SheetTitle className="truncate text-sm font-semibold tracking-tight">
-                {BUSINESS_NAME}
+                {storeName}
               </SheetTitle>
             </SheetHeader>
             <div className="flex-1 overflow-y-auto px-3 py-4">
@@ -160,7 +163,7 @@ export function AppSidebar({
             </div>
           </SheetContent>
         </Sheet>
-        <Brand name={BUSINESS_NAME} />
+        <Brand name={storeName} />
         <LogoutButton />
       </header>
     </>

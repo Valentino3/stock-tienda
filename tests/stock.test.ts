@@ -1,24 +1,26 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, seedTestUser } from "./helpers/db";
+import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants, stockMovements } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 import { eq } from "drizzle-orm";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
+let store: number;
 let variantId: number;
 
 beforeEach(async () => {
   db = await createTestDb();
-  await seedTestUser(db, "u1");
-  const [p] = await db.insert(products).values({ name: "Remera", basePrice: 1000 }).returning();
-  const [v] = await db.insert(productVariants).values({ productId: p.id, name: "M", stock: 5 }).returning();
+  store = await seedTestStore(db);
+  await seedTestUser(db, "u1", "owner", store);
+  const [p] = await db.insert(products).values({ storeId: store, name: "Remera", basePrice: 1000 }).returning();
+  const [v] = await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "M", stock: 5 }).returning();
   variantId = v.id;
 });
 
 describe("applyStockMovement", () => {
   it("decrements stock and records movement", async () => {
     await db.transaction(async (tx) => {
-      await applyStockMovement(tx, { variantId, type: "venta", quantity: -3, userId: "u1" });
+      await applyStockMovement(tx, { variantId, storeId: store, type: "venta", quantity: -3, userId: "u1" });
     });
     const [v] = await db.select().from(productVariants).where(eq(productVariants.id, variantId));
     expect(v.stock).toBe(2);
@@ -30,7 +32,7 @@ describe("applyStockMovement", () => {
   it("rejects movement that would make stock negative", async () => {
     await expect(
       db.transaction(async (tx) => {
-        await applyStockMovement(tx, { variantId, type: "venta", quantity: -6, userId: "u1" });
+        await applyStockMovement(tx, { variantId, storeId: store, type: "venta", quantity: -6, userId: "u1" });
       })
     ).rejects.toThrow("INSUFFICIENT_STOCK");
     const [v] = await db.select().from(productVariants).where(eq(productVariants.id, variantId));
@@ -40,9 +42,20 @@ describe("applyStockMovement", () => {
 
   it("increments stock on reposicion", async () => {
     await db.transaction(async (tx) => {
-      await applyStockMovement(tx, { variantId, type: "reposicion", quantity: 10, userId: "u1" });
+      await applyStockMovement(tx, { variantId, storeId: store, type: "reposicion", quantity: 10, userId: "u1" });
     });
     const [v] = await db.select().from(productVariants).where(eq(productVariants.id, variantId));
     expect(v.stock).toBe(15);
+  });
+
+  it("no mueve stock de una variante de otra tienda (guardia por storeId)", async () => {
+    const store2 = await seedTestStore(db, "t2");
+    await expect(
+      db.transaction(async (tx) => {
+        await applyStockMovement(tx, { variantId, storeId: store2, type: "venta", quantity: -1, userId: "u1" });
+      })
+    ).rejects.toThrow("INSUFFICIENT_STOCK");
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.id, variantId));
+    expect(v.stock).toBe(5); // intacto
   });
 });

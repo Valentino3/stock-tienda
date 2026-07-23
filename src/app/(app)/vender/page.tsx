@@ -1,14 +1,16 @@
 import Link from "next/link";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { clients } from "@/db/schema";
 import { getOpenSession } from "@/domain/cash";
-import { requireUser } from "@/lib/session";
+import { requireStore } from "@/lib/session";
 import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
 import { SaleForm } from "./sale-form";
 
 export default async function VenderPage() {
-  await requireUser();
-  const session = await getOpenSession(db);
+  const { storeId } = await requireStore();
+  const session = await getOpenSession(db, storeId);
 
   if (!session) {
     return (
@@ -25,10 +27,16 @@ export default async function VenderPage() {
     );
   }
 
+  const clientList = await db
+    .select({ id: clients.id, name: clients.name })
+    .from(clients)
+    .where(and(eq(clients.storeId, storeId), eq(clients.active, true)))
+    .orderBy(clients.name);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Vender" description="Buscá un producto, armá el carrito y cobrá." />
-      <SaleForm />
+      <SaleForm clients={clientList} />
     </div>
   );
 }

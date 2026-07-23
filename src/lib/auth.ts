@@ -16,8 +16,10 @@ export const auth = betterAuth({
   plugins: [
     admin({
       defaultRole: "employee",
-      adminRoles: ["owner"],
-      roles: { owner: adminAc, employee: userAc },
+      // superadmin = plataforma (todas las tiendas); owner = dueño de su tienda.
+      // Ambos con permisos admin; employee sin permisos admin.
+      adminRoles: ["superadmin", "owner"],
+      roles: { superadmin: adminAc, owner: adminAc, employee: userAc },
     }),
   ],
 });

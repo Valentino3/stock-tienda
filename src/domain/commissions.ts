@@ -6,6 +6,7 @@ import { commissions, user, type Commission } from "@/db/schema";
 export async function createCommission(
   db: any,
   input: {
+    storeId: number;
     employeeId: string;
     amount: number;
     periodFrom?: Date | null;
@@ -16,6 +17,7 @@ export async function createCommission(
 ): Promise<Commission> {
   if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
   const [row] = await db.insert(commissions).values({
+    storeId: input.storeId,
     employeeId: input.employeeId,
     amount: Math.round(input.amount * 100) / 100,
     periodFrom: input.periodFrom ?? null,
@@ -28,9 +30,10 @@ export async function createCommission(
 
 export async function listCommissions(
   db: any,
+  storeId: number,
   opts: { employeeId?: string; from?: Date; to?: Date } = {}
 ) {
-  const conditions = [];
+  const conditions = [eq(commissions.storeId, storeId)];
   if (opts.employeeId) conditions.push(eq(commissions.employeeId, opts.employeeId));
   if (opts.from) conditions.push(gte(commissions.createdAt, opts.from));
   if (opts.to) conditions.push(lte(commissions.createdAt, opts.to));
@@ -38,10 +41,11 @@ export async function listCommissions(
     .select({ commission: commissions, employeeName: user.name })
     .from(commissions)
     .innerJoin(user, eq(commissions.employeeId, user.id))
-    .where(conditions.length ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(commissions.createdAt));
 }
 
-export async function deleteCommission(db: any, id: number): Promise<void> {
-  await db.delete(commissions).where(eq(commissions.id, id));
+// Scopeado por tienda: no borra comisiones de otra tienda por id.
+export async function deleteCommission(db: any, storeId: number, id: number): Promise<void> {
+  await db.delete(commissions).where(and(eq(commissions.id, id), eq(commissions.storeId, storeId)));
 }

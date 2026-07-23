@@ -1,9 +1,9 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { products, productVariants } from "@/db/schema";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { applyStockMovement } from "@/domain/stock";
 
 // Código de error de Postgres (y PGlite) para violación de restricción
@@ -13,7 +13,7 @@ import { applyStockMovement } from "@/domain/stock";
 const PG_UNIQUE_VIOLATION = "23505";
 
 export async function saveProduct(input: { id?: number; name: string; basePrice: number; lowStockThreshold: number }) {
-  await requireOwner();
+  const { storeId } = await requireStoreOwner();
   if (
     !input.name.trim() ||
     input.basePrice < 0 ||
@@ -23,13 +23,13 @@ export async function saveProduct(input: { id?: number; name: string; basePrice:
   if (input.id) {
     await db.update(products).set({
       name: input.name.trim(), basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
-    }).where(eq(products.id, input.id));
+    }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
     const [p] = await db.insert(products).values({
-      name: input.name.trim(), basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
+      storeId, name: input.name.trim(), basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
     }).returning();
     // variante default para producto sin variantes reales
-    await db.insert(productVariants).values({ productId: p.id, name: "" });
+    await db.insert(productVariants).values({ storeId, productId: p.id, name: "" });
   }
   revalidatePath("/productos");
   return { ok: true };
@@ -46,7 +46,7 @@ export async function saveVariant(input: {
   foil?: boolean;
   language?: string | null;
 }) {
-  await requireOwner();
+  const { storeId } = await requireStoreOwner();
   // Empty name is legitimate on UPDATE: every product gets a hidden "default"
   // variant with `name: ""` (see saveProduct above), and its SKU/price must
   // stay editable without forcing the owner to name it. Only INSERT (a new,
@@ -62,8 +62,17 @@ export async function saveVariant(input: {
     language: input.language?.trim() || null,
   };
   try {
-    if (input.id) await db.update(productVariants).set(values).where(eq(productVariants.id, input.id));
-    else await db.insert(productVariants).values({ ...values, productId: input.productId });
+    if (input.id) {
+      await db.update(productVariants).set(values)
+        .where(and(eq(productVariants.id, input.id), eq(productVariants.storeId, storeId)));
+    } else {
+      // El producto padre debe ser de la tienda (evita atar variantes a
+      // productos de otra tienda por id).
+      const [parent] = await db.select({ id: products.id }).from(products)
+        .where(and(eq(products.id, input.productId), eq(products.storeId, storeId)));
+      if (!parent) return { error: "Producto no encontrado" };
+      await db.insert(productVariants).values({ ...values, storeId, productId: input.productId });
+    }
   } catch (err) {
     const e = err as { code?: string; message?: string; cause?: { code?: string; message?: string } };
     const code = e?.code ?? e?.cause?.code;
@@ -76,11 +85,11 @@ export async function saveVariant(input: {
 }
 
 export async function restock(variantId: number, quantity: number) {
-  const user = await requireOwner();
+  const { id: userId, storeId } = await requireStoreOwner();
   if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Cantidad inválida" };
   try {
     await db.transaction(async (tx) => {
-      await applyStockMovement(tx, { variantId, type: "reposicion", quantity, userId: user.id });
+      await applyStockMovement(tx, { variantId, storeId, type: "reposicion", quantity, userId });
     });
   } catch {
     return { error: "No se pudo reponer" };
@@ -90,14 +99,16 @@ export async function restock(variantId: number, quantity: number) {
 }
 
 export async function adjustStock(variantId: number, newStock: number, reason: string) {
-  const user = await requireOwner();
+  const { id: userId, storeId } = await requireStoreOwner();
   if (!Number.isInteger(newStock) || newStock < 0 || !reason.trim()) return { error: "Datos inválidos" };
   try {
     await db.transaction(async (tx) => {
-      const [v] = await tx.select().from(productVariants).where(eq(productVariants.id, variantId));
+      const [v] = await tx.select().from(productVariants)
+        .where(and(eq(productVariants.id, variantId), eq(productVariants.storeId, storeId)));
+      if (!v) throw new Error("VARIANT_NOT_FOUND");
       const delta = newStock - v.stock;
       if (delta !== 0) {
-        await applyStockMovement(tx, { variantId, type: "ajuste", quantity: delta, userId: user.id, reason: reason.trim() });
+        await applyStockMovement(tx, { variantId, storeId, type: "ajuste", quantity: delta, userId, reason: reason.trim() });
       }
     });
   } catch (err) {
@@ -111,15 +122,17 @@ export async function adjustStock(variantId: number, newStock: number, reason: s
 }
 
 export async function toggleProductActive(productId: number, active: boolean) {
-  await requireOwner();
-  await db.update(products).set({ active }).where(eq(products.id, productId));
+  const { storeId } = await requireStoreOwner();
+  await db.update(products).set({ active })
+    .where(and(eq(products.id, productId), eq(products.storeId, storeId)));
   revalidatePath("/productos");
   return { ok: true };
 }
 
 export async function toggleVariantActive(variantId: number, active: boolean) {
-  await requireOwner();
-  await db.update(productVariants).set({ active }).where(eq(productVariants.id, variantId));
+  const { storeId } = await requireStoreOwner();
+  await db.update(productVariants).set({ active })
+    .where(and(eq(productVariants.id, variantId), eq(productVariants.storeId, storeId)));
   revalidatePath("/productos");
   return { ok: true };
 }

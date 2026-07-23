@@ -1,7 +1,8 @@
 import Link from "next/link";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user } from "@/db/schema";
-import { requireUser } from "@/lib/session";
+import { requireStore } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money } from "@/lib/format";
 import { getSalesHistory } from "@/domain/sales-history";
@@ -18,6 +19,7 @@ const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
   transferencia: "Transferencia",
   tarjeta: "Tarjeta",
+  cuenta: "Cuenta",
 };
 
 type Params = { from?: string; to?: string; seller?: string; all?: string; page?: string };
@@ -28,15 +30,16 @@ export default async function VentasPage({
   searchParams: Promise<Params>;
 }) {
   const params = await searchParams;
-  const currentUser = await requireUser();
+  const currentUser = await requireStore();
   const isOwner = currentUser.role === "owner";
+  const storeId = currentUser.storeId;
   const page = Math.max(1, Number(params.page) || 1);
 
   const from = params.from ? new Date(`${params.from}T00:00:00`) : (params.all ? new Date(0) : undefined);
   const to = params.to ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined;
   const sellerId = !isOwner ? currentUser.id : params.seller || undefined;
 
-  const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, { from, to, sellerId, page });
+  const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, { storeId, from, to, sellerId, page });
 
   const itemsBySale = new Map<number, typeof itemRows>();
   for (const item of itemRows) {
@@ -45,8 +48,9 @@ export default async function VentasPage({
     itemsBySale.set(item.saleId, list);
   }
 
+  // Solo vendedores de esta tienda.
   const sellers = isOwner
-    ? await db.select({ id: user.id, name: user.name }).from(user).orderBy(user.name)
+    ? await db.select({ id: user.id, name: user.name }).from(user).where(eq(user.storeId, storeId)).orderBy(user.name)
     : [];
 
   const hasFilters = Boolean(params.from || params.to || params.seller);
@@ -83,6 +87,11 @@ export default async function VentasPage({
             </Button>
             <Button asChild variant="outline" size="sm">
               <Link href={`/ventas?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+            </Button>
+            <Button asChild size="sm">
+              <a href={`/ventas/export${params.from || params.to ? `?from=${params.from ?? ""}&to=${params.to ?? ""}` : ""}`}>
+                Exportar Excel
+              </a>
             </Button>
           </div>
         }

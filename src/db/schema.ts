@@ -1,7 +1,19 @@
 import {
-  pgTable, text, timestamp, boolean, integer, numeric, pgEnum, index,
+  pgTable, text, timestamp, boolean, integer, numeric, pgEnum, index, uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+
+// ---- multi-tienda (tenancy) ----
+// Cada tienda es un tenant aislado. Los usuarios pertenecen a una tienda
+// (user.storeId); el super-admin de plataforma tiene storeId null. Toda tabla
+// de dominio raíz lleva storeId; las hijas lo heredan por su parent.
+export const stores = pgTable("stores", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
 
 // ---- better-auth ----
 // Reconciliado contra `npx @better-auth/cli generate` corrido con la config
@@ -20,7 +32,9 @@ export const user = pgTable("user", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-  role: text("role"), // 'owner' | 'employee' (default "employee" aplicado por better-auth)
+  role: text("role"), // 'superadmin' | 'owner' | 'employee' (default "employee" por better-auth)
+  // Tienda a la que pertenece el usuario. null = super-admin de plataforma.
+  storeId: integer("store_id").references(() => stores.id),
   banned: boolean("banned").default(false),
   banReason: text("ban_reason"),
   banExpires: timestamp("ban_expires"),
@@ -84,7 +98,9 @@ export const accountRelations = relations(account, ({ one }) => ({
 }));
 
 // ---- dominio ----
-export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta"]);
+export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta", "cuenta"]);
+// Movimientos de cuenta corriente de un cliente: cargo (venta a cuenta) / pago.
+export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
 // Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
@@ -92,19 +108,21 @@ export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egre
 
 export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
   name: text("name").notNull(),
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (t) => [index("products_store_idx").on(t.storeId)]);
 
 export const productVariants = pgTable("product_variants", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
   productId: integer("product_id").notNull().references(() => products.id),
   // '' para la variante default de productos sin variantes reales (UI la oculta)
   name: text("name").notNull().default(""),
-  sku: text("sku").unique(),
+  sku: text("sku"),
   stock: integer("stock").notNull().default(0),
   price: numeric("price", { precision: 12, scale: 2, mode: "number" }), // null => hereda basePrice
   active: boolean("active").notNull().default(true),
@@ -112,19 +130,19 @@ export const productVariants = pgTable("product_variants", {
   condition: text("condition"),
   foil: boolean("foil").notNull().default(false),
   language: text("language"),
-});
+  // SKU único POR TIENDA (no global): dos tiendas pueden reusar el mismo SKU.
+  // sku null se permite repetido (Postgres trata NULL como distinto).
+}, (t) => [uniqueIndex("product_variants_store_sku_idx").on(t.storeId, t.sku)]);
 
 // NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`
-// (migración 0002_cash_sessions_one_open_idx.sql) que garantiza a nivel de DB
-// que como máximo una fila tenga `closed_at IS NULL`. No se modela con
-// drizzle-kit porque requiere un índice sobre una expresión constante
-// `(1) WHERE closed_at IS NULL` (un índice único sobre la columna
-// `closed_at` filtrado por `IS NULL` NO sirve: Postgres trata cada NULL como
-// distinto en un índice único, así que no bloquearía duplicados). Ver
-// `src/domain/cash.ts` (openCashSession) para el manejo del error de
-// violación de unicidad.
+// que garantiza a nivel de DB como máximo una caja abierta POR TIENDA. Con
+// multi-tienda pasó de `((1)) WHERE closed_at IS NULL` (una global) a
+// `(store_id) WHERE closed_at IS NULL` (ver la migración de multi-tienda). No
+// se modela con drizzle-kit porque es un índice único parcial sobre expresión.
+// Ver `src/domain/cash.ts` (openCashSession) para el manejo del error 23505.
 export const cashSessions = pgTable("cash_sessions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   openedBy: text("opened_by").notNull().references(() => user.id),
@@ -140,6 +158,7 @@ export const cashSessions = pgTable("cash_sessions", {
 
 export const sales = pgTable("sales", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   sellerId: text("seller_id").notNull().references(() => user.id),
   cashSessionId: integer("cash_session_id").notNull().references(() => cashSessions.id),
@@ -147,10 +166,12 @@ export const sales = pgTable("sales", {
   // Descuento general resuelto ($) sobre el subtotal; `total` ya es el neto final.
   discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
   paymentMethod: paymentMethodEnum("payment_method").notNull(),
+  // Cliente de cuenta corriente (solo cuando paymentMethod = "cuenta").
+  clientId: integer("client_id").references(() => clients.id),
   voided: boolean("voided").notNull().default(false),
   voidedAt: timestamp("voided_at"),
   voidedBy: text("voided_by").references(() => user.id),
-});
+}, (t) => [index("sales_store_idx").on(t.storeId)]);
 
 export const saleItems = pgTable("sale_items", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -187,6 +208,7 @@ export const cashMovements = pgTable("cash_movements", {
 // Comisiones anotadas a mano por el dueño para un empleado y un período.
 export const commissions = pgTable("commissions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
   employeeId: text("employee_id").notNull().references(() => user.id),
   amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(),
   periodFrom: timestamp("period_from"),
@@ -196,6 +218,35 @@ export const commissions = pgTable("commissions", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [index("commissions_employee_idx").on(table.employeeId)]);
 
+// Clientes de una tienda (cuenta corriente / fiado).
+export const clients = pgTable("clients", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  name: text("name").notNull(),
+  phone: text("phone"),
+  note: text("note"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("clients_store_idx").on(t.storeId)]);
+
+// Movimientos de cuenta: cargo (venta a cuenta) suma deuda, pago la baja.
+// Saldo del cliente = Σcargo − Σpago.
+export const clientAccountMovements = pgTable("client_account_movements", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  clientId: integer("client_id").notNull().references(() => clients.id),
+  type: clientMovementTypeEnum("type").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(), // positivo
+  saleId: integer("sale_id").references(() => sales.id),
+  method: paymentMethodEnum("method"), // medio del pago (null para cargos)
+  note: text("note"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("client_movements_client_idx").on(t.clientId)]);
+
+export type Store = typeof stores.$inferSelect;
+export type Client = typeof clients.$inferSelect;
+export type ClientAccountMovement = typeof clientAccountMovements.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type ProductVariant = typeof productVariants.$inferSelect;
 export type Sale = typeof sales.$inferSelect;

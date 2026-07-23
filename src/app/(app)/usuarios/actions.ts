@@ -1,17 +1,22 @@
 "use server";
 import { headers } from "next/headers";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { requireOwner } from "@/lib/session";
+import { db } from "@/db";
+import { user as userTable } from "@/db/schema";
+import { requireStoreOwner } from "@/lib/session";
 import { revalidatePath } from "next/cache";
 
 export async function createEmployee(input: { name: string; email: string; password: string }) {
-  await requireOwner();
+  const owner = await requireStoreOwner();
   if (input.password.length < 8) return { error: "Contraseña mínimo 8 caracteres" };
   try {
-    await auth.api.createUser({
+    const created = await auth.api.createUser({
       headers: await headers(),
       body: { name: input.name, email: input.email, password: input.password, role: "employee" },
     });
+    // El empleado pertenece a la tienda del dueño que lo crea.
+    await db.update(userTable).set({ storeId: owner.storeId }).where(eq(userTable.id, created.user.id));
   } catch {
     return { error: "No se pudo crear (¿email ya usado?)" };
   }
@@ -20,8 +25,11 @@ export async function createEmployee(input: { name: string; email: string; passw
 }
 
 export async function setUserActive(userId: string, active: boolean) {
-  const owner = await requireOwner();
+  const owner = await requireStoreOwner();
   if (!active && userId === owner.id) return { error: "No podés desactivarte a vos mismo" };
+  // Solo se puede activar/desactivar usuarios de la propia tienda.
+  const [target] = await db.select({ storeId: userTable.storeId }).from(userTable).where(eq(userTable.id, userId));
+  if (!target || target.storeId !== owner.storeId) return { error: "Usuario no encontrado" };
   const h = await headers();
   try {
     if (active) await auth.api.unbanUser({ headers: h, body: { userId } });

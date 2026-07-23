@@ -1,15 +1,17 @@
 import { redirect, unstable_rethrow } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user } from "@/db/schema";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UserForm, ToggleActiveButton } from "./user-form";
 
 export default async function UsuariosPage() {
+  let storeId: number;
   try {
-    await requireOwner();
+    ({ storeId } = await requireStoreOwner());
   } catch (err) {
     unstable_rethrow(err);
     redirect("/vender");
@@ -24,6 +26,7 @@ export default async function UsuariosPage() {
       banned: user.banned,
     })
     .from(user)
+    .where(eq(user.storeId, storeId))
     .orderBy(user.name);
 
   return (

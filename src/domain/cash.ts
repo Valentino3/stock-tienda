@@ -3,8 +3,9 @@ import { cashMovements, cashSessions, sales, type CashMovement, type CashSession
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-export async function getOpenSession(db: any): Promise<CashSession | null> {
-  const rows = await db.select().from(cashSessions).where(isNull(cashSessions.closedAt)).limit(1);
+export async function getOpenSession(db: any, storeId: number): Promise<CashSession | null> {
+  const rows = await db.select().from(cashSessions)
+    .where(and(eq(cashSessions.storeId, storeId), isNull(cashSessions.closedAt))).limit(1);
   return rows[0] ?? null;
 }
 
@@ -12,11 +13,11 @@ export async function getOpenSession(db: any): Promise<CashSession | null> {
 // Ambos tipos restan del efectivo esperado al cerrar (ver closeCashSession).
 export async function createCashMovement(
   db: any,
-  input: { sessionId: number; kind: "gasto" | "egreso"; amount: number; description: string; userId: string }
+  input: { storeId: number; sessionId: number; kind: "gasto" | "egreso"; amount: number; description: string; userId: string }
 ): Promise<CashMovement> {
   if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
   if (!input.description.trim()) throw new Error("EMPTY_DESCRIPTION");
-  const session = await getOpenSession(db);
+  const session = await getOpenSession(db, input.storeId);
   if (!session || session.id !== input.sessionId) throw new Error("NO_OPEN_SESSION");
   const [row] = await db.insert(cashMovements).values({
     cashSessionId: input.sessionId,
@@ -38,11 +39,11 @@ export async function getSessionCashMovements(db: any, sessionId: number): Promi
 // unique/exclusion, incluyendo índices únicos parciales.
 const PG_UNIQUE_VIOLATION = "23505";
 
-export async function openCashSession(db: any, input: { userId: string; openingCash: number }): Promise<CashSession> {
-  if (await getOpenSession(db)) throw new Error("SESSION_ALREADY_OPEN");
+export async function openCashSession(db: any, input: { storeId: number; userId: string; openingCash: number }): Promise<CashSession> {
+  if (await getOpenSession(db, input.storeId)) throw new Error("SESSION_ALREADY_OPEN");
   try {
     const [s] = await db.insert(cashSessions)
-      .values({ openedBy: input.userId, openingCash: round2(input.openingCash) })
+      .values({ storeId: input.storeId, openedBy: input.userId, openingCash: round2(input.openingCash) })
       .returning();
     return s;
   } catch (err: any) {
@@ -63,14 +64,15 @@ export async function openCashSession(db: any, input: { userId: string; openingC
 
 export async function closeCashSession(
   db: any,
-  input: { sessionId: number; userId: string; countedCash: number; notes?: string }
+  input: { storeId: number; sessionId: number; userId: string; countedCash: number; notes?: string }
 ): Promise<CashSession> {
   return db.transaction(async (tx: any) => {
     // Lock the session row so a concurrent close (or a sale committing
     // between the totals select and the final update) serializes against
     // this transaction — same FOR UPDATE pattern as createSale in sales.ts.
+    // Scopeado por tienda: no se cierra la caja de otra tienda por id.
     const [session] = await tx.select().from(cashSessions)
-      .where(eq(cashSessions.id, input.sessionId)).for("update");
+      .where(and(eq(cashSessions.id, input.sessionId), eq(cashSessions.storeId, input.storeId))).for("update");
     if (!session || session.closedAt) throw new Error("SESSION_NOT_OPEN");
 
     const totals = await tx
@@ -102,7 +104,7 @@ export async function closeCashSession(
         difference: round2(input.countedCash - expectedCash),
         notes: input.notes,
       })
-      .where(and(eq(cashSessions.id, input.sessionId), isNull(cashSessions.closedAt)))
+      .where(and(eq(cashSessions.id, input.sessionId), eq(cashSessions.storeId, input.storeId), isNull(cashSessions.closedAt)))
       .returning();
     if (!closed) throw new Error("SESSION_NOT_OPEN");
     return closed;

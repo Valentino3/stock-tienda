@@ -1,6 +1,6 @@
 "use server";
 import { db } from "@/db";
-import { requireOwner } from "@/lib/session";
+import { requireStoreOwner } from "@/lib/session";
 import { createCommission, deleteCommission } from "@/domain/commissions";
 import { revalidatePath } from "next/cache";
 
@@ -11,11 +11,12 @@ export async function saveCommission(input: {
   periodFrom?: string;
   periodTo?: string;
 }) {
-  const owner = await requireOwner();
+  const owner = await requireStoreOwner();
   if (!input.employeeId) return { error: "Elegí un empleado" };
   if (!(input.amount > 0)) return { error: "Monto inválido" };
   try {
     await createCommission(db, {
+      storeId: owner.storeId,
       employeeId: input.employeeId,
       amount: input.amount,
       note: input.note,
@@ -31,8 +32,8 @@ export async function saveCommission(input: {
 }
 
 export async function removeCommission(id: number) {
-  await requireOwner();
-  await deleteCommission(db, id);
+  const { storeId } = await requireStoreOwner();
+  await deleteCommission(db, storeId, id);
   revalidatePath("/comisiones");
   return { ok: true as const };
 }

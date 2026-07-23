@@ -1,7 +1,7 @@
 import { and, eq, ilike, inArray, or } from "drizzle-orm";
 import { products, productVariants } from "@/db/schema";
 
-export async function searchVariants(db: any, term: string) {
+export async function searchVariants(db: any, storeId: number, term: string) {
   const t = term.trim();
   if (t.length < 2) return [];
   const pattern = `%${t}%`;
@@ -15,10 +15,13 @@ export async function searchVariants(db: any, term: string) {
   const variantMatch = db
     .select({ id: productVariants.id })
     .from(productVariants)
-    .where(or(
-      ilike(productVariants.sku, pattern),
-      ilike(productVariants.name, pattern),
-      ilike(productVariants.setName, pattern),
+    .where(and(
+      eq(productVariants.storeId, storeId),
+      or(
+        ilike(productVariants.sku, pattern),
+        ilike(productVariants.name, pattern),
+        ilike(productVariants.setName, pattern),
+      ),
     ));
 
   return db
@@ -38,6 +41,7 @@ export async function searchVariants(db: any, term: string) {
     .from(productVariants)
     .innerJoin(products, eq(productVariants.productId, products.id))
     .where(and(
+      eq(productVariants.storeId, storeId),
       eq(products.active, true), eq(productVariants.active, true),
       or(
         ilike(products.name, pattern),

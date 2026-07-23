@@ -1,15 +1,15 @@
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, user } from "@/db/schema";
-import { requireUser } from "@/lib/session";
+import { requireStore } from "@/lib/session";
 import { getOpenSession, getSessionCashMovements } from "@/domain/cash";
 import { PageHeader } from "@/components/ui/page-header";
 import { CajaClient } from "./caja-client";
 
 export default async function CajaPage() {
-  const currentUser = await requireUser();
+  const currentUser = await requireStore();
   const isOwner = currentUser.role === "owner";
-  const session = await getOpenSession(db);
+  const session = await getOpenSession(db, currentUser.storeId);
 
   if (!session) {
     return (
