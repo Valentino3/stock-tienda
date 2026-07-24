@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { stores } from "@/db/schema";
 import { requireStore } from "@/lib/session";
 import { APP_NAME } from "@/lib/config";
+import { countOpenNotifications } from "@/domain/notifications";
 import { AppSidebar, type NavGroup } from "./app-sidebar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -10,6 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const isOwner = user.role === "owner";
   const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, user.storeId));
   const storeName = store?.name ?? APP_NAME;
+  const openAvisos = isOwner ? await countOpenNotifications(db, user.storeId) : 0;
 
   const groups: NavGroup[] = [
     {
@@ -30,6 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               { href: "/importar", label: "Importar" },
               { href: "/reportes", label: "Reportes" },
               { href: "/comisiones", label: "Comisiones" },
+              { href: "/avisos", label: "Avisos", badge: openAvisos },
               { href: "/usuarios", label: "Usuarios" },
             ],
           },

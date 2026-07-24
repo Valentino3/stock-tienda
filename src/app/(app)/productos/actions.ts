@@ -3,8 +3,21 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { products, productVariants } from "@/db/schema";
-import { requireStoreOwner } from "@/lib/session";
+import { requireStore, requireStoreOwner } from "@/lib/session";
 import { applyStockMovement } from "@/domain/stock";
+import { createLowStockNotification } from "@/domain/notifications";
+
+// Aviso de stock bajo al dueño. Cualquier usuario de la tienda (empleado o dueño).
+export async function notifyLowStock(variantId: number, note?: string) {
+  const { id, storeId } = await requireStore();
+  try {
+    await createLowStockNotification(db, { storeId, variantId, userId: id, note });
+  } catch {
+    return { error: "No se pudo enviar el aviso" };
+  }
+  revalidatePath("/avisos");
+  return { ok: true as const };
+}
 
 // Código de error de Postgres (y PGlite) para violación de restricción
 // unique/exclusion. Drizzle envuelve el error real del driver (con el
@@ -12,7 +25,7 @@ import { applyStockMovement } from "@/domain/stock";
 // src/domain/cash.ts openCashSession.
 const PG_UNIQUE_VIOLATION = "23505";
 
-export async function saveProduct(input: { id?: number; name: string; basePrice: number; lowStockThreshold: number }) {
+export async function saveProduct(input: { id?: number; name: string; category?: string; basePrice: number; lowStockThreshold: number }) {
   const { storeId } = await requireStoreOwner();
   if (
     !input.name.trim() ||
@@ -20,13 +33,14 @@ export async function saveProduct(input: { id?: number; name: string; basePrice:
     !Number.isInteger(input.lowStockThreshold) ||
     input.lowStockThreshold < 0
   ) return { error: "Datos inválidos" };
+  const category = input.category?.trim() || null;
   if (input.id) {
     await db.update(products).set({
-      name: input.name.trim(), basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
+      name: input.name.trim(), category, basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
     }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
     const [p] = await db.insert(products).values({
-      storeId, name: input.name.trim(), basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
+      storeId, name: input.name.trim(), category, basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
     }).returning();
     // variante default para producto sin variantes reales
     await db.insert(productVariants).values({ storeId, productId: p.id, name: "" });

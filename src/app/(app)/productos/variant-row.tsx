@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { saveVariant, restock, adjustStock, toggleVariantActive } from "./actions";
+import { toast } from "sonner";
+import { saveVariant, restock, adjustStock, toggleVariantActive, notifyLowStock } from "./actions";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
 import { money, number } from "@/lib/format";
 import type { ProductVariant } from "@/db/schema";
@@ -60,6 +61,16 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
 
   const effectivePrice = variant.price ?? basePrice;
   const lowStock = variant.stock <= lowStockThreshold;
+  const [notified, setNotified] = useState(false);
+
+  function notify() {
+    startTransition(async () => {
+      const res = await notifyLowStock(variant.id);
+      if ("error" in res && res.error) { toast.error(res.error); return; }
+      setNotified(true);
+      toast.success("Aviso enviado al dueño");
+    });
+  }
 
   function openAdjust() {
     setNewStock(String(variant.stock));
@@ -133,6 +144,12 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         {variant.foil && <Badge variant="secondary">Foil</Badge>}
         {variant.language && <Badge variant="outline">{variant.language}</Badge>}
         {!variant.active && <Badge variant="outline">Inactivo</Badge>}
+
+        {!isOwner && lowStock && variant.active && (
+          <Button variant="outline" size="sm" className="ml-auto" disabled={pending || notified} onClick={notify}>
+            {notified ? "Avisado" : "Avisar al dueño"}
+          </Button>
+        )}
 
         {isOwner && (
           <div className="ml-auto flex gap-1">
