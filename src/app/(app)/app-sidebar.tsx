@@ -13,6 +13,7 @@ import {
   HandCoins,
   Users,
   Contact,
+  Bell,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { cn } from "@/lib/utils";
 import { LogoutButton } from "./logout-button";
 
-export type NavLink = { href: string; label: string };
+export type NavLink = { href: string; label: string; badge?: number };
 export type NavGroup = { label: string; links: NavLink[] };
 
 const ICONS: Record<string, LucideIcon> = {
@@ -32,6 +33,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/importar": Upload,
   "/reportes": BarChart3,
   "/comisiones": HandCoins,
+  "/avisos": Bell,
   "/usuarios": Users,
 };
 
@@ -89,7 +91,12 @@ function NavList({
                 )}
               >
                 {Icon && <Icon className="size-4 shrink-0" strokeWidth={active ? 2.4 : 2} />}
-                {link.label}
+                <span className="flex-1">{link.label}</span>
+                {link.badge ? (
+                  <span className="figure flex h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1.5 text-xs font-semibold text-brand-foreground">
+                    {link.badge}
+                  </span>
+                ) : null}
               </Link>
             );
           })}

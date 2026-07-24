@@ -3,6 +3,19 @@ import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { createSale, type Discount } from "@/domain/sales";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
+import { createClient } from "@/domain/clients";
+
+// Alta rápida de cliente desde la pantalla de venta (para venta a cuenta).
+export async function createClientForSale(name: string, phone?: string) {
+  const { storeId } = await requireStore();
+  if (!name.trim()) return { error: "Nombre requerido" };
+  try {
+    const c = await createClient(db, { storeId, name, phone });
+    return { ok: true as const, id: c.id, name: c.name };
+  } catch {
+    return { error: "No se pudo crear el cliente" };
+  }
+}
 
 // Un descuento es válido si es monto ≥ 0, o porcentaje entre 0 y 100.
 function validDiscount(d: Discount | undefined): boolean {

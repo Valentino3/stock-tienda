@@ -5,10 +5,14 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
-import { searchVariants, submitSale } from "./actions";
+import { searchVariants, submitSale, createClientForSale } from "./actions";
 
 type SearchResult = Awaited<ReturnType<typeof searchVariants>>[number];
 type PaymentMethod = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
@@ -23,6 +27,7 @@ type CartItem = {
   foil: boolean;
   language: string | null;
   price: number;
+  stock: number;
   quantity: number;
   discountKind: DiscountKind;
   discountValue: number;
@@ -107,16 +112,43 @@ function DiscountControl({
   );
 }
 
-export function SaleForm({ clients }: { clients: ClientOption[] }) {
+export function SaleForm({ clients: initialClients }: { clients: ClientOption[] }) {
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
+  const [clients, setClients] = useState<ClientOption[]>(initialClients);
   const [clientId, setClientId] = useState<string>("");
   const [saleDiscountKind, setSaleDiscountKind] = useState<DiscountKind>("amount");
   const [saleDiscountValue, setSaleDiscountValue] = useState(0);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
+
+  // Alta de cliente inline (para venta a cuenta sin salir de la pantalla).
+  const [newClientOpen, setNewClientOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
+  const [newClientPhone, setNewClientPhone] = useState("");
+  const [newClientError, setNewClientError] = useState("");
+  const [newClientPending, startNewClient] = useTransition();
+
+  function submitNewClient(e: React.FormEvent) {
+    e.preventDefault();
+    startNewClient(async () => {
+      const res = await createClientForSale(newClientName, newClientPhone || undefined);
+      if ("error" in res && res.error) {
+        setNewClientError(res.error);
+        return;
+      }
+      if ("ok" in res && res.ok) {
+        setClients((prev) => [...prev, { id: res.id, name: res.name }].sort((a, b) => a.name.localeCompare(b.name)));
+        setClientId(String(res.id));
+        setNewClientOpen(false);
+        setNewClientName("");
+        setNewClientPhone("");
+        setNewClientError("");
+      }
+    });
+  }
 
   useEffect(() => {
     const handle = setTimeout(() => {
@@ -130,11 +162,17 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
   }, [term]);
 
   function addToCart(r: SearchResult) {
+    if (r.stock <= 0) {
+      setError(`Sin stock: ${label(r)}`);
+      return;
+    }
+    setError("");
     setCart((prev) => {
       const existing = prev.find((i) => i.variantId === r.variantId);
       if (existing) {
+        // No superar el stock disponible.
         return prev.map((i) =>
-          i.variantId === r.variantId ? { ...i, quantity: i.quantity + 1 } : i
+          i.variantId === r.variantId ? { ...i, quantity: Math.min(i.stock, i.quantity + 1) } : i
         );
       }
       return [
@@ -148,6 +186,7 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
           foil: r.foil,
           language: r.language,
           price: r.price ?? r.basePrice,
+          stock: r.stock,
           quantity: 1,
           discountKind: "amount" as DiscountKind,
           discountValue: 0,
@@ -161,7 +200,9 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
   function step(variantId: number, delta: number) {
     setCart((prev) =>
       prev.map((i) =>
-        i.variantId === variantId ? { ...i, quantity: Math.max(1, i.quantity + delta) } : i
+        i.variantId === variantId
+          ? { ...i, quantity: Math.min(i.stock, Math.max(1, i.quantity + delta)) }
+          : i
       )
     );
   }
@@ -299,10 +340,14 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
                         size="icon"
                         className="size-7"
                         onClick={() => step(item.variantId, 1)}
+                        disabled={item.quantity >= item.stock}
                         aria-label="Sumar uno"
                       >
                         <Plus className="size-3" />
                       </Button>
+                      {item.quantity >= item.stock && (
+                        <span className="ledger-label ml-1 text-muted-foreground">máx {number(item.stock)}</span>
+                      )}
                     </div>
                     <DiscountControl
                       kind={item.discountKind}
@@ -370,17 +415,22 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
               ))}
             </div>
             {paymentMethod === "cuenta" && (
-              <select
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                className={CLIENT_SELECT_CLASS}
-                aria-label="Cliente"
-              >
-                <option value="">Elegí cliente…</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+              <div className="flex gap-2">
+                <select
+                  value={clientId}
+                  onChange={(e) => setClientId(e.target.value)}
+                  className={CLIENT_SELECT_CLASS}
+                  aria-label="Cliente"
+                >
+                  <option value="">Elegí cliente…</option>
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+                <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setNewClientOpen(true)}>
+                  + Nuevo
+                </Button>
+              </div>
             )}
           </div>
 
@@ -401,6 +451,30 @@ export function SaleForm({ clients }: { clients: ClientOption[] }) {
           </Button>
         </CardContent>
       </Card>
+
+      <Dialog open={newClientOpen} onOpenChange={setNewClientOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nuevo cliente</DialogTitle>
+            <DialogDescription>Se crea y queda seleccionado para esta venta a cuenta.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitNewClient} className="space-y-3">
+            <div className="space-y-2">
+              <Label htmlFor="new-client-name">Nombre</Label>
+              <Input id="new-client-name" value={newClientName} onChange={(e) => setNewClientName(e.target.value)} required autoFocus />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-client-phone">Teléfono (opcional)</Label>
+              <Input id="new-client-phone" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} />
+            </div>
+            {newClientError && <p className="text-sm text-destructive" role="alert">{newClientError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setNewClientOpen(false)}>Cancelar</Button>
+              <Button type="submit" disabled={newClientPending}>{newClientPending ? "Creando…" : "Crear"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

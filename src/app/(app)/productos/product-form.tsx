@@ -16,9 +16,9 @@ import { saveProduct, saveVariant, toggleProductActive } from "./actions";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
 import type { Product } from "@/db/schema";
 
-type Props = { product?: Product };
+type Props = { product?: Product; categories?: string[] };
 
-export function ProductForm({ product }: Props) {
+export function ProductForm({ product, categories = [] }: Props) {
   const isEdit = !!product;
   const [open, setOpen] = useState(false);
   const [addingVariant, setAddingVariant] = useState(false);
@@ -26,6 +26,7 @@ export function ProductForm({ product }: Props) {
   const [pending, startTransition] = useTransition();
 
   const [name, setName] = useState(product?.name ?? "");
+  const [category, setCategory] = useState(product?.category ?? "");
   const [basePrice, setBasePrice] = useState(product ? String(product.basePrice) : "");
   const [lowStockThreshold, setLowStockThreshold] = useState(product ? String(product.lowStockThreshold) : "3");
 
@@ -44,6 +45,7 @@ export function ProductForm({ product }: Props) {
       const res = await saveProduct({
         id: product?.id,
         name,
+        category,
         basePrice: Number(basePrice),
         lowStockThreshold: Number(lowStockThreshold),
       });
@@ -109,6 +111,13 @@ export function ProductForm({ product }: Props) {
               <div className="space-y-2">
                 <Label htmlFor="product-name">Nombre</Label>
                 <Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="product-category">Categoría (opcional)</Label>
+                <Input id="product-category" list="product-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej: Pokémon, Magic, Accesorios" />
+                <datalist id="product-categories">
+                  {categories.map((c) => <option key={c} value={c} />)}
+                </datalist>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product-price">Precio base</Label>

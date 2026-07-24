@@ -110,6 +110,7 @@ export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   storeId: integer("store_id").notNull().references(() => stores.id),
   name: text("name").notNull(),
+  category: text("category"), // texto libre, opcional (agrupar/filtrar catálogo)
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   active: boolean("active").notNull().default(true),
@@ -244,7 +245,26 @@ export const clientAccountMovements = pgTable("client_account_movements", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [index("client_movements_client_idx").on(t.clientId)]);
 
+// Avisos internos de la tienda (ej: stock bajo que el empleado reporta al dueño).
+export const notifications = pgTable("notifications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  type: text("type").notNull().default("low_stock"),
+  variantId: integer("variant_id").references(() => productVariants.id),
+  productName: text("product_name").notNull(),
+  variantName: text("variant_name"),
+  message: text("message").notNull(),
+  stockAtCreate: integer("stock_at_create"),
+  note: text("note"),
+  status: text("status").notNull().default("open"), // open | resolved
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  resolvedBy: text("resolved_by").references(() => user.id),
+  resolvedAt: timestamp("resolved_at"),
+}, (t) => [index("notifications_store_status_idx").on(t.storeId, t.status)]);
+
 export type Store = typeof stores.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
 export type Client = typeof clients.$inferSelect;
 export type ClientAccountMovement = typeof clientAccountMovements.$inferSelect;
 export type Product = typeof products.$inferSelect;

@@ -64,6 +64,13 @@
       "when": 1784826816524,
       "tag": "0008_clientes_fiado",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784905840947,
+      "tag": "0009_productos_avisos",
+      "breakpoints": true
     }
   ]
 }
