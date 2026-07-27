@@ -1,0 +1,80 @@
+import ExcelJS from "exceljs";
+import { db } from "@/db";
+import { requireStoreOwner } from "@/lib/session";
+import { MAX_UPLOAD_BYTES, tooLargeMessage } from "@/lib/import-limits";
+import { validateImportRows, type ImportRow } from "@/domain/import";
+import { createImportBatch } from "@/domain/import-batches";
+
+// El default de la plataforma ya es 300s, pero declararlo deja el techo
+// explícito en el código en vez de depender de la config del proyecto.
+export const maxDuration = 300;
+
+function cellText(v: ExcelJS.CellValue): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "object" && "text" in v) return String(v.text);
+  return String(v);
+}
+
+const fail = (status: number, error: string) => Response.json({ error }, { status });
+
+export async function POST(req: Request) {
+  const { storeId, id: userId } = await requireStoreOwner();
+
+  const formData = await req.formData();
+  const file = formData.get("file");
+  if (!(file instanceof File)) return fail(400, "Subí un archivo .xlsx");
+  // El cliente ya corta antes de subir; esto cubre el endpoint llamado directo.
+  if (file.size > MAX_UPLOAD_BYTES) return fail(413, tooLargeMessage("xlsx", file.size));
+
+  const wb = new ExcelJS.Workbook();
+  try {
+    // exceljs's own d.ts resolves `Buffer` against its transitive dep
+    // fast-csv's bundled @types/node@14 (non-generic Buffer), while this
+    // project's @types/node@20 makes Buffer.from(...) generic (Buffer<ArrayBuffer>).
+    // Same runtime value, two structurally-incompatible type declarations from
+    // duplicated @types/node — `as unknown as Buffer` still resolves to the
+    // ambient (node20) Buffer in scope here, so `any` is the only escape.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await wb.xlsx.load(Buffer.from(await file.arrayBuffer()) as any);
+  } catch (err) {
+    console.error("[importar/parse] xlsx.load falló", err);
+    return fail(400, "El archivo no es un .xlsx válido");
+  }
+  const ws = wb.worksheets[0];
+  if (!ws) return fail(400, "El archivo no tiene hojas");
+
+  const rows: ImportRow[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return; // header
+    const product = cellText(row.getCell(1).value).trim();
+    const variant = cellText(row.getCell(2).value).trim();
+    const sku = cellText(row.getCell(3).value).trim() || null;
+    const priceRaw = cellText(row.getCell(4).value).trim();
+    const stockRaw = cellText(row.getCell(5).value).trim();
+    const setName = cellText(row.getCell(6).value).trim() || null;
+    const condition = cellText(row.getCell(7).value).trim() || null;
+    const foilRaw = cellText(row.getCell(8).value).trim().toLowerCase();
+    const foil = foilRaw === "" ? undefined : ["true", "1", "sí", "si", "x"].includes(foilRaw);
+    const language = cellText(row.getCell(9).value).trim() || null;
+    if (!product && !variant && !sku && !priceRaw && !stockRaw) return; // fila vacía
+    rows.push({
+      rowNumber, product, variant, sku,
+      price: priceRaw === "" ? null : Number(priceRaw.replace(",", ".")),
+      stock: stockRaw === "" ? 0 : Number(stockRaw),
+      setName, condition, foil, language,
+    });
+  });
+  if (rows.length === 0) return fail(400, "El archivo no tiene filas de datos");
+
+  try {
+    const validated = await validateImportRows(db, storeId, rows);
+    // Excel: el stock de la fila es el valor final, no un incremento.
+    const summary = await createImportBatch(db, {
+      storeId, userId, source: "excel", mode: "absolute", rows: validated,
+    });
+    return Response.json(summary);
+  } catch (err) {
+    console.error("[importar/parse] validación o guardado del lote falló", err);
+    return fail(500, "No se pudo procesar la planilla. Probá de nuevo.");
+  }
+}
