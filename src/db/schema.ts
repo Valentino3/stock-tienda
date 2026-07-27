@@ -1,7 +1,10 @@
 import {
-  pgTable, text, timestamp, boolean, integer, numeric, pgEnum, index, uniqueIndex,
+  pgTable, text, timestamp, boolean, integer, numeric, jsonb, pgEnum, index, uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+// Type-only: se borra al compilar, así que no crea ciclo con domain/import.ts
+// (que sí importa valores de este archivo).
+import type { ValidatedRow } from "@/domain/import";
 
 // ---- multi-tienda (tenancy) ----
 // Cada tienda es un tenant aislado. Los usuarios pertenecen a una tienda
@@ -263,7 +266,27 @@ export const notifications = pgTable("notifications", {
   resolvedAt: timestamp("resolved_at"),
 }, (t) => [index("notifications_store_status_idx").on(t.storeId, t.status)]);
 
+// Lote de importación pendiente de confirmar.
+//
+// Las filas validadas se guardan acá en vez de devolverlas al navegador y
+// esperar que las reenvíe: una planilla mediana supera los 4.5 MB que Vercel
+// acepta por request, y renderizar miles de filas cuelga el navegador. El
+// cliente maneja solo un id y un preview acotado.
+export const importBatches = pgTable("import_batches", {
+  id: text("id").primaryKey(), // crypto.randomUUID()
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  source: text("source").notNull(), // excel | ai
+  mode: text("mode").notNull(), // absolute | add
+  // Output COMPLETO de validateImportRows, con filas erróneas incluidas:
+  // executeImport calcula `skipped` a partir de ellas.
+  rows: jsonb("rows").$type<ValidatedRow[]>().notNull(),
+  status: text("status").notNull().default("pending"), // pending | confirmed
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("import_batches_store_status_idx").on(t.storeId, t.status)]);
+
 export type Store = typeof stores.$inferSelect;
+export type ImportBatch = typeof importBatches.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type Client = typeof clients.$inferSelect;
 export type ClientAccountMovement = typeof clientAccountMovements.$inferSelect;

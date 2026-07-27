@@ -2,74 +2,94 @@
 import { useRef, useState, useTransition } from "react";
 import { Upload, FileSpreadsheet, Sparkles } from "lucide-react";
 import type { ValidatedRow } from "@/domain/import";
+import type { BatchSummary } from "@/domain/import-batches";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
-import { parseAndValidate, extractFromDocument, confirmImport } from "./actions";
+import { compressImage } from "@/lib/compress-image";
+import { MAX_UPLOAD_BYTES, tooLargeMessage } from "@/lib/import-limits";
+import { confirmImport } from "./actions";
 
 type Result = { created: number; updated: number; skipped: number };
 type Mode = "excel" | "ai";
 
+const ENDPOINT: Record<Mode, string> = { excel: "/importar/parse", ai: "/importar/extract" };
+
 export function ImportForm() {
   const [mode, setMode] = useState<Mode>("excel");
-  const [rows, setRows] = useState<ValidatedRow[] | null>(null);
+  const [batch, setBatch] = useState<BatchSummary | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [pending, startTransition] = useTransition();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const validCount = rows?.filter((r) => !r.error).length ?? 0;
-  const errorCount = rows?.filter((r) => r.error).length ?? 0;
-
-  function switchMode(next: Mode) {
-    setMode(next);
-    setRows(null);
+  function reset() {
+    setBatch(null);
     setError("");
     setResult(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  function switchMode(next: Mode) {
+    setMode(next);
+    reset();
+  }
+
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const picked = e.target.files?.[0];
+    if (!picked) return;
     setError("");
     setResult(null);
-    setRows(null);
-    const formData = new FormData();
-    formData.set("file", file);
+    setBatch(null);
+
     startTransition(async () => {
-      const res = mode === "ai" ? await extractFromDocument(formData) : await parseAndValidate(formData);
-      if (res.error) {
-        setError(res.error);
-        return;
+      try {
+        // Las fotos se comprimen acá: una foto de celular pesa más que el
+        // máximo que acepta el servidor y subirla cruda daba 413.
+        const file = picked.type.startsWith("image/") ? await compressImage(picked) : picked;
+        if (file.size > MAX_UPLOAD_BYTES) {
+          const kind = file.type === "application/pdf" ? "pdf" : mode === "ai" ? "image" : "xlsx";
+          setError(tooLargeMessage(kind, file.size));
+          return;
+        }
+
+        const body = new FormData();
+        body.set("file", file);
+        const res = await fetch(ENDPOINT[mode], { method: "POST", body });
+
+        if (!res.ok) {
+          setError(await errorFor(res));
+          return;
+        }
+        setBatch((await res.json()) as BatchSummary);
+      } catch (err) {
+        // Sin este catch, un 413 o una caída de red rechazaban la promesa sin
+        // manejo y rompían la pantalla en vez de mostrar el problema.
+        console.error("[importar] subida falló", err);
+        setError("No se pudo subir el archivo. Revisá tu conexión y probá de nuevo.");
       }
-      setRows(res.rows ?? []);
     });
   }
 
   function handleConfirm() {
-    if (!rows) return;
+    if (!batch) return;
     setError("");
     startTransition(async () => {
       try {
-        const res = await confirmImport(rows, mode === "ai" ? "add" : "absolute");
+        const res = await confirmImport(batch.batchId);
         setResult(res);
-        setRows(null);
-      } catch {
-        setError("No se pudo confirmar la importación");
+        setBatch(null);
+      } catch (err) {
+        console.error("[importar] confirmación falló", err);
+        setError("No se pudo confirmar la importación. Volvé a subir el archivo.");
       }
     });
   }
 
-  function startOver() {
-    setRows(null);
-    setError("");
-    setResult(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  }
+  const hidden = batch ? batch.total - batch.preview.length : 0;
 
   return (
     <div className="max-w-4xl space-y-5">
@@ -103,6 +123,11 @@ export function ImportForm() {
             ? "La IA extrae productos, cantidad y precio. El stock se SUMA al existente."
             : "Se valida cada fila antes de confirmar. El stock reemplaza al valor actual."}
         </span>
+        {mode === "ai" && (
+          <span className="text-xs text-muted-foreground">
+            Las fotos se comprimen solas. Los PDF tienen que pesar menos de 4 MB.
+          </span>
+        )}
         <input
           ref={fileInputRef}
           type="file"
@@ -115,18 +140,18 @@ export function ImportForm() {
 
       {error && <Notice tone="danger">{error}</Notice>}
 
-      {pending && !rows && !result && (
+      {pending && !batch && !result && (
         <p className="text-sm text-muted-foreground">
           {mode === "ai" ? "Leyendo el documento con IA…" : "Procesando…"}
         </p>
       )}
 
-      {rows && rows.length > 0 && (
+      {batch && batch.total > 0 && (
         <div className="space-y-4 pb-20">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="success" className="font-mono">{number(validCount)} válidas</Badge>
-            {errorCount > 0 && (
-              <Badge variant="destructive" className="font-mono">{number(errorCount)} con error</Badge>
+            <Badge variant="success" className="font-mono">{number(batch.valid)} válidas</Badge>
+            {batch.errors > 0 && (
+              <Badge variant="destructive" className="font-mono">{number(batch.errors)} con error</Badge>
             )}
             <span className="text-xs text-muted-foreground">
               {mode === "ai"
@@ -153,7 +178,7 @@ export function ImportForm() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {rows.map((r) => (
+                {batch.preview.map((r: ValidatedRow) => (
                   <TableRow key={r.rowNumber} className={r.error ? "bg-destructive/10 hover:bg-destructive/15" : ""}>
                     <TableCell className="figure text-muted-foreground">{r.rowNumber}</TableCell>
                     <TableCell className="font-medium">{r.product}</TableCell>
@@ -180,13 +205,20 @@ export function ImportForm() {
             </Table>
           </div>
 
+          {hidden > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Mostrando las primeras {number(batch.preview.length)} de {number(batch.total)} filas.
+              Al confirmar se procesan todas.
+            </p>
+          )}
+
           <div className="fixed inset-x-0 bottom-0 flex items-center gap-3 border-t border-border bg-background/95 p-4 backdrop-blur-sm lg:sticky lg:inset-x-auto lg:rounded-xl lg:border">
-            <Button size="lg" disabled={pending || validCount === 0} onClick={handleConfirm}>
+            <Button size="lg" disabled={pending || batch.valid === 0} onClick={handleConfirm}>
               {pending
                 ? "Confirmando…"
-                : `Confirmar importación (${validCount} válidas${errorCount > 0 ? `, ${errorCount} se omiten` : ""})`}
+                : `Confirmar importación (${number(batch.valid)} válidas${batch.errors > 0 ? `, ${number(batch.errors)} se omiten` : ""})`}
             </Button>
-            <Button variant="ghost" disabled={pending} onClick={startOver}>
+            <Button variant="ghost" disabled={pending} onClick={reset}>
               Empezar de nuevo
             </Button>
           </div>
@@ -200,11 +232,30 @@ export function ImportForm() {
             <span><span className="figure font-semibold text-foreground">{number(result.updated)}</span> actualizados</span>
             <span><span className="figure font-semibold text-foreground">{number(result.skipped)}</span> omitidos</span>
           </div>
-          <Button variant="link" className="px-0" onClick={startOver}>
+          <Button variant="link" className="px-0" onClick={reset}>
             Importar otro documento
           </Button>
         </Notice>
       )}
     </div>
   );
+}
+
+/** Traduce la respuesta de error del endpoint a algo que el usuario pueda accionar. */
+async function errorFor(res: Response): Promise<string> {
+  // 413 lo puede emitir la plataforma antes de llegar al handler, y en ese caso
+  // el body no es JSON nuestro.
+  if (res.status === 413) {
+    return "El archivo es demasiado grande para el servidor (máximo 4 MB). Sacá una foto en vez de usar el PDF, o dividí la planilla.";
+  }
+  if (res.status === 504) {
+    return "El documento tardó demasiado en procesarse. Probá con una imagen más chica o menos páginas.";
+  }
+  try {
+    const data = await res.json();
+    if (typeof data?.error === "string") return data.error;
+  } catch {
+    // body vacío o HTML de la plataforma: cae al genérico de abajo
+  }
+  return `No se pudo procesar el archivo (error ${res.status}).`;
 }

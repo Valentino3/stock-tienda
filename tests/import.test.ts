@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
-import { products, productVariants, stockMovements } from "@/db/schema";
+import { products, productVariants, stockMovements, importBatches } from "@/db/schema";
 import { validateImportRows, executeImport, type ImportRow } from "@/domain/import";
+import { createImportBatch, confirmImportBatch, PREVIEW_ROWS } from "@/domain/import-batches";
 import { eq } from "drizzle-orm";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -225,5 +226,118 @@ describe("executeImport", () => {
     const movements = await db.select().from(stockMovements).where(eq(stockMovements.reason, "importación"));
     // 149 filas con stock > 0 (la fila 0 tiene stock: 0, no genera movimiento)
     expect(movements.length).toBe(149);
+  });
+});
+
+// El lote se guarda en la base y el navegador solo maneja un id: mandar las
+// filas de ida y vuelta pasaba el límite de 4.5 MB por request de la plataforma.
+describe("import batches", () => {
+  it("acota el preview y cuenta el total real del archivo", async () => {
+    const many = Array.from({ length: PREVIEW_ROWS + 50 }, (_, i) =>
+      row(i + 2, { product: `Carta ${i}`, sku: `P-${i}` })
+    );
+    // Una fila inválida para verificar que los contadores no son el largo del preview.
+    many.push(row(999, { product: "", sku: "BAD" }));
+    const validated = await validateImportRows(db, store, many);
+
+    const summary = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "excel", mode: "absolute", rows: validated,
+    });
+
+    expect(summary.total).toBe(PREVIEW_ROWS + 51);
+    expect(summary.valid).toBe(PREVIEW_ROWS + 50);
+    expect(summary.errors).toBe(1);
+    expect(summary.preview).toHaveLength(PREVIEW_ROWS);
+  });
+
+  it("confirmar por batchId da el mismo resultado que ejecutar las filas directo", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 1 });
+
+    const validated = await validateImportRows(db, store, [
+      row(2, { product: "Remera", variant: "M", sku: "R-M", stock: 5 }),
+      row(3, { product: "Remera", variant: "L", sku: "R-L", stock: 3 }),
+      row(4, { sku: "G1", price: 800, stock: 10, product: "Gorra", variant: "" }),
+      row(5, { product: "" }),
+    ]);
+    const { batchId } = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "excel", mode: "absolute", rows: validated,
+    });
+
+    const res = await confirmImportBatch(db, store, batchId, "u1");
+    // Mismos números que el test equivalente de executeImport de arriba: las
+    // filas con error tienen que llegar al lote para que `skipped` no dé 0.
+    expect(res).toEqual({ created: 2, updated: 1, skipped: 1 });
+
+    const [g1] = await db.select().from(productVariants).where(eq(productVariants.sku, "G1"));
+    expect(g1.stock).toBe(10);
+  });
+
+  it("respeta el modo guardado en el lote (add suma, no reemplaza)", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 10 });
+
+    const validated = await validateImportRows(db, store, [
+      row(2, { sku: "G1", product: "Gorra", variant: "", stock: 4, price: null }),
+    ]);
+    const { batchId } = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "ai", mode: "add", rows: validated,
+    });
+    await confirmImportBatch(db, store, batchId, "u1");
+
+    const [g1] = await db.select().from(productVariants).where(eq(productVariants.sku, "G1"));
+    expect(g1.stock).toBe(14); // 10 + 4
+  });
+
+  it("rechaza un lote de otra tienda aunque se conozca el id", async () => {
+    const otherStore = await seedTestStore(db, "t2", "Otra Tienda");
+    await seedTestUser(db, "u2", "owner", otherStore);
+
+    const validated = await validateImportRows(db, otherStore, [
+      row(2, { product: "Remera", variant: "M", sku: "R-M", stock: 5 }),
+    ]);
+    const { batchId } = await createImportBatch(db, {
+      storeId: otherStore, userId: "u2", source: "excel", mode: "absolute", rows: validated,
+    });
+
+    await expect(confirmImportBatch(db, store, batchId, "u1")).rejects.toThrow("BATCH_NOT_FOUND");
+    // Y no tocó el stock de ninguna de las dos tiendas.
+    expect(await db.select().from(productVariants)).toHaveLength(0);
+  });
+
+  it("rechaza un lote ya confirmado: un doble click no duplica el stock", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Gorra", basePrice: 500 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "G1", stock: 10 });
+
+    const validated = await validateImportRows(db, store, [
+      row(2, { sku: "G1", product: "Gorra", variant: "", stock: 4, price: null }),
+    ]);
+    const { batchId } = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "ai", mode: "add", rows: validated,
+    });
+
+    await confirmImportBatch(db, store, batchId, "u1");
+    await expect(confirmImportBatch(db, store, batchId, "u1")).rejects.toThrow("BATCH_NOT_FOUND");
+
+    const [g1] = await db.select().from(productVariants).where(eq(productVariants.sku, "G1"));
+    expect(g1.stock).toBe(14); // 10 + 4 una sola vez, no 18
+  });
+
+  it("borra los lotes pendientes viejos de la tienda al crear uno nuevo", async () => {
+    const validated = await validateImportRows(db, store, [row(2, { sku: "R-M" })]);
+    const stale = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "excel", mode: "absolute", rows: validated,
+    });
+    // Envejecerlo más de 24 h.
+    await db.update(importBatches)
+      .set({ createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) })
+      .where(eq(importBatches.id, stale.batchId));
+
+    const fresh = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "excel", mode: "absolute", rows: validated,
+    });
+
+    const remaining = await db.select().from(importBatches);
+    expect(remaining.map((b) => b.id)).toEqual([fresh.batchId]);
   });
 });

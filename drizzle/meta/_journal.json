@@ -71,6 +71,13 @@
       "when": 1784905840947,
       "tag": "0009_productos_avisos",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785173265786,
+      "tag": "0010_import_batches",
+      "breakpoints": true
     }
   ]
 }
