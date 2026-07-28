@@ -78,6 +78,13 @@
       "when": 1785173265786,
       "tag": "0010_import_batches",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785239983583,
+      "tag": "0011_precios_costos_proveedor",
+      "breakpoints": true
     }
   ]
 }
