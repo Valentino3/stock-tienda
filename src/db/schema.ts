@@ -102,8 +102,13 @@ export const accountRelations = relations(account, ({ one }) => ({
 
 // ---- dominio ----
 export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta", "cuenta"]);
-// Movimientos de cuenta corriente de un cliente: cargo (venta a cuenta) / pago.
-export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago"]);
+// Movimientos de cuenta corriente de un cliente.
+//   cargo     — venta a cuenta: suma deuda.
+//   pago      — el cliente cancela: resta deuda.
+//   anulacion — se anuló la venta que originó un cargo: lo revierte. Es un
+//               movimiento propio y no un pago, para que el historial muestre
+//               por qué bajó la deuda sin inventar plata que nunca entró.
+export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
 // Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).

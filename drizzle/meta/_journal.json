@@ -85,6 +85,13 @@
       "when": 1785239983583,
       "tag": "0011_precios_costos_proveedor",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785242551439,
+      "tag": "0012_anulacion_cuenta_corriente",
+      "breakpoints": true
     }
   ]
 }

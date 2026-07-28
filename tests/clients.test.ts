@@ -134,20 +134,59 @@ describe("getClientLedger / getClientSummary", () => {
     expect(entry.balanceAfter).toBe(-1500);
   });
 
-  it("marca la venta anulada, cuyo cargo sigue vigente", async () => {
+  it("anular una venta a cuenta revierte el cargo y deja el saldo en cero", async () => {
     await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
     const sale = await createSale(db, {
       storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 2 }], // 2000
+    });
+    expect(await getClientBalance(db, store, clientId)).toBe(2000);
+
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+
+    // El cargo NO se borra: se compensa con un movimiento de anulación, para
+    // que el historial muestre qué pasó.
+    const ledger = await getClientLedger(db, store, clientId);
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0].type).toBe("anulacion");
+    expect(ledger[0].amount).toBe(2000);
+    expect(ledger[0].balanceAfter).toBe(0);
+    expect(ledger[0].note).toBe(`Anulación de la venta #${sale.id}`);
+    expect(ledger[1].type).toBe("cargo");
+    expect(ledger[1].sale?.voided).toBe(true);
+
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+
+  it("la anulación no cuenta como pago ni como compra en los totales", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const anulada = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 2 }], // 2000
+    });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 3 }], // 3000, queda viva
+    });
+    await voidSale(db, { saleId: anulada.id, storeId: store, userId: "u1" });
+
+    const s = await getClientSummary(db, store, clientId);
+    expect(s.charged).toBe(3000); // neto: 5000 cargados − 2000 anulados
+    expect(s.paid).toBe(0);       // anular no es cobrar
+    expect(s.voided).toBe(2000);
+    expect(s.purchases).toBe(1);  // la anulada no cuenta como compra
+    expect(s.balance).toBe(3000);
+  });
+
+  it("anular una venta en efectivo no toca ninguna cuenta corriente", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "efectivo",
       items: [{ variantId, quantity: 2 }],
     });
     await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
-
-    const [entry] = await getClientLedger(db, store, clientId);
-    expect(entry.sale?.voided).toBe(true);
-    // Documenta el comportamiento actual: anular repone stock pero NO revierte
-    // el cargo, así que el saldo sigue en pie. La UI lo avisa.
-    expect(entry.balanceAfter).toBe(2000);
-    expect(await getClientBalance(db, store, clientId)).toBe(2000);
+    expect(await getClientLedger(db, store, clientId)).toEqual([]);
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
   });
 
   it("no filtra movimientos de otra tienda", async () => {

@@ -44,10 +44,17 @@ export default async function ClienteDetallePage({
     getClientSummary(db, storeId, clientId),
   ]);
 
-  // Una venta anulada NO revierte su cargo de cuenta corriente, así que el
-  // saldo sigue incluyéndola. Se avisa acá, que es el único lugar donde se ve.
-  const voidedCharges = ledger.filter((e) => e.sale?.voided);
-  const voidedTotal = voidedCharges.reduce((acc, e) => acc + e.amount, 0);
+  // Anular una venta a cuenta genera un movimiento "anulacion" que revierte el
+  // cargo. Las ventas anuladas ANTES de esa corrección quedaron sin revertir,
+  // así que se detectan por ausencia del movimiento y se avisan: su cargo sigue
+  // sumando a la deuda y hay que ajustarlo a mano.
+  const reversedSaleIds = new Set(
+    ledger.filter((e) => e.type === "anulacion" && e.sale).map((e) => e.sale!.id)
+  );
+  const unreversed = ledger.filter(
+    (e) => e.type === "cargo" && e.sale?.voided && !reversedSaleIds.has(e.sale.id)
+  );
+  const unreversedTotal = unreversed.reduce((acc, e) => acc + e.amount, 0);
 
   return (
     <div className="space-y-8">
@@ -83,12 +90,12 @@ export default async function ClienteDetallePage({
         />
       </div>
 
-      {voidedTotal > 0 && (
+      {unreversedTotal > 0 && (
         <Notice tone="warn">
-          Hay {number(voidedCharges.length)} {voidedCharges.length === 1 ? "venta anulada" : "ventas anuladas"} por{" "}
-          <strong>{money(voidedTotal)}</strong> cuyo cargo sigue sumando a la deuda. Anular una venta
-          repone el stock pero no descuenta la cuenta corriente: si corresponde, registrá un pago o
-          ajuste por ese monto.
+          Hay {number(unreversed.length)} {unreversed.length === 1 ? "venta anulada" : "ventas anuladas"} por{" "}
+          <strong>{money(unreversedTotal)}</strong> cuyo cargo quedó sumando a la deuda. Son
+          anteriores a la corrección: hoy anular una venta a cuenta descuenta el cargo solo. Si
+          corresponde, registrá un ajuste por ese monto.
         </Notice>
       )}
 
@@ -122,13 +129,16 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-border/60 px-4 py-3">
         <span className="text-sm text-muted-foreground">{dateTime(entry.createdAt)}</span>
 
-        {isCharge ? (
+        {entry.type === "cargo" && (
           <Badge variant="destructive">{sale ? `Venta #${sale.id}` : "Cargo"}</Badge>
-        ) : (
-          <Badge variant="success">Pago</Badge>
+        )}
+        {entry.type === "pago" && <Badge variant="success">Pago</Badge>}
+        {entry.type === "anulacion" && (
+          <Badge variant="outline">{sale ? `Anulación venta #${sale.id}` : "Anulación"}</Badge>
         )}
 
-        {sale?.voided && <Badge variant="outline">Anulada</Badge>}
+        {/* Solo en el cargo: en la fila de anulación el badge ya lo dice. */}
+        {entry.type === "cargo" && sale?.voided && <Badge variant="outline">Anulada</Badge>}
         {entry.method && (
           <span className="text-xs text-muted-foreground">
             {METHOD_LABELS[entry.method] ?? entry.method}
@@ -140,7 +150,11 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
           </span>
         )}
 
-        <span className={`figure ml-auto font-medium ${isCharge ? "text-destructive" : "text-success"}`}>
+        <span
+          className={`figure ml-auto font-medium ${
+            isCharge ? "text-destructive" : entry.type === "pago" ? "text-success" : "text-muted-foreground"
+          }`}
+        >
           {isCharge ? "+" : "−"}{money(entry.amount)}
         </span>
         <span className="figure w-32 text-right text-sm text-muted-foreground">
@@ -152,7 +166,9 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
         <p className="px-4 pt-2 text-sm text-muted-foreground">{entry.note}</p>
       )}
 
-      {sale && sale.items.length > 0 && (
+      {/* El detalle va solo en el cargo: la anulación apunta a la misma venta y
+          repetir los productos duplicaría la lista. */}
+      {isCharge && sale && sale.items.length > 0 && (
         <ul className="divide-y divide-border/40 px-4 py-2">
           {sale.items.map((it, i) => {
             const lineNet = it.quantity * it.unitPrice - it.discountAmount;

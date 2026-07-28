@@ -6,7 +6,8 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-// Saldo = Σcargo − Σpago (positivo = el cliente debe).
+// Saldo = Σcargo − Σpago − Σanulación (positivo = el cliente debe).
+// `cargo` suma; `pago` y `anulacion` restan, y por eso caen las dos en el else.
 const balanceExpr = sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else -${clientAccountMovements.amount} end), 0)`;
 
 export async function createClient(
@@ -76,9 +77,11 @@ export type LedgerSale = {
   items: LedgerItem[];
 };
 
+export type MovementType = "cargo" | "pago" | "anulacion";
+
 export type LedgerEntry = {
   id: number;
-  type: "cargo" | "pago";
+  type: MovementType;
   amount: number;
   createdAt: Date;
   method: string | null;
@@ -110,7 +113,7 @@ export async function getClientLedger(
   // vuelven sin tipo; estas anotaciones les devuelven la forma.
   type MovementRow = {
     id: number;
-    type: "cargo" | "pago";
+    type: MovementType;
     amount: number;
     createdAt: Date;
     method: string | null;
@@ -233,7 +236,10 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
     .select({
       charged: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
       paid: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'pago' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
-      purchases: sql<number>`count(*) filter (where ${clientAccountMovements.type} = 'cargo')`.mapWith(Number),
+      // Las anulaciones se cuentan aparte: si se sumaran a `paid` el historial
+      // mostraría plata que nunca entró, y si se ignoraran el saldo no cerraría.
+      voided: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'anulacion' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
+      purchases: sql<number>`count(*) filter (where ${clientAccountMovements.type} = 'cargo') - count(*) filter (where ${clientAccountMovements.type} = 'anulacion')`.mapWith(Number),
       // Un max() agregado no pasa por el mapeo de columna del driver: Neon
       // devuelve Date y PGlite string. Se normaliza abajo.
       lastMovementAt: sql<string | Date | null>`max(${clientAccountMovements.createdAt})`,
@@ -246,12 +252,15 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
 
   const charged = round2(row?.charged ?? 0);
   const paid = round2(row?.paid ?? 0);
+  const voided = round2(row?.voided ?? 0);
   const last = row?.lastMovementAt ?? null;
   return {
-    charged,
+    /** Comprado neto: lo cargado menos lo que se anuló. */
+    charged: round2(charged - voided),
     paid,
+    voided,
     purchases: row?.purchases ?? 0,
-    balance: round2(charged - paid),
+    balance: round2(charged - paid - voided),
     lastMovementAt: last ? new Date(last) : null,
   };
 }
