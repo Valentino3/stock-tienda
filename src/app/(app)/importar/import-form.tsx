@@ -16,11 +16,21 @@ import { confirmImport } from "./actions";
 type Result = { created: number; updated: number; skipped: number };
 type Mode = "excel" | "ai";
 
+/** Cómo se leyó la planilla. Solo lo devuelve el import de Excel. */
+type Mapping = {
+  detected: { field: string; label: string; column: string }[];
+  ignored: string[];
+  usedLegacy: boolean;
+  hasStock: boolean;
+  matchByName: boolean;
+};
+type Batch = BatchSummary & { mapping?: Mapping };
+
 const ENDPOINT: Record<Mode, string> = { excel: "/importar/parse", ai: "/importar/extract" };
 
 export function ImportForm() {
   const [mode, setMode] = useState<Mode>("excel");
-  const [batch, setBatch] = useState<BatchSummary | null>(null);
+  const [batch, setBatch] = useState<Batch | null>(null);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Result | null>(null);
   const [pending, startTransition] = useTransition();
@@ -64,7 +74,7 @@ export function ImportForm() {
           setError(await errorFor(res));
           return;
         }
-        setBatch((await res.json()) as BatchSummary);
+        setBatch((await res.json()) as Batch);
       } catch (err) {
         // Sin este catch, un 413 o una caída de red rechazaban la promesa sin
         // manejo y rompían la pantalla en vez de mostrar el problema.
@@ -160,6 +170,8 @@ export function ImportForm() {
             </span>
           </div>
 
+          {batch.mapping && <MappingSummary mapping={batch.mapping} />}
+
           <div className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-card shadow-xs">
             <Table>
               <TableHeader>
@@ -168,7 +180,11 @@ export function ImportForm() {
                   <TableHead>Producto</TableHead>
                   <TableHead>Variante</TableHead>
                   <TableHead>SKU</TableHead>
-                  <TableHead className="text-right">Precio</TableHead>
+                  <TableHead className="text-right">Precio venta</TableHead>
+                  <TableHead className="text-right">Efvo. menor</TableHead>
+                  <TableHead className="text-right">Mayorista</TableHead>
+                  <TableHead className="text-right">Costo</TableHead>
+                  <TableHead>Proveedor</TableHead>
                   <TableHead className="text-right">{mode === "ai" ? "Cantidad" : "Stock"}</TableHead>
                   <TableHead>Set</TableHead>
                   <TableHead>Condición</TableHead>
@@ -185,7 +201,18 @@ export function ImportForm() {
                     <TableCell>{r.variant}</TableCell>
                     <TableCell className="figure text-muted-foreground">{r.sku ?? ""}</TableCell>
                     <TableCell className="text-right font-mono">{r.price != null ? money(r.price) : ""}</TableCell>
-                    <TableCell className="text-right font-mono">{number(r.stock)}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">{r.priceCash != null ? money(r.priceCash) : ""}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">{r.priceWholesale != null ? money(r.priceWholesale) : ""}</TableCell>
+                    <TableCell className="text-right font-mono text-muted-foreground">
+                      {r.costArs != null ? money(r.costArs) : ""}
+                      {r.costUsd != null && <span className="block text-xs">US$ {number(r.costUsd)}</span>}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{r.supplier ?? ""}</TableCell>
+                    <TableCell className="text-right font-mono">
+                      {r.stock === null
+                        ? <span className="text-xs text-muted-foreground">sin cambio</span>
+                        : number(r.stock)}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">{r.setName ?? ""}</TableCell>
                     <TableCell className="text-muted-foreground">{r.condition ?? ""}</TableCell>
                     <TableCell>{r.foil ? "Sí" : ""}</TableCell>
@@ -236,6 +263,54 @@ export function ImportForm() {
             Importar otro documento
           </Button>
         </Notice>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Cómo se interpretó la planilla. Se muestra ANTES de la tabla porque las dos
+ * advertencias que trae —que no se toca el stock, y que se matchea por nombre—
+ * cambian qué va a pasar al confirmar, y no se deducen mirando las filas.
+ */
+function MappingSummary({ mapping }: { mapping: Mapping }) {
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-muted/30 p-4">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+        <span className="text-sm font-medium">Columnas reconocidas</span>
+        {mapping.usedLegacy && (
+          <span className="text-xs text-muted-foreground">
+            (sin encabezados reconocibles: se leyó con el orden de la plantilla)
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {mapping.detected.map((d) => (
+          <Badge key={d.field} variant="secondary" className="font-normal">
+            {d.column} <span className="mx-1 text-muted-foreground">→</span> {d.label}
+          </Badge>
+        ))}
+      </div>
+
+      {mapping.ignored.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          Sin usar: {mapping.ignored.join(", ")}
+        </p>
+      )}
+
+      {!mapping.hasStock && (
+        <Notice tone="warn">
+          La planilla no tiene columna <strong>Stock</strong>, así que el stock actual no se
+          modifica. Se actualizan solo precios, costos y proveedor.
+        </Notice>
+      )}
+
+      {mapping.matchByName && (
+        <p className="text-xs text-muted-foreground">
+          Sin columna <strong>SKU</strong>: los productos se reconocen por nombre exacto. Si un
+          nombre no coincide con uno ya cargado, se crea uno nuevo.
+        </p>
       )}
     </div>
   );

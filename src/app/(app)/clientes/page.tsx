@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { money, number } from "@/lib/format";
@@ -57,7 +58,11 @@ export default async function ClientesPage() {
               <TableBody>
                 {rows.map((c: { id: number; name: string; phone: string | null; active: boolean; balance: number }) => (
                   <TableRow key={c.id}>
-                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link href={`/clientes/${c.id}`} className="hover:text-brand hover:underline">
+                        {c.name}
+                      </Link>
+                    </TableCell>
                     <TableCell className="font-mono text-muted-foreground">{c.phone ?? "—"}</TableCell>
                     <TableCell>
                       {c.balance > 0

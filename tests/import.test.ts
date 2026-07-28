@@ -341,3 +341,126 @@ describe("import batches", () => {
     expect(remaining.map((b) => b.id)).toEqual([fresh.batchId]);
   });
 });
+
+// Precios alternativos, costos y proveedor. Son informativos: la venta sigue
+// usando price ?? basePrice, pero tienen que sobrevivir el ida y vuelta del
+// import y no pisarse entre importes parciales.
+describe("precios alternativos, costos y proveedor", () => {
+  it("guarda todos los campos al crear una variante nueva", async () => {
+    const validated = await validateImportRows(db, store, [
+      row(2, {
+        product: "Mega Box", variant: "", sku: "MB-1", price: 181400, stock: 4,
+        priceCash: 154200, priceWholesale: 126100,
+        costUsd: 58.9, costArs: 90706, supplier: "TCG Dylan", supplierSku: "TD-99",
+      }),
+    ]);
+    expect(validated[0].error).toBeNull();
+    await executeImport(db, store, validated, "u1");
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "MB-1"));
+    expect(v.price).toBeNull(); // coincide con basePrice del producto nuevo => hereda
+    expect(v.priceCash).toBe(154200);
+    expect(v.priceWholesale).toBe(126100);
+    expect(v.costUsd).toBe(58.9);
+    expect(v.costArs).toBe(90706);
+    expect(v.supplier).toBe("TCG Dylan");
+    expect(v.supplierSku).toBe("TD-99");
+  });
+
+  it("actualiza los campos nuevos en una variante existente", async () => {
+    const first = await validateImportRows(db, store, [
+      row(2, { product: "Mega Box", variant: "", sku: "MB-1", price: 100000, stock: 1, priceCash: 90000, supplier: "CC" }),
+    ]);
+    await executeImport(db, store, first, "u1");
+
+    const second = await validateImportRows(db, store, [
+      row(2, { product: "Mega Box", variant: "", sku: "MB-1", price: 120000, stock: 1, priceCash: 108000, supplier: "Devir" }),
+    ]);
+    expect(second[0].action).toBe("update");
+    await executeImport(db, store, second, "u1");
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "MB-1"));
+    expect(v.priceCash).toBe(108000);
+    expect(v.supplier).toBe("Devir");
+  });
+
+  it("una columna ausente (undefined) NO pisa el valor ya cargado", async () => {
+    const first = await validateImportRows(db, store, [
+      row(2, { sku: "R-M", priceCash: 900, priceWholesale: 800, supplier: "CC" }),
+    ]);
+    await executeImport(db, store, first, "u1");
+
+    // Segundo importe con una planilla que solo trae precio: los otros campos
+    // llegan como undefined porque esas columnas no existían en el archivo.
+    const second = await validateImportRows(db, store, [
+      { rowNumber: 2, product: "Remera", variant: "M", sku: "R-M", price: 1500, stock: 5 },
+    ]);
+    await executeImport(db, store, second, "u1");
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-M"));
+    expect(v.price).toBe(1500);      // sí se actualizó
+    expect(v.priceCash).toBe(900);   // NO se borró
+    expect(v.priceWholesale).toBe(800);
+    expect(v.supplier).toBe("CC");
+  });
+
+  it("un valor explícitamente vacío (null) sí borra el dato", async () => {
+    const first = await validateImportRows(db, store, [row(2, { sku: "R-M", priceCash: 900 })]);
+    await executeImport(db, store, first, "u1");
+
+    const second = await validateImportRows(db, store, [row(3, { sku: "R-M", priceCash: null })]);
+    await executeImport(db, store, second, "u1");
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-M"));
+    expect(v.priceCash).toBeNull();
+  });
+
+  it("rechaza importes negativos en las listas alternativas", async () => {
+    const out = await validateImportRows(db, store, [
+      row(2, { sku: "A", priceCash: -1 }),
+      row(3, { sku: "B", costArs: -50 }),
+      row(4, { sku: "C", priceWholesale: 0 }), // cero es válido
+    ]);
+    expect(out[0].error).toMatch(/efectivo menor/i);
+    expect(out[1].error).toMatch(/costo ars/i);
+    expect(out[2].error).toBeNull();
+  });
+});
+
+// Una lista de precios sin columna Stock no debe tocar el inventario. Antes de
+// stock nullable, importarla en modo "absolute" ponía todo en cero.
+describe("planilla sin columna de Stock", () => {
+  it("actualiza precios sin modificar el stock ni generar movimientos", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Remera", basePrice: 1000 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "M", sku: "R-M", stock: 42 });
+
+    const validated = await validateImportRows(db, store, [
+      { rowNumber: 2, product: "Remera", variant: "M", sku: "R-M", price: 1800, stock: null, priceCash: 1600 },
+    ]);
+    expect(validated[0].error).toBeNull();
+    expect(validated[0].action).toBe("update");
+
+    const res = await executeImport(db, store, validated, "u1");
+    expect(res).toEqual({ created: 0, updated: 1, skipped: 0 });
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "R-M"));
+    expect(v.stock).toBe(42);   // intacto, NO 0
+    expect(v.price).toBe(1800); // el precio sí se actualizó
+    expect(v.priceCash).toBe(1600);
+
+    const movs = await db.select().from(stockMovements);
+    expect(movs).toHaveLength(0); // no se registró ajuste
+  });
+
+  it("una variante nueva sin stock informado arranca en 0 y sin movimiento", async () => {
+    const validated = await validateImportRows(db, store, [
+      { rowNumber: 2, product: "Gorra", variant: "", sku: "G-1", price: 500, stock: null },
+    ]);
+    const res = await executeImport(db, store, validated, "u1");
+    expect(res).toEqual({ created: 1, updated: 0, skipped: 0 });
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "G-1"));
+    expect(v.stock).toBe(0);
+    expect(await db.select().from(stockMovements)).toHaveLength(0);
+  });
+});

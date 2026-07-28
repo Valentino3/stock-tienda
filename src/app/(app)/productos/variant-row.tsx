@@ -37,6 +37,12 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
   const [name, setName] = useState(variant.name);
   const [sku, setSku] = useState(variant.sku ?? "");
   const [price, setPrice] = useState(variant.price != null ? String(variant.price) : "");
+  const [priceCash, setPriceCash] = useState(variant.priceCash != null ? String(variant.priceCash) : "");
+  const [priceWholesale, setPriceWholesale] = useState(variant.priceWholesale != null ? String(variant.priceWholesale) : "");
+  const [costUsd, setCostUsd] = useState(variant.costUsd != null ? String(variant.costUsd) : "");
+  const [costArs, setCostArs] = useState(variant.costArs != null ? String(variant.costArs) : "");
+  const [supplier, setSupplier] = useState(variant.supplier ?? "");
+  const [supplierSku, setSupplierSku] = useState(variant.supplierSku ?? "");
   const [setNameField, setSetNameField] = useState(variant.setName ?? "");
   const [condition, setCondition] = useState(variant.condition ?? "");
   const [foil, setFoil] = useState(variant.foil);
@@ -91,6 +97,12 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         name,
         sku: sku || null,
         price: price === "" ? null : Number(price),
+        priceCash: priceCash === "" ? null : Number(priceCash),
+        priceWholesale: priceWholesale === "" ? null : Number(priceWholesale),
+        costUsd: costUsd === "" ? null : Number(costUsd),
+        costArs: costArs === "" ? null : Number(costArs),
+        supplier: supplier || null,
+        supplierSku: supplierSku || null,
         setName: setNameField || null,
         condition: condition || null,
         foil,
@@ -144,6 +156,9 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         {variant.foil && <Badge variant="secondary">Foil</Badge>}
         {variant.language && <Badge variant="outline">{variant.language}</Badge>}
         {!variant.active && <Badge variant="outline">Inactivo</Badge>}
+        {variant.supplier && (
+          <span className="text-xs text-muted-foreground">{variant.supplier}</span>
+        )}
 
         {!isOwner && lowStock && variant.active && (
           <Button variant="outline" size="sm" className="ml-auto" disabled={pending || notified} onClick={notify}>
@@ -174,7 +189,7 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
                     <Input id={`variant-sku-${variant.id}`} value={sku} onChange={(e) => setSku(e.target.value)} />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor={`variant-price-${variant.id}`}>Precio (opcional)</Label>
+                    <Label htmlFor={`variant-price-${variant.id}`}>Precio venta (opcional)</Label>
                     <Input
                       id={`variant-price-${variant.id}`}
                       type="number"
@@ -182,7 +197,71 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
                       value={price}
                       onChange={(e) => setPrice(e.target.value)}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Vacío = usa el precio base del producto. Es el precio que cobra la caja.
+                    </p>
                   </div>
+
+                  <fieldset className="space-y-3 rounded-lg border border-border p-3">
+                    <legend className="px-1 text-xs font-medium text-muted-foreground">
+                      Referencia — no se usan al vender
+                    </legend>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-cash-${variant.id}`}>Efectivo menor</Label>
+                        <Input
+                          id={`variant-cash-${variant.id}`}
+                          type="number" step="0.01" min="0"
+                          value={priceCash}
+                          onChange={(e) => setPriceCash(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-wholesale-${variant.id}`}>Precio mayorista</Label>
+                        <Input
+                          id={`variant-wholesale-${variant.id}`}
+                          type="number" step="0.01" min="0"
+                          value={priceWholesale}
+                          onChange={(e) => setPriceWholesale(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-cost-usd-${variant.id}`}>Costo USD</Label>
+                        <Input
+                          id={`variant-cost-usd-${variant.id}`}
+                          type="number" step="0.01" min="0"
+                          value={costUsd}
+                          onChange={(e) => setCostUsd(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-cost-ars-${variant.id}`}>Costo ARS</Label>
+                        <Input
+                          id={`variant-cost-ars-${variant.id}`}
+                          type="number" step="0.01" min="0"
+                          value={costArs}
+                          onChange={(e) => setCostArs(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-supplier-${variant.id}`}>Proveedor</Label>
+                        <Input
+                          id={`variant-supplier-${variant.id}`}
+                          value={supplier}
+                          onChange={(e) => setSupplier(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor={`variant-supplier-sku-${variant.id}`}>SKU proveedor</Label>
+                        <Input
+                          id={`variant-supplier-sku-${variant.id}`}
+                          value={supplierSku}
+                          onChange={(e) => setSupplierSku(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  </fieldset>
+
                   <div className="space-y-2">
                     <Label htmlFor={`variant-set-${variant.id}`}>Set</Label>
                     <Input id={`variant-set-${variant.id}`} value={setNameField} onChange={(e) => setSetNameField(e.target.value)} />
@@ -240,6 +319,8 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
         )}
       </div>
 
+      <PriceLine variant={variant} sellPrice={effectivePrice} isOwner={isOwner} />
+
       {panel === "restock" && (
         <form onSubmit={submitRestock} className="mt-2 mb-1 flex items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
           <div className="space-y-1">
@@ -275,6 +356,58 @@ export function VariantRow({ variant, basePrice, lowStockThreshold, isOwner }: P
       )}
 
       {error && panel === null && !editOpen && <p className="mt-1 text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Segunda línea con las listas de precio alternativas y el costo.
+ *
+ * Va aparte de la fila principal para que el precio de venta —el único que
+ * usa la caja— siga siendo el número prominente. Costo, margen y proveedor son
+ * solo para el dueño: un empleado que atiende el mostrador no tiene por qué ver
+ * a cuánto se compró.
+ */
+function PriceLine({
+  variant,
+  sellPrice,
+  isOwner,
+}: {
+  variant: ProductVariant;
+  sellPrice: number;
+  isOwner: boolean;
+}) {
+  const { priceCash, priceWholesale, costArs, costUsd } = variant;
+  const showCost = isOwner && (costArs != null || costUsd != null);
+  if (priceCash == null && priceWholesale == null && !showCost) return null;
+
+  // Margen sobre el precio de venta. Solo tiene sentido con ambos datos
+  // presentes y positivos.
+  const margin =
+    costArs != null && costArs > 0 && sellPrice > 0
+      ? Math.round(((sellPrice - costArs) / sellPrice) * 100)
+      : null;
+
+  return (
+    <div className="mt-0.5 flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+      {priceCash != null && (
+        <span>Efectivo <span className="figure text-foreground">{money(priceCash)}</span></span>
+      )}
+      {priceWholesale != null && (
+        <span>Mayorista <span className="figure text-foreground">{money(priceWholesale)}</span></span>
+      )}
+      {showCost && (
+        <span>
+          Costo{" "}
+          <span className="figure text-foreground">
+            {costArs != null ? money(costArs) : "—"}
+          </span>
+          {costUsd != null && <span className="figure"> · US$ {number(costUsd)}</span>}
+          {margin != null && (
+            <span className={margin < 0 ? "text-destructive" : ""}> · margen {margin}%</span>
+          )}
+        </span>
+      )}
     </div>
   );
 }

@@ -55,6 +55,12 @@ export async function saveVariant(input: {
   name: string;
   sku: string | null;
   price: number | null;
+  priceCash?: number | null;
+  priceWholesale?: number | null;
+  costUsd?: number | null;
+  costArs?: number | null;
+  supplier?: string | null;
+  supplierSku?: string | null;
   setName?: string | null;
   condition?: string | null;
   foil?: boolean;
@@ -65,11 +71,21 @@ export async function saveVariant(input: {
   // variant with `name: ""` (see saveProduct above), and its SKU/price must
   // stay editable without forcing the owner to name it. Only INSERT (a new,
   // explicit variant) requires a non-empty name.
-  if ((!input.id && !input.name.trim()) || (input.price !== null && input.price < 0)) return { error: "Datos inválidos" };
+  if (!input.id && !input.name.trim()) return { error: "Datos inválidos" };
+  // Ningún importe puede ser negativo. Los alternativos se validan igual que
+  // `price`; null significa "no informado" y es válido.
+  const amounts = [input.price, input.priceCash, input.priceWholesale, input.costUsd, input.costArs];
+  if (amounts.some((n) => n != null && (Number.isNaN(n) || n < 0))) return { error: "Datos inválidos" };
   const values = {
     name: input.name.trim(),
     sku: input.sku?.trim() || null,
     price: input.price,
+    priceCash: input.priceCash ?? null,
+    priceWholesale: input.priceWholesale ?? null,
+    costUsd: input.costUsd ?? null,
+    costArs: input.costArs ?? null,
+    supplier: input.supplier?.trim() || null,
+    supplierSku: input.supplierSku?.trim() || null,
     setName: input.setName?.trim() || null,
     condition: input.condition?.trim() || null,
     foil: input.foil ?? false,

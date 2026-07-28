@@ -102,8 +102,13 @@ export const accountRelations = relations(account, ({ one }) => ({
 
 // ---- dominio ----
 export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta", "cuenta"]);
-// Movimientos de cuenta corriente de un cliente: cargo (venta a cuenta) / pago.
-export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago"]);
+// Movimientos de cuenta corriente de un cliente.
+//   cargo     — venta a cuenta: suma deuda.
+//   pago      — el cliente cancela: resta deuda.
+//   anulacion — se anuló la venta que originó un cargo: lo revierte. Es un
+//               movimiento propio y no un pago, para que el historial muestre
+//               por qué bajó la deuda sin inventar plata que nunca entró.
+export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
 // Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
@@ -129,6 +134,18 @@ export const productVariants = pgTable("product_variants", {
   sku: text("sku"),
   stock: integer("stock").notNull().default(0),
   price: numeric("price", { precision: 12, scale: 2, mode: "number" }), // null => hereda basePrice
+  // Listas de precio alternativas. Solo informativas: la venta siempre usa el
+  // precio de venta (price ?? basePrice). Sirven para consultar al revisar el
+  // inventario, que es como las usa el comercio.
+  priceCash: numeric("price_cash", { precision: 12, scale: 2, mode: "number" }), // "efectivo menor"
+  priceWholesale: numeric("price_wholesale", { precision: 12, scale: 2, mode: "number" }),
+  // Costos de reposición. Se guardan tal cual los carga el comercio: costArs NO
+  // se recalcula desde costUsd, porque cada compra se cerró a una cotización
+  // distinta y recalcular pisaría el dato real.
+  costUsd: numeric("cost_usd", { precision: 12, scale: 2, mode: "number" }),
+  costArs: numeric("cost_ars", { precision: 12, scale: 2, mode: "number" }),
+  supplier: text("supplier"),
+  supplierSku: text("supplier_sku"),
   active: boolean("active").notNull().default(true),
   setName: text("set_name"),
   condition: text("condition"),

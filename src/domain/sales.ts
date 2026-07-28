@@ -137,5 +137,32 @@ export async function voidSale(db: any, input: { saleId: number; storeId: number
         saleId: input.saleId,
       });
     }
+
+    // Una venta a cuenta dejó un cargo en la cuenta corriente del cliente.
+    // Anularla tiene que revertirlo: si no, el cliente sigue debiendo una venta
+    // que no existe. Se registra como movimiento propio en vez de borrar el
+    // cargo, para que el historial muestre qué pasó y cuándo.
+    //
+    // No hace falta guarda de doble reversión: el UPDATE de arriba filtra por
+    // `voided = false`, así que esta transacción corre una sola vez por venta.
+    if (voided.clientId != null) {
+      const [cargo] = await tx.select().from(clientAccountMovements)
+        .where(and(
+          eq(clientAccountMovements.saleId, input.saleId),
+          eq(clientAccountMovements.type, "cargo"),
+        ));
+      // Puede no haber cargo si la venta es anterior a la cuenta corriente.
+      if (cargo) {
+        await tx.insert(clientAccountMovements).values({
+          storeId: input.storeId,
+          clientId: cargo.clientId,
+          type: "anulacion",
+          amount: cargo.amount,
+          saleId: input.saleId,
+          createdBy: input.userId,
+          note: `Anulación de la venta #${input.saleId}`,
+        });
+      }
+    }
   });
 }

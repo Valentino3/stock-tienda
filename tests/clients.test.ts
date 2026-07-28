@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants, sales } from "@/db/schema";
 import { openCashSession, closeCashSession } from "@/domain/cash";
-import { createSale } from "@/domain/sales";
-import { createClient, listClientsWithBalance, getClientBalance, recordPayment } from "@/domain/clients";
+import { createSale, voidSale } from "@/domain/sales";
+import { createClient, listClientsWithBalance, getClientBalance, recordPayment, getClientLedger, getClientSummary } from "@/domain/clients";
 import { eq } from "drizzle-orm";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -69,5 +69,149 @@ describe("fiado / cuenta corriente", () => {
     await expect(
       recordPayment(db, { storeId: store2, clientId, amount: 100, userId: "u1" })
     ).rejects.toThrow("CLIENT_NOT_FOUND");
+  });
+});
+
+// El detalle que explica de qué está hecha la deuda: cada movimiento con su
+// venta, sus productos y el saldo que dejó.
+describe("getClientLedger / getClientSummary", () => {
+  it("un cliente sin movimientos devuelve historial vacío y totales en cero", async () => {
+    expect(await getClientLedger(db, store, clientId)).toEqual([]);
+    expect(await getClientSummary(db, store, clientId)).toMatchObject({
+      charged: 0, paid: 0, purchases: 0, balance: 0, lastMovementAt: null,
+    });
+  });
+
+  it("arma el detalle de la venta que originó cada cargo", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 3 }], // 3 * 1000
+    });
+
+    const [entry] = await getClientLedger(db, store, clientId);
+    expect(entry.type).toBe("cargo");
+    expect(entry.amount).toBe(3000);
+    expect(entry.balanceAfter).toBe(3000);
+    expect(entry.sale?.id).toBe(sale.id);
+    expect(entry.sale?.voided).toBe(false);
+    expect(entry.sale?.sellerName).toBe("Test");
+    expect(entry.sale?.items).toEqual([
+      { productName: "Remera", variantName: "M", quantity: 3, unitPrice: 1000, discountAmount: 0 },
+    ]);
+  });
+
+  it("devuelve del más nuevo al más viejo con el saldo corrido bien calculado", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 5 }], // 5000
+    });
+    await recordPayment(db, { storeId: store, clientId, amount: 2000, userId: "u1" });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 1 }], // 1000
+    });
+
+    const ledger = await getClientLedger(db, store, clientId);
+    expect(ledger).toHaveLength(3);
+    // Orden de lectura: el más reciente primero.
+    expect(ledger.map((e) => e.amount)).toEqual([1000, 2000, 5000]);
+    // El saldo corrido se calcula cronológicamente: 5000 -> 3000 -> 4000.
+    expect(ledger.map((e) => e.balanceAfter)).toEqual([4000, 3000, 5000]);
+    expect(ledger[0].balanceAfter).toBe(await getClientBalance(db, store, clientId));
+  });
+
+  it("los pagos aparecen sin venta asociada y con su medio", async () => {
+    await recordPayment(db, {
+      storeId: store, clientId, amount: 1500, method: "transferencia", note: "Alias", userId: "u1",
+    });
+    const [entry] = await getClientLedger(db, store, clientId);
+    expect(entry.type).toBe("pago");
+    expect(entry.sale).toBeNull();
+    expect(entry.method).toBe("transferencia");
+    expect(entry.note).toBe("Alias");
+    expect(entry.balanceAfter).toBe(-1500);
+  });
+
+  it("anular una venta a cuenta revierte el cargo y deja el saldo en cero", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 2 }], // 2000
+    });
+    expect(await getClientBalance(db, store, clientId)).toBe(2000);
+
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+
+    // El cargo NO se borra: se compensa con un movimiento de anulación, para
+    // que el historial muestre qué pasó.
+    const ledger = await getClientLedger(db, store, clientId);
+    expect(ledger).toHaveLength(2);
+    expect(ledger[0].type).toBe("anulacion");
+    expect(ledger[0].amount).toBe(2000);
+    expect(ledger[0].balanceAfter).toBe(0);
+    expect(ledger[0].note).toBe(`Anulación de la venta #${sale.id}`);
+    expect(ledger[1].type).toBe("cargo");
+    expect(ledger[1].sale?.voided).toBe(true);
+
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+
+  it("la anulación no cuenta como pago ni como compra en los totales", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const anulada = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 2 }], // 2000
+    });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 3 }], // 3000, queda viva
+    });
+    await voidSale(db, { saleId: anulada.id, storeId: store, userId: "u1" });
+
+    const s = await getClientSummary(db, store, clientId);
+    expect(s.charged).toBe(3000); // neto: 5000 cargados − 2000 anulados
+    expect(s.paid).toBe(0);       // anular no es cobrar
+    expect(s.voided).toBe(2000);
+    expect(s.purchases).toBe(1);  // la anulada no cuenta como compra
+    expect(s.balance).toBe(3000);
+  });
+
+  it("anular una venta en efectivo no toca ninguna cuenta corriente", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "efectivo",
+      items: [{ variantId, quantity: 2 }],
+    });
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+    expect(await getClientLedger(db, store, clientId)).toEqual([]);
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+
+  it("no filtra movimientos de otra tienda", async () => {
+    const otra = await seedTestStore(db, "t2", "Otra");
+    await seedTestUser(db, "u2", "owner", otra);
+    const ajeno = await createClient(db, { storeId: otra, name: "Ajeno" });
+    await recordPayment(db, { storeId: otra, clientId: ajeno.id, amount: 999, userId: "u2" });
+
+    expect(await getClientLedger(db, store, ajeno.id)).toEqual([]);
+    expect(await getClientSummary(db, store, ajeno.id)).toMatchObject({ charged: 0, paid: 0 });
+  });
+
+  it("los totales del encabezado separan comprado de pagado", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 4 }], // 4000
+    });
+    await recordPayment(db, { storeId: store, clientId, amount: 1000, userId: "u1" });
+
+    const s = await getClientSummary(db, store, clientId);
+    expect(s.charged).toBe(4000);
+    expect(s.paid).toBe(1000);
+    expect(s.balance).toBe(3000);
+    expect(s.purchases).toBe(1); // el pago no cuenta como compra
+    expect(s.lastMovementAt).toBeInstanceOf(Date);
   });
 });
