@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { normalizeHeader, mapHeaderRow, type ImportField } from "@/domain/import-columns";
+import ExcelJS from "exceljs";
+import {
+  findHeaderRow, normalizeHeader, mapHeaderRow, type ImportField,
+} from "@/domain/import-columns";
+import { parseImportWorksheet } from "@/domain/import-xlsx";
 
 /** Atajo: { campo -> título de la columna } para comparar sin pensar en índices. */
 function mapped(headers: string[]): Record<string, string> {
@@ -90,5 +94,90 @@ describe("mapHeaderRow", () => {
     // El caller usa la ausencia de `product` para caer al orden posicional.
     expect(mapHeaderRow(["col1", "col2", "col3"]).has("product")).toBe(false);
     expect(mapHeaderRow(["", "", ""]).has("product")).toBe(false);
+  });
+});
+
+describe("findHeaderRow", () => {
+  it("encuentra los encabezados reales debajo de una fila de cotizaciones", () => {
+    const rows = [
+      ["", "", "", "", "", "", "", "1475", "1540", "", ""],
+      [
+        "S", "SKU PROVEEDOR", "PRODUCTO", "COSTO/USD", "COSTO ARS",
+        "PRECIO VENTA", "EFECTIVO MENOR", "a", "", "PRECIO MAYORISTA", "PROVEEDOR",
+      ],
+      ["1827", "", "POKEMON ASCENDED HEROES MEGA BOX", "58.90", "90706", "181400", "154200", "", "", "126100", "TCG DYLAN"],
+    ];
+
+    const match = findHeaderRow(rows);
+
+    expect(match?.rowNumber).toBe(2);
+    expect(match && Object.fromEntries(
+      [...match.columns].map(([field, col]) => [field, match.headers[col - 1]])
+    )).toEqual({
+      priceCash: "EFECTIVO MENOR",
+      priceWholesale: "PRECIO MAYORISTA",
+      costUsd: "COSTO/USD",
+      costArs: "COSTO ARS",
+      supplierSku: "SKU PROVEEDOR",
+      supplier: "PROVEEDOR",
+      price: "PRECIO VENTA",
+      product: "PRODUCTO",
+    });
+  });
+
+  it("elige la fila con más campos reconocidos y conserva la primera en un empate", () => {
+    const match = findHeaderRow([
+      ["Producto", "Precio"],
+      ["Producto", "Precio venta", "Stock"],
+      ["Producto", "Precio venta", "SKU"],
+    ]);
+
+    expect(match?.rowNumber).toBe(2);
+    expect([...match!.columns.keys()]).toEqual(["price", "product", "stock"]);
+  });
+
+  it("no confunde una fila de datos posterior cuyo producto se llama Producto", () => {
+    expect(findHeaderRow([
+      ["Reporte de inventario"],
+      ["Producto"],
+      ["Remera"],
+    ])).toBeNull();
+  });
+});
+
+describe("parseImportWorksheet", () => {
+  it("extrae los valores correctos cuando hay cotizaciones arriba de los encabezados", () => {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet("Productos");
+    worksheet.addRow(["", "", "", "", "", "", "", 1475, 1540, "", ""]);
+    worksheet.addRow([
+      "S", "SKU PROVEEDOR", "PRODUCTO", "COSTO/USD", "COSTO ARS",
+      "PRECIO VENTA", "EFECTIVO MENOR", "a", "", "PRECIO MAYORISTA", "PROVEEDOR",
+    ]);
+    worksheet.addRow([
+      1827, "", "POKEMON ASCENDED HEROES MEGA BOX", 58.9, 90706,
+      181400, 154200, "", "", 126100, "TCG DYLAN",
+    ]);
+
+    const parsed = parseImportWorksheet(worksheet);
+
+    expect(parsed.headerRowNumber).toBe(2);
+    expect(parsed.usedLegacy).toBe(false);
+    expect(parsed.hasStock).toBe(false);
+    expect(parsed.matchByName).toBe(true);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0]).toMatchObject({
+      rowNumber: 3,
+      product: "POKEMON ASCENDED HEROES MEGA BOX",
+      variant: "",
+      sku: null,
+      price: 181400,
+      stock: null,
+      priceCash: 154200,
+      priceWholesale: 126100,
+      costUsd: 58.9,
+      costArs: 90706,
+      supplier: "TCG DYLAN",
+    });
   });
 });

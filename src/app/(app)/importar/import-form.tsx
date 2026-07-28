@@ -21,6 +21,7 @@ type Mapping = {
   detected: { field: string; label: string; column: string }[];
   ignored: string[];
   usedLegacy: boolean;
+  headerRow: number;
   hasStock: boolean;
   matchByName: boolean;
 };
@@ -281,6 +282,11 @@ function MappingSummary({ mapping }: { mapping: Mapping }) {
         {mapping.usedLegacy && (
           <span className="text-xs text-muted-foreground">
             (sin encabezados reconocibles: se leyó con el orden de la plantilla)
+          </span>
+        )}
+        {!mapping.usedLegacy && mapping.headerRow > 1 && (
+          <span className="text-xs text-muted-foreground">
+            (encabezados detectados en la fila {number(mapping.headerRow)})
           </span>
         )}
       </div>

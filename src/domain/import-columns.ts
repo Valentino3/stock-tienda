@@ -5,9 +5,9 @@
 // datos con otro nombre ("Descripción" en vez de "Producto"). Exigir la
 // plantilla exacta obligaba a rearmar el archivo a mano antes de cada importe.
 //
-// Se lee la fila 1, se normaliza cada celda y se busca contra los alias de
-// abajo. Si no se reconoce ningún encabezado, el caller cae a las posiciones
-// fijas de la plantilla vieja (ver LEGACY_ORDER).
+// Se inspeccionan las primeras filas, se normaliza cada celda y se busca contra
+// los alias de abajo. Si no se reconoce ningún encabezado, el caller cae a las
+// posiciones fijas de la plantilla vieja (ver LEGACY_ORDER).
 
 export type ImportField =
   | "product" | "variant" | "sku" | "price" | "stock"
@@ -20,6 +20,9 @@ export const LEGACY_ORDER: ImportField[] = [
   "product", "variant", "sku", "price", "stock",
   "setName", "condition", "foil", "language",
 ];
+
+/** Filas iniciales que se inspeccionan para admitir títulos o metadata arriba. */
+export const HEADER_SCAN_ROWS = 25;
 
 /**
  * minúsculas, sin acentos, sin puntuación, espacios colapsados.
@@ -80,6 +83,39 @@ export function mapHeaderRow(headers: string[]): Map<ImportField, number> {
     }
   }
   return found;
+}
+
+export type HeaderRowMatch = {
+  /** Número 1-based de la fila, igual que Excel y exceljs. */
+  rowNumber: number;
+  headers: string[];
+  columns: Map<ImportField, number>;
+};
+
+/**
+ * Encuentra la fila de encabezados dentro del comienzo de una hoja.
+ *
+ * Algunas planillas tienen arriba un título, una fecha o cotizaciones y recién
+ * después los encabezados. Se elige la fila que reconoce más campos, siempre
+ * que incluya Producto. Fuera de la primera fila se exigen al menos dos campos
+ * para no confundir con encabezado una fila de datos cuyo producto se llame
+ * literalmente "Producto".
+ */
+export function findHeaderRow(rows: string[][]): HeaderRowMatch | null {
+  let best: HeaderRowMatch | null = null;
+
+  for (let i = 0; i < rows.length; i++) {
+    const headers = rows[i];
+    const columns = mapHeaderRow(headers);
+    if (!columns.has("product")) continue;
+    if (i > 0 && columns.size < 2) continue;
+
+    if (!best || columns.size > best.columns.size) {
+      best = { rowNumber: i + 1, headers, columns };
+    }
+  }
+
+  return best;
 }
 
 /** Etiquetas para mostrarle al usuario qué columnas se reconocieron. */
