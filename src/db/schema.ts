@@ -123,7 +123,11 @@ export const products = pgTable("products", {
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (t) => [index("products_store_idx").on(t.storeId)]);
+}, (t) => [
+  index("products_store_idx").on(t.storeId),
+  // Filtro por categoría en el inventario.
+  index("products_store_category_idx").on(t.storeId, t.category),
+]);
 
 export const productVariants = pgTable("product_variants", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -153,7 +157,17 @@ export const productVariants = pgTable("product_variants", {
   language: text("language"),
   // SKU único POR TIENDA (no global): dos tiendas pueden reusar el mismo SKU.
   // sku null se permite repetido (Postgres trata NULL como distinto).
-}, (t) => [uniqueIndex("product_variants_store_sku_idx").on(t.storeId, t.sku)]);
+}, (t) => [
+  uniqueIndex("product_variants_store_sku_idx").on(t.storeId, t.sku),
+  // El join de la tabla de inventario entra por acá: sin este índice, cada
+  // consulta con filtros escanea product_variants entera.
+  index("product_variants_product_id_idx").on(t.productId),
+  // Filtros del inventario. Todos arrancan por store_id porque toda consulta
+  // está scopeada por tienda.
+  index("product_variants_store_active_idx").on(t.storeId, t.active),
+  index("product_variants_store_stock_idx").on(t.storeId, t.stock),
+  index("product_variants_store_supplier_idx").on(t.storeId, t.supplier),
+]);
 
 // NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`
 // que garantiza a nivel de DB como máximo una caja abierta POR TIENDA. Con

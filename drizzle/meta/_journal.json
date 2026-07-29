@@ -92,6 +92,13 @@
       "when": 1785242551439,
       "tag": "0012_anulacion_cuenta_corriente",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785300884746,
+      "tag": "0013_indices_inventario",
+      "breakpoints": true
     }
   ]
 }
