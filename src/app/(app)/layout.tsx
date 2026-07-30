@@ -32,6 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               { href: "/importar", label: "Importar" },
               { href: "/reportes", label: "Reportes" },
               { href: "/comisiones", label: "Comisiones" },
+              { href: "/facturacion", label: "Facturación" },
               { href: "/avisos", label: "Avisos", badge: openAvisos },
               { href: "/usuarios", label: "Usuarios" },
             ],

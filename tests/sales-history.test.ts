@@ -89,4 +89,77 @@ describe("getSalesHistory", () => {
     expect(r1.sales).toHaveLength(1);
     expect(r1.sales.every((row: { sale: { storeId: number } }) => row.sale.storeId === store)).toBe(true);
   });
+
+  // El filtro va en la QUERY y no después de paginar: filtrar en memoria sobre
+  // una página ya cortada daría páginas de tamaño distinto y saltearía ventas.
+  describe("filtro de facturación", () => {
+    async function seedConComprobante(estado: "pendiente" | "autorizado" | "rechazado", clase: "factura" | "nota_credito" = "factura") {
+      const { comprobantes } = await import("@/db/schema");
+      const venta = await createSale(db, {
+        storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }],
+      });
+      await db.insert(comprobantes).values({
+        storeId: store, saleId: venta.id, clase, cbteTipo: clase === "factura" ? 6 : 8,
+        ambiente: "homologacion", ptoVta: 1, numero: venta.id, estado,
+        docTipo: 99, docNro: "0", condIvaReceptor: 5, receptorNombre: "Consumidor Final",
+        impTotal: 1000, impNeto: 826.45, impIva: 173.55,
+        ivaDesglose: [{ id: 5, baseImp: 826.45, importe: 173.55 }], lineas: [],
+        cbteFch: "2026-07-30", cuitEmisor: "30707429530", createdBy: "u1",
+      });
+      return venta;
+    }
+
+    it("'sin' trae solo las ventas sin factura viva", async () => {
+      const sinFactura = await createSale(db, {
+        storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }],
+      });
+      await seedConComprobante("autorizado");
+
+      const r = await getSalesHistory(db, { storeId: store, page: 1, facturacion: "sin" });
+      expect(r.sales).toHaveLength(1);
+      expect(r.sales[0].sale.id).toBe(sinFactura.id);
+    });
+
+    it("'con' trae solo las facturadas", async () => {
+      await createSale(db, {
+        storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }],
+      });
+      const facturada = await seedConComprobante("autorizado");
+
+      const r = await getSalesHistory(db, { storeId: store, page: 1, facturacion: "con" });
+      expect(r.sales).toHaveLength(1);
+      expect(r.sales[0].sale.id).toBe(facturada.id);
+    });
+
+    // Una factura rechazada deja la venta sin facturar, que es exactamente lo
+    // que el dueño quiere ver a fin de mes.
+    it("una factura RECHAZADA deja la venta en 'sin facturar'", async () => {
+      const rechazada = await seedConComprobante("rechazado");
+      const r = await getSalesHistory(db, { storeId: store, page: 1, facturacion: "sin" });
+      expect(r.sales.map((s: any) => s.sale.id)).toContain(rechazada.id);
+    });
+
+    it("una emisión en curso cuenta como facturada, para no emitir dos veces", async () => {
+      const pendiente = await seedConComprobante("pendiente");
+      const r = await getSalesHistory(db, { storeId: store, page: 1, facturacion: "con" });
+      expect(r.sales.map((s: any) => s.sale.id)).toContain(pendiente.id);
+    });
+
+    // Una nota de crédito no es una factura: la venta no pasa a "facturada" por
+    // tener una NC.
+    it("una nota de crédito sola no cuenta como factura", async () => {
+      const soloNC = await seedConComprobante("autorizado", "nota_credito");
+      const r = await getSalesHistory(db, { storeId: store, page: 1, facturacion: "sin" });
+      expect(r.sales.map((s: any) => s.sale.id)).toContain(soloNC.id);
+    });
+
+    it("sin filtro, trae todas", async () => {
+      await createSale(db, {
+        storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }],
+      });
+      await seedConComprobante("autorizado");
+      const r = await getSalesHistory(db, { storeId: store, page: 1 });
+      expect(r.sales).toHaveLength(2);
+    });
+  });
 });

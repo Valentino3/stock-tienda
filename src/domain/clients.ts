@@ -10,9 +10,20 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // `cargo` suma; `pago` y `anulacion` restan, y por eso caen las dos en el else.
 const balanceExpr = sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else -${clientAccountMovements.amount} end), 0)`;
 
+/** Datos fiscales del cliente. Todos opcionales: ver el comentario en schema.ts. */
+export type DatosFiscalesCliente = {
+  docTipo?: number | null;
+  docNro?: string | null;
+  condicionIva?: number | null;
+  razonSocial?: string | null;
+  domicilio?: string | null;
+  /** Para mandarle el comprobante. No es un dato fiscal, viaja con ellos. */
+  email?: string | null;
+};
+
 export async function createClient(
   db: any,
-  input: { storeId: number; name: string; phone?: string | null; note?: string | null }
+  input: { storeId: number; name: string; phone?: string | null; note?: string | null } & DatosFiscalesCliente
 ): Promise<Client> {
   if (!input.name.trim()) throw new Error("EMPTY_NAME");
   const [row] = await db.insert(clients).values({
@@ -20,7 +31,33 @@ export async function createClient(
     name: input.name.trim(),
     phone: input.phone?.trim() || null,
     note: input.note?.trim() || null,
+    docTipo: input.docTipo ?? null,
+    docNro: input.docNro?.trim() || null,
+    condicionIva: input.condicionIva ?? null,
+    razonSocial: input.razonSocial?.trim() || null,
+    domicilio: input.domicilio?.trim() || null,
   }).returning();
+  return row;
+}
+
+/**
+ * Actualiza SOLO los datos fiscales de un cliente. Separado de createClient
+ * porque la carga fiscal cae sobre el dueño, después, y no sobre el cajero con
+ * cola en el mostrador.
+ */
+export async function updateDatosFiscales(
+  db: any,
+  input: { storeId: number; clientId: number } & DatosFiscalesCliente
+): Promise<Client> {
+  const [row] = await db.update(clients).set({
+    docTipo: input.docTipo ?? null,
+    docNro: input.docNro?.trim() || null,
+    condicionIva: input.condicionIva ?? null,
+    razonSocial: input.razonSocial?.trim() || null,
+    domicilio: input.domicilio?.trim() || null,
+    email: input.email?.trim() || null,
+  }).where(and(eq(clients.id, input.clientId), eq(clients.storeId, input.storeId))).returning();
+  if (!row) throw new Error("CLIENT_NOT_FOUND");
   return row;
 }
 

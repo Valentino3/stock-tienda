@@ -1,5 +1,5 @@
-import { and, desc, eq, gte, inArray, lt } from "drizzle-orm";
-import { sales, saleItems, productVariants, products, user } from "@/db/schema";
+import { and, desc, eq, exists, gte, inArray, lt, not } from "drizzle-orm";
+import { sales, saleItems, productVariants, products, user, comprobantes } from "@/db/schema";
 
 const PAGE_SIZE = 50;
 
@@ -9,6 +9,8 @@ export type SalesHistoryOpts = {
   to?: Date;
   sellerId?: string;
   page: number;
+  /** "sin" = todavía sin factura viva; "con" = ya tiene una emitida o en curso. */
+  facturacion?: "sin" | "con";
 };
 
 export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
@@ -19,6 +21,21 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
 
   const conditions = [eq(sales.storeId, opts.storeId), gte(sales.createdAt, from), lt(sales.createdAt, to)];
   if (opts.sellerId) conditions.push(eq(sales.sellerId, opts.sellerId));
+
+  // El filtro va en la QUERY y no después de paginar: filtrar en memoria sobre
+  // una página ya cortada daría páginas de tamaño distinto y saltearía ventas.
+  // "Factura viva" = pendiente o autorizada; una rechazada deja la venta sin
+  // facturar, que es exactamente lo que el dueño quiere ver a fin de mes.
+  if (opts.facturacion) {
+    const tieneFacturaViva = exists(
+      db.select({ uno: comprobantes.id }).from(comprobantes).where(and(
+        eq(comprobantes.saleId, sales.id),
+        eq(comprobantes.clase, "factura"),
+        inArray(comprobantes.estado, ["pendiente", "autorizado"]),
+      )),
+    );
+    conditions.push(opts.facturacion === "con" ? tieneFacturaViva : not(tieneFacturaViva));
+  }
 
   const rows = await db
     .select({ sale: sales, sellerName: user.name })

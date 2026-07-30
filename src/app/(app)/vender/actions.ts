@@ -4,13 +4,35 @@ import { requireStore } from "@/lib/session";
 import { createSale, type Discount } from "@/domain/sales";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import { createClient } from "@/domain/clients";
+import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit } from "@/domain/fiscal-catalogs";
 
-// Alta rápida de cliente desde la pantalla de venta (para venta a cuenta).
-export async function createClientForSale(name: string, phone?: string) {
+/**
+ * Alta rápida de cliente desde la pantalla de venta (para venta a cuenta).
+ *
+ * Este diálogo tiene UN solo campo fiscal opcional (documento) y el tipo se
+ * infiere por el largo. No lleva razón social, domicilio ni condición frente al
+ * IVA a propósito: existe porque hay cola en el mostrador, y cargarlo de campos
+ * fiscales mataría la razón por la que se construyó. Lo que falte se pide
+ * después, al facturar o desde la ficha del cliente.
+ */
+export async function createClientForSale(name: string, phone?: string, doc?: string) {
   const { storeId } = await requireStore();
   if (!name.trim()) return { error: "Nombre requerido" };
+
+  const docNro = normalizarDoc(doc);
+  if (docNro && docNro.length === 11 && !validarCuit(docNro)) {
+    return { error: "El CUIT no es válido" };
+  }
+  if (docNro && docNro.length !== 11 && (docNro.length < 7 || docNro.length > 8)) {
+    return { error: "Poné un DNI (7-8 dígitos) o un CUIT (11)" };
+  }
+
   try {
-    const c = await createClient(db, { storeId, name, phone });
+    const c = await createClient(db, {
+      storeId, name, phone,
+      docNro,
+      docTipo: docNro ? (docNro.length === 11 ? DOC_CUIT : DOC_DNI) : null,
+    });
     return { ok: true as const, id: c.id, name: c.name };
   } catch {
     return { error: "No se pudo crear el cliente" };

@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatTile } from "@/components/ui/stat-tile";
 import { PaymentButton } from "../clientes-client";
+import { DatosFiscalesCard } from "./datos-fiscales-card";
 
 const METHOD_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -30,7 +31,7 @@ export default async function ClienteDetallePage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { storeId } = await requireStore();
+  const { storeId, role } = await requireStore();
   const { id } = await params;
 
   const clientId = Number(id);
@@ -98,6 +99,10 @@ export default async function ClienteDetallePage({
           corresponde, registrá un ajuste por ese monto.
         </Notice>
       )}
+
+      {/* Cambiar la condición frente al IVA cambia el comprobante que le
+          corresponde al cliente (B pasa a A): es del dueño. */}
+      {role === "owner" && <DatosFiscalesCard cliente={client} />}
 
       <Section label="Movimientos">
         {ledger.length === 0 ? (

@@ -88,7 +88,6 @@ Sistema web para gestión de stock, ventas y caja de un comercio. Funciona desde
 
 ## No incluye (por ahora)
 
-- Facturación electrónica / ARCA (comprobantes internos, no fiscales).
 - Lector de código de barras (se puede sumar).
 - Compra de productos a clientes (buylist / trade-in en TCG).
 - Múltiples sucursales.

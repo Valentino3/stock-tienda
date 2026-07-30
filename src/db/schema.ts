@@ -1,5 +1,6 @@
 import {
-  pgTable, text, timestamp, boolean, integer, numeric, jsonb, pgEnum, index, uniqueIndex,
+  pgTable, text, timestamp, boolean, integer, smallint, numeric, jsonb, date, pgEnum, index,
+  uniqueIndex, primaryKey, type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 // Type-only: se borra al compilar, así que no crea ciclo con domain/import.ts
@@ -254,15 +255,38 @@ export const commissions = pgTable("commissions", {
 }, (table) => [index("commissions_employee_idx").on(table.employeeId)]);
 
 // Clientes de una tienda (cuenta corriente / fiado).
+//
+// Los campos fiscales son TODOS nullable y sin default a propósito: `null`
+// significa "sin datos fiscales cargados", que es un estado distinto de
+// "declaró ser Consumidor Final" aunque los dos terminen en Factura B. Poner
+// default 5 en condicionIva fabricaría una declaración que el comercio nunca
+// hizo. Ver src/domain/fiscal-comprobante.ts (resolverReceptor).
 export const clients = pgTable("clients", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   storeId: integer("store_id").notNull().references(() => stores.id),
   name: text("name").notNull(),
   phone: text("phone"),
+  // Para mandarle el comprobante. Opcional: el teléfono ya alcanza para
+  // WhatsApp, y pedir el mail en el mostrador es fricción que casi nadie paga.
+  email: text("email"),
   note: text("note"),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (t) => [index("clients_store_idx").on(t.storeId)]);
+  // Códigos de ARCA. Ver src/domain/fiscal-catalogs.ts.
+  docTipo: smallint("doc_tipo"), // 80 CUIT | 86 CUIL | 96 DNI | 99 Consumidor Final
+  // text, no numérico: preserva ceros a la izquierda y tolera carga parcial.
+  // La validación (mod-11 del CUIT) vive en el dominio, para que un dato malo
+  // sea un error legible en castellano y no un 23514 de Postgres.
+  docNro: text("doc_nro"),
+  condicionIva: smallint("condicion_iva"), // CondicionIVAReceptorId: 1 RI | 4 Exento | 5 CF | 6 Monotributo
+  razonSocial: text("razon_social"), // null => se usa `name`
+  domicilio: text("domicilio"),
+}, (t) => [
+  index("clients_store_idx").on(t.storeId),
+  // Buscar cliente por CUIT/DNI al facturar. NO único: los duplicados de carga
+  // son reales y una restricción única rompería createClient.
+  index("clients_store_doc_idx").on(t.storeId, t.docNro),
+]);
 
 // Movimientos de cuenta: cargo (venta a cuenta) suma deuda, pago la baja.
 // Saldo del cliente = Σcargo − Σpago.
@@ -316,6 +340,220 @@ export const importBatches = pgTable("import_batches", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [index("import_batches_store_status_idx").on(t.storeId, t.status)]);
 
+// ---- facturación electrónica ARCA (ex-AFIP) ----
+//
+// NOTA SOBRE LOS CÓDIGOS DE ARCA (docTipo, cbteTipo, ivaId, condicionIva):
+// van como `smallint` con el valor literal de ARCA, NO como pgEnum. Son valores
+// de cable de un tercero: un pgEnum obligaría a un `ALTER TYPE ... ADD VALUE`
+// en archivo de migración propio cada vez que ARCA agrega un código o sumemos
+// Factura C. El módulo src/domain/fiscal-catalogs.ts da la seguridad de tipos
+// con uniones de TS y cero costo de migración.
+//
+// Los enums de acá abajo son estados que inventamos nosotros: conjuntos
+// cerrados que controlamos, y por eso sí son pgEnum.
+
+export const arcaAmbienteEnum = pgEnum("arca_ambiente", ["homologacion", "produccion"]);
+export const comprobanteClaseEnum = pgEnum("comprobante_clase", ["factura", "nota_credito"]);
+// Estado de un comprobante. La semántica es load-bearing para la numeración:
+//   pendiente  — número reservado, request en vuelo o resultado no registrado.
+//                NÚMERO CONSUMIDO.
+//   autorizado — ARCA otorgó CAE. Fila inmutable. NÚMERO CONSUMIDO.
+//   rechazado  — ARCA respondió Resultado = R. ARCA NO avanzó su numeración,
+//                así que EL NÚMERO QUEDA LIBRE y el reintento lo reusa.
+//   error      — falla de transporte / timeout / respuesta ilegible. NO sabemos
+//                si ARCA consumió el número: bloquea el reuso hasta que
+//                reconciliarComprobante() lo resuelva con FECompConsultar.
+export const comprobanteEstadoEnum = pgEnum("comprobante_estado", [
+  "pendiente", "autorizado", "rechazado", "error",
+]);
+
+// Config fiscal por tienda. Tabla aparte y no columnas en `stores` porque
+// resolveActiveStore() (src/lib/session.ts) hace SELECT sobre stores en CADA
+// request: no queremos arrastrar config fiscal ahí, ni serializar caminos no
+// relacionados cuando la numeración toma locks. Además es 1:1 opcional: la
+// mayoría de las tiendas nunca factura.
+export const storeFiscalConfig = pgTable("store_fiscal_config", {
+  storeId: integer("store_id").primaryKey().references(() => stores.id),
+  cuit: text("cuit").notNull(), // 11 dígitos, sin guiones
+  razonSocial: text("razon_social").notNull(),
+  nombreFantasia: text("nombre_fantasia"),
+  domicilio: text("domicilio").notNull(),
+  condicionIva: smallint("condicion_iva").notNull().default(1), // emisor: 1 = Responsable Inscripto
+  ingresosBrutos: text("ingresos_brutos"),
+  inicioActividades: date("inicio_actividades", { mode: "string" }),
+  puntoVenta: integer("punto_venta").notNull(),
+  ambiente: arcaAmbienteEnum("ambiente").notNull().default("homologacion"),
+  // Alícuota por defecto de toda línea. Es la costura multi-alícuota: cuando se
+  // agregue products.ivaId solo cambia ivaIdForLine, no la matemática de
+  // importes. Un comercio de una sola alícuota no debe tocar 3000 productos.
+  defaultIvaId: smallint("default_iva_id").notNull().default(5), // 5 = 21%
+  // Monto a partir del cual ARCA exige identificar al comprador. Queda en NULL
+  // (permisivo) a propósito: el número de la RG se mueve y hardcodearlo haría
+  // que una constante vieja bloquee facturación legítima. Lo fija el contador.
+  umbralConsumidorFinal: numeric("umbral_consumidor_final", { precision: 12, scale: 2, mode: "number" }),
+  empleadosPuedenEmitir: boolean("empleados_pueden_emitir").notNull().default(false),
+  enabled: boolean("enabled").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Certificado X.509 + clave privada de ARCA, cifrados (AES-256-GCM, ver
+// src/lib/crypto/secret-box.ts). Keyeada por ambiente porque homologación y
+// producción son certificados DISTINTOS que tienen que coexistir: cambiar de
+// ambiente no puede destruir el otro.
+export const arcaCredentials = pgTable("arca_credentials", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  ambiente: arcaAmbienteEnum("ambiente").notNull(),
+  certPemEnc: text("cert_pem_enc").notNull(),
+  keyPemEnc: text("key_pem_enc").notNull(),
+  // Metadatos derivados del cert al subirlo. Son lo ÚNICO que la UI puede leer:
+  // getFiscalConfigSummary() no selecciona nunca las columnas *_enc.
+  certSubject: text("cert_subject"),
+  certCuit: text("cert_cuit"),
+  certExpiresAt: timestamp("cert_expires_at"),
+  certFingerprint: text("cert_fingerprint"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("arca_credentials_store_ambiente_idx").on(t.storeId, t.ambiente)]);
+
+// Cache del Ticket de Acceso (TA) de WSAA.
+//
+// WSAA devuelve un ticket que dura 12 h y RECHAZA pedir otro mientras haya uno
+// válido ("El CEE ya posee un TA valido para el acceso al WSN solicitado"). En
+// serverless no hay memoria compartida entre invocaciones y el filesystem de
+// Vercel no persiste, así que el TA TIENE que vivir acá.
+//
+// La fila ES el recurso, no un log: la regla de ARCA "un TA válido por (CUIT,
+// servicio)" es exactamente un slot mutable. Upsert, nunca append.
+export const arcaAccessTickets = pgTable("arca_access_tickets", {
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  ambiente: arcaAmbienteEnum("ambiente").notNull(),
+  service: text("service").notNull().default("wsfe"),
+  cuit: text("cuit").notNull(),
+  // Cifrados: son credenciales bearer de 12 h. Quien los tenga puede emitir
+  // comprobantes fiscales a nombre del contribuyente.
+  token: text("token").notNull(),
+  sign: text("sign").notNull(),
+  generatedAt: timestamp("generated_at").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  // Lease del login WSAA en curso. Es un lease y no un advisory lock porque un
+  // advisory lock mantendría una transacción de Postgres abierta durante una
+  // llamada HTTP de varios segundos a un endpoint del Estado.
+  lockedUntil: timestamp("locked_until"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.storeId, t.ambiente, t.service] })]);
+
+// Una línea del comprobante, congelada al emitir.
+export type ComprobanteLinea = {
+  descripcion: string;
+  cantidad: number;
+  precioUnitario: number;
+  descuentoLinea: number;
+  netoAsignado: number; // bruto de línea ya neto del descuento general prorrateado
+  ivaId: number;
+  baseImp: number;
+  importeIva: number;
+};
+
+export type IvaDesgloseItem = { id: number; baseImp: number; importe: number };
+export type ComprobanteObservacion = { code: number; msg: string };
+
+// El comprobante fiscal. 1:N con sales: una venta puede tener una factura y
+// después una nota de crédito.
+export const comprobantes = pgTable("comprobantes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  saleId: integer("sale_id").notNull().references(() => sales.id),
+  // Solo link de reporte. OJO: NO escribir sales.clientId al facturar — esa
+  // columna significa "cliente de cuenta corriente" y getClientLedger/voidSale
+  // dependen de ella; escribirla en una venta en efectivo inyectaría una compra
+  // fantasma en la cuenta corriente sin cargo que la respalde.
+  clientId: integer("client_id").references(() => clients.id),
+  clase: comprobanteClaseEnum("clase").notNull(),
+  cbteTipo: smallint("cbte_tipo").notNull(), // 1 FA A | 6 FA B | 3 NC A | 8 NC B
+  // Participa del scope de numeración: homologación y producción son secuencias
+  // SEPARADAS en ARCA. Sin esta columna, pasar una tienda a producción
+  // calcularía el siguiente número desde filas de homologación y ARCA
+  // rechazaría todo por no correlativo.
+  ambiente: arcaAmbienteEnum("ambiente").notNull(),
+  ptoVta: integer("pto_vta").notNull(),
+  numero: integer("numero").notNull(), // CbteDesde = CbteHasta
+  estado: comprobanteEstadoEnum("estado").notNull().default("pendiente"),
+
+  // Receptor: SNAPSHOT inmutable. El cliente puede editarse después; un
+  // comprobante emitido no puede cambiar.
+  docTipo: smallint("doc_tipo").notNull(),
+  docNro: text("doc_nro").notNull(), // "0" para Consumidor Final
+  condIvaReceptor: smallint("cond_iva_receptor").notNull(),
+  receptorNombre: text("receptor_nombre").notNull(),
+  receptorDomicilio: text("receptor_domicilio"),
+
+  impTotal: numeric("imp_total", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  impNeto: numeric("imp_neto", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  impIva: numeric("imp_iva", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  impTotConc: numeric("imp_tot_conc", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  impOpEx: numeric("imp_op_ex", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  impTrib: numeric("imp_trib", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  ivaDesglose: jsonb("iva_desglose").$type<IvaDesgloseItem[]>().notNull(),
+  // OBLIGATORIA, no un lujo: FECAESolicitar es solo cabecera y NO lleva detalle
+  // de ítems, y sale_items no guarda snapshot del nombre del producto. Sin esto,
+  // reimprimir una factura de hace 6 meses haría join con products.name vivo y
+  // reescribiría en silencio un documento fiscal ya emitido.
+  lineas: jsonb("lineas").$type<ComprobanteLinea[]>().notNull(),
+
+  // mode:"string" => 'YYYY-MM-DD' sin corrimiento de UTC al leer. La fecha se
+  // calcula UNA vez al emitir, en hora de Argentina (ver fechaArca()).
+  cbteFch: date("cbte_fch", { mode: "string" }).notNull(),
+  // Token para el link público del comprobante (/c/<token>), el que se le manda
+  // al cliente por WhatsApp o por mail.
+  //
+  // Se guarda en columna y no se deriva por HMAC del id para que se pueda
+  // REVOCAR: si un link se filtró, se regenera el token y el viejo deja de
+  // servir. 32 bytes al azar en base64url — adivinarlo no es una amenaza real, y
+  // lo único que expone es ese comprobante.
+  publicToken: text("public_token"),
+  cae: text("cae"),
+  caeVto: date("cae_vto", { mode: "string" }),
+  resultado: text("resultado"), // 'A' | 'P' | 'R' crudo de ARCA
+  // Obs Y Errors unificados: un comprobante puede salir APROBADO con
+  // observaciones, así que las dos listas importan.
+  observaciones: jsonb("observaciones").$type<ComprobanteObservacion[]>(),
+  errorMsg: text("error_msg"),
+  intentos: integer("intentos").notNull().default(0),
+  autorizadoAt: timestamp("autorizado_at"),
+
+  // NC -> factura que anula. Auto-referencia: drizzle exige anotar el tipo de
+  // retorno para cortar la inferencia circular.
+  cbteAsocId: integer("cbte_asoc_id").references((): AnyPgColumn => comprobantes.id),
+  cuitEmisor: text("cuit_emisor").notNull(), // snapshot
+  // Payload EXACTO enviado, con Token/Sign REDACTADOS: son credenciales bearer
+  // de 12 h y esta columna se exporta y se respalda.
+  requestJson: jsonb("request_json"),
+  responseJson: jsonb("response_json"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (t) => [
+  index("comprobantes_sale_idx").on(t.saleId),
+  index("comprobantes_store_fch_idx").on(t.storeId, t.cbteFch), // libro IVA ventas
+  // Entrada de la ruta pública. Único: dos comprobantes no pueden compartir link.
+  uniqueIndex("comprobantes_public_token_idx").on(t.publicToken),
+]);
+
+// NOTA: además de los índices de arriba existen tres índices PARCIALES escritos
+// a mano en drizzle/0015_comprobantes_indices.sql, que drizzle-kit no modela
+// (mismo caso que cash_sessions_one_open_idx, ver el comentario más arriba):
+//
+//   comprobantes_numero_uq      UNIQUE (store,ambiente,ptoVta,cbteTipo,numero)
+//                               WHERE estado <> 'rechazado'
+//                               — un número vivo por secuencia; un rechazo lo libera.
+//   comprobantes_sale_clase_uq  UNIQUE (saleId, clase)
+//                               WHERE estado IN ('pendiente','autorizado')
+//                               — backstop de DB contra el doble clic, aunque
+//                                 falle el advisory lock. El dominio atrapa el
+//                                 23505 igual que openCashSession.
+//   comprobantes_reconciliar_idx (storeId) WHERE estado IN ('pendiente','error')
+//
 export type Store = typeof stores.$inferSelect;
 export type ImportBatch = typeof importBatches.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
@@ -329,3 +567,11 @@ export type StockMovement = typeof stockMovements.$inferSelect;
 export type CashSession = typeof cashSessions.$inferSelect;
 export type CashMovement = typeof cashMovements.$inferSelect;
 export type Commission = typeof commissions.$inferSelect;
+export type StoreFiscalConfig = typeof storeFiscalConfig.$inferSelect;
+export type ArcaCredentials = typeof arcaCredentials.$inferSelect;
+export type ArcaAccessTicket = typeof arcaAccessTickets.$inferSelect;
+export type Comprobante = typeof comprobantes.$inferSelect;
+export type NuevoComprobante = typeof comprobantes.$inferInsert;
+export type ArcaAmbiente = (typeof arcaAmbienteEnum.enumValues)[number];
+export type ComprobanteClase = (typeof comprobanteClaseEnum.enumValues)[number];
+export type ComprobanteEstado = (typeof comprobanteEstadoEnum.enumValues)[number];

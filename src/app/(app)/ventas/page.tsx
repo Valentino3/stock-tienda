@@ -6,11 +6,16 @@ import { requireStore } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money } from "@/lib/format";
 import { getSalesHistory } from "@/domain/sales-history";
+import { getComprobantesForSales } from "@/domain/fiscal-emision";
+import { getFiscalConfig } from "@/domain/fiscal-config";
+import { mensajeDeObservaciones } from "@/domain/fiscal-comprobante";
+import { CBTE_LABEL, formatearNumeroComprobante, type CbteTipo } from "@/domain/fiscal-catalogs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
 import { VoidButton } from "./void-button";
+import { InvoiceButton, type ComprobanteResumen } from "./invoice-button";
 
 const SELECT_CLASS =
   "h-9 w-44 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
@@ -22,7 +27,43 @@ const PAYMENT_LABELS: Record<string, string> = {
   cuenta: "Cuenta",
 };
 
-type Params = { from?: string; to?: string; seller?: string; all?: string; page?: string };
+type Params = { from?: string; to?: string; seller?: string; all?: string; page?: string; facturacion?: string };
+
+/** Estado de facturación de una venta, resumido para la grilla. */
+type EstadoFactura = "sin" | "autorizada" | "rechazada" | "sin_verificar" | "nc_pendiente";
+
+const FACTURA_BADGE: Record<EstadoFactura, { variant: "success" | "destructive" | "outline" | "secondary"; label: string }> = {
+  sin: { variant: "outline", label: "Sin facturar" },
+  autorizada: { variant: "success", label: "Facturada" },
+  rechazada: { variant: "destructive", label: "Rechazada" },
+  sin_verificar: { variant: "destructive", label: "Sin verificar" },
+  nc_pendiente: { variant: "destructive", label: "NC pendiente" },
+};
+
+const GRID_COLS = (conFactura: boolean) =>
+  conFactura
+    ? "grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem_7rem]"
+    : "grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem]";
+
+/**
+ * Estado de facturación de una venta.
+ *
+ * ⚠️ `nc_pendiente` es el caso que hay que gritar: una venta anulada cuya
+ * factura conserva CAE es IVA declarado que el comercio nunca cobró. El
+ * predicado se escribe contra el ESTADO y no contra un flag, así la carrera
+ * "se anula mientras la factura está en vuelo" se resuelve sola cuando la
+ * reconciliación marca la factura como autorizada.
+ */
+function resolverEstadoFactura(cbtes: ComprobanteResumen[], voided: boolean): EstadoFactura {
+  const facturaAutorizada = cbtes.find((c) => c.clase === "factura" && c.estado === "autorizado");
+  const ncViva = cbtes.find((c) => c.clase === "nota_credito" && (c.estado === "autorizado" || c.estado === "pendiente"));
+
+  if (voided && facturaAutorizada && !ncViva) return "nc_pendiente";
+  if (cbtes.some((c) => c.estado === "error" || c.estado === "pendiente")) return "sin_verificar";
+  if (facturaAutorizada) return "autorizada";
+  if (cbtes.some((c) => c.clase === "factura" && c.estado === "rechazado")) return "rechazada";
+  return "sin";
+}
 
 export default async function VentasPage({
   searchParams,
@@ -39,7 +80,11 @@ export default async function VentasPage({
   const to = params.to ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined;
   const sellerId = !isOwner ? currentUser.id : params.seller || undefined;
 
-  const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, { storeId, from, to, sellerId, page });
+  const facturacionFiltro = params.facturacion === "sin" || params.facturacion === "con" ? params.facturacion : undefined;
+
+  const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, {
+    storeId, from, to, sellerId, page, facturacion: facturacionFiltro,
+  });
 
   const itemsBySale = new Map<number, typeof itemRows>();
   for (const item of itemRows) {
@@ -53,7 +98,33 @@ export default async function VentasPage({
     ? await db.select({ id: user.id, name: user.name }).from(user).where(eq(user.storeId, storeId)).orderBy(user.name)
     : [];
 
-  const hasFilters = Boolean(params.from || params.to || params.seller);
+  // Facturación. Una sola consulta para toda la página, igual que itemsBySale.
+  const fiscalConfig = await getFiscalConfig(db, storeId);
+  const facturacionActiva = Boolean(fiscalConfig?.enabled);
+  const puedeEmitir = facturacionActiva && (isOwner || Boolean(fiscalConfig?.empleadosPuedenEmitir));
+
+  const comprobantes = facturacionActiva
+    ? await getComprobantesForSales(db, storeId, rows.map((r: any) => r.sale.id))
+    : [];
+
+  const comprobantesBySale = new Map<number, ComprobanteResumen[]>();
+  for (const c of comprobantes) {
+    const list = comprobantesBySale.get(c.saleId) ?? [];
+    list.push({
+      id: c.id,
+      clase: c.clase,
+      estado: c.estado,
+      etiqueta: `${CBTE_LABEL[c.cbteTipo as CbteTipo] ?? `Tipo ${c.cbteTipo}`} ${formatearNumeroComprobante(c.ptoVta, c.numero)}`,
+      cae: c.cae,
+      caeVto: c.caeVto,
+      ambiente: c.ambiente,
+      observaciones: mensajeDeObservaciones(c.observaciones),
+      errorMsg: c.errorMsg,
+    });
+    comprobantesBySale.set(c.saleId, list);
+  }
+
+  const hasFilters = Boolean(params.from || params.to || params.seller || params.facturacion);
   const usingDefaultWindow = !params.from && !params.to && !params.all;
 
   const today = new Date();
@@ -71,6 +142,7 @@ export default async function VentasPage({
     if (params.to) sp.set("to", params.to);
     if (params.seller) sp.set("seller", params.seller);
     if (params.all) sp.set("all", params.all);
+    if (params.facturacion) sp.set("facturacion", params.facturacion);
     sp.set("page", String(page));
     return `/ventas?${sp.toString()}`;
   }
@@ -122,6 +194,16 @@ export default async function VentasPage({
             </select>
           </label>
         )}
+        {facturacionActiva && (
+          <label className="flex flex-col gap-1.5">
+            <span className="ledger-label">Facturación</span>
+            <select name="facturacion" defaultValue={params.facturacion ?? ""} className={SELECT_CLASS}>
+              <option value="">Todas</option>
+              <option value="sin">Sin facturar</option>
+              <option value="con">Facturadas</option>
+            </select>
+          </label>
+        )}
         <Button type="submit" size="sm">
           Filtrar
         </Button>
@@ -147,18 +229,22 @@ export default async function VentasPage({
         </p>
       ) : (
         <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
-          <div className="grid grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem] gap-3 border-b border-border bg-muted/40 px-4 py-2.5">
+          <div className={`grid ${GRID_COLS(facturacionActiva)} gap-3 border-b border-border bg-muted/40 px-4 py-2.5`}>
             <span className="ledger-label">Fecha</span>
             <span className="ledger-label">N°</span>
             <span className="ledger-label">Vendedor</span>
             <span className="ledger-label">Medio</span>
             <span className="ledger-label text-right">Total</span>
             <span className="ledger-label">Estado</span>
+            {facturacionActiva && <span className="ledger-label">Factura</span>}
           </div>
           <div className="divide-y divide-border">
-            {rows.map(({ sale, sellerName }: any) => (
+            {rows.map(({ sale, sellerName }: any) => {
+              const cbtes = comprobantesBySale.get(sale.id) ?? [];
+              const estadoFactura = resolverEstadoFactura(cbtes, sale.voided);
+              return (
               <details key={sale.id} className={`group ${sale.voided ? "opacity-70" : ""}`}>
-                <summary className="grid cursor-pointer grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem] items-center gap-3 px-4 py-3 text-sm transition-colors marker:content-none hover:bg-accent">
+                <summary className={`grid cursor-pointer ${GRID_COLS(facturacionActiva)} items-center gap-3 px-4 py-3 text-sm transition-colors marker:content-none hover:bg-accent`}>
                   <span className={`figure text-muted-foreground ${sale.voided ? "line-through" : ""}`}>
                     {sale.createdAt.toLocaleString("es-AR")}
                   </span>
@@ -175,6 +261,13 @@ export default async function VentasPage({
                       <Badge variant="success">Activa</Badge>
                     )}
                   </span>
+                  {facturacionActiva && (
+                    <span>
+                      <Badge variant={FACTURA_BADGE[estadoFactura].variant}>
+                        {FACTURA_BADGE[estadoFactura].label}
+                      </Badge>
+                    </span>
+                  )}
                 </summary>
                 <div className="space-y-3 border-t border-border bg-muted/30 px-4 py-3 text-sm">
                   <ul className="space-y-1.5">
@@ -200,10 +293,27 @@ export default async function VentasPage({
                       Descuento general: −{money(sale.discountAmount)}
                     </p>
                   )}
-                  {isOwner && !sale.voided && <VoidButton saleId={sale.id} />}
+                  <div className="flex flex-wrap items-start gap-3">
+                    {isOwner && !sale.voided && (
+                      <VoidButton
+                        saleId={sale.id}
+                        facturada={cbtes.some((c) => c.clase === "factura" && c.estado === "autorizado")}
+                      />
+                    )}
+                    {facturacionActiva && (
+                      <InvoiceButton
+                        saleId={sale.id}
+                        inicial={cbtes}
+                        puedeEmitir={puedeEmitir}
+                        puedeAnular={isOwner}
+                        ventaAnulada={sale.voided}
+                      />
+                    )}
+                  </div>
                 </div>
               </details>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

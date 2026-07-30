@@ -45,6 +45,15 @@ const CLIENT_SELECT_CLASS =
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/** El tipo de documento se infiere por el largo: un campo, sin selector. */
+function docHint(raw: string): string | null {
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 0) return null;
+  if (d.length === 11) return "Se guarda como CUIT.";
+  if (d.length >= 7 && d.length <= 8) return "Se guarda como DNI.";
+  return "Tiene que ser un DNI (7-8 dígitos) o un CUIT (11).";
+}
+
 // Mismo cálculo que el server (domain/sales.ts) para el total mostrado.
 function resolveDiscount(kind: DiscountKind, value: number, base: number): number {
   if (!(value > 0)) return 0;
@@ -128,13 +137,18 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
   const [newClientOpen, setNewClientOpen] = useState(false);
   const [newClientName, setNewClientName] = useState("");
   const [newClientPhone, setNewClientPhone] = useState("");
+  const [newClientDoc, setNewClientDoc] = useState("");
   const [newClientError, setNewClientError] = useState("");
   const [newClientPending, startNewClient] = useTransition();
 
   function submitNewClient(e: React.FormEvent) {
     e.preventDefault();
     startNewClient(async () => {
-      const res = await createClientForSale(newClientName, newClientPhone || undefined);
+      const res = await createClientForSale(
+        newClientName,
+        newClientPhone || undefined,
+        newClientDoc || undefined,
+      );
       if ("error" in res && res.error) {
         setNewClientError(res.error);
         return;
@@ -466,6 +480,17 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
             <div className="space-y-2">
               <Label htmlFor="new-client-phone">Teléfono (opcional)</Label>
               <Input id="new-client-phone" value={newClientPhone} onChange={(e) => setNewClientPhone(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-client-doc">CUIT o DNI (opcional)</Label>
+              <Input
+                id="new-client-doc" inputMode="numeric" value={newClientDoc}
+                onChange={(e) => setNewClientDoc(e.target.value)}
+                placeholder="Para poder facturarle después"
+              />
+              {docHint(newClientDoc) && (
+                <p className="text-xs text-muted-foreground">{docHint(newClientDoc)}</p>
+              )}
             </div>
             {newClientError && <p className="text-sm text-destructive" role="alert">{newClientError}</p>}
             <DialogFooter>
