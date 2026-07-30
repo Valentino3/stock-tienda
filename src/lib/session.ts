@@ -62,3 +62,33 @@ export async function requireStore(): Promise<SessionUser & { storeId: number }>
   const storeId = await resolveActiveStore(u);
   return { ...u, storeId };
 }
+
+/**
+ * Guarda CSRF para route handlers que MUTAN.
+ *
+ * Las server actions traen el chequeo de origen de Next incorporado; los route
+ * handlers planos NO. Un fetch cross-site con credenciales no puede leer la
+ * respuesta, pero SÍ dispara el efecto — y acá el efecto es emitir un
+ * comprobante fiscal irreversible.
+ *
+ * Se chequea Sec-Fetch-Site (lo mandan todos los navegadores actuales) y, como
+ * respaldo, que el Origin coincida con el host de la request.
+ */
+export async function assertSameOrigin(): Promise<void> {
+  const h = await headers();
+
+  const fetchSite = h.get("sec-fetch-site");
+  if (fetchSite) {
+    if (fetchSite === "same-origin" || fetchSite === "none") return;
+    throw new Error("FORBIDDEN");
+  }
+
+  const origin = h.get("origin");
+  if (!origin) return; // no es una request de navegador (curl, health check)
+  const host = h.get("host");
+  try {
+    if (new URL(origin).host !== host) throw new Error("FORBIDDEN");
+  } catch {
+    throw new Error("FORBIDDEN");
+  }
+}

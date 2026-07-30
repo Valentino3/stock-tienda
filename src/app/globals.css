@@ -152,3 +152,29 @@
     color: var(--muted-foreground);
   }
 }
+
+/* Impresión de comprobantes fiscales.
+   El comprobante es una página HTML y no un PDF a propósito (ver
+   src/app/(app)/comprobantes/[id]/page.tsx): el navegador ya sabe imprimir y
+   ofrece "Guardar como PDF". Acá solo se saca del medio el chrome de la app. */
+@media print {
+  aside,
+  header {
+    display: none !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  body {
+    background: white !important;
+  }
+  /* Los fondos de color se imprimen: sin esto el recuadro de la letra y la
+     marca de agua de PRUEBA salen en blanco. */
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  @page {
+    margin: 8mm;
+  }
+}

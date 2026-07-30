@@ -14,6 +14,7 @@ import {
   Users,
   Contact,
   Bell,
+  ReceiptText,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/importar": Upload,
   "/reportes": BarChart3,
   "/comisiones": HandCoins,
+  "/facturacion": ReceiptText,
   "/avisos": Bell,
   "/usuarios": Users,
 };
