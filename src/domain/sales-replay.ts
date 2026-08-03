@@ -1,0 +1,354 @@
+import { and, eq, inArray } from "drizzle-orm";
+import {
+  products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements,
+} from "@/db/schema";
+import { applyStockMovement } from "@/domain/stock";
+import { calcularTotales, type Discount } from "@/domain/sales";
+import { createSyncNotification } from "@/domain/notifications";
+
+/**
+ * Sincronización de ventas cobradas sin conexión.
+ *
+ * Es un camino DISTINTO de createSale, no una variante con un flag, porque las
+ * garantías son opuestas y mezclarlas volvería frágil el camino online:
+ *
+ *   | | createSale (online) | replaySale (offline) |
+ *   |-|-|-|
+ *   | precio | lo resuelve el servidor | el capturado al cobrar |
+ *   | caja | la que esté abierta | la que estaba abierta al vender |
+ *   | fecha | now() | la del dispositivo, acotada |
+ *   | stock insuficiente | rechaza la venta | la registra y deja negativo |
+ *
+ * La asimetría del stock es deliberada: online, rechazar impide sobrevender.
+ * En el replay la mercadería ya salió del local y ya se cobró — rechazar no
+ * devuelve las unidades, solo pierde el registro de la venta. Se registra, se
+ * deja el stock en negativo y se levanta un aviso.
+ *
+ * Todo lo que sea sospechoso vuelve como `avisos` en la respuesta ADEMÁS de
+ * quedar en la bandeja de avisos: la divergencia silenciosa es el peor modo de
+ * falla de cualquier sincronización.
+ */
+
+// Fecha del dispositivo: se acepta pero acotada. Un reloj mal configurado (pila
+// de la BIOS muerta, zona horaria "arreglada" a mano) mandaría ventas al año
+// que sea y rompería todos los reportes sin fallar nunca.
+const MAX_ANTIGUEDAD_MS = 30 * 24 * 60 * 60 * 1000;
+const TOLERANCIA_FUTURO_MS = 5 * 60 * 1000;
+
+export type ClienteOffline = {
+  uid: string;
+  name: string;
+  phone?: string | null;
+  docTipo?: number | null;
+  docNro?: string | null;
+};
+
+export type VentaOffline = {
+  uid: string;
+  /** ISO del reloj del dispositivo al cobrar. */
+  capturadoEn: string;
+  /** Caja que estaba abierta al vender, NO la que esté abierta al sincronizar. */
+  cashSessionId: number;
+  paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+  items: { variantId: number; quantity: number; unitPrice: number; discount?: Discount }[];
+  saleDiscount?: Discount;
+  clientId?: number | null;
+  /** Cliente dado de alta sin conexión, que todavía no tiene id. */
+  clientUid?: string | null;
+};
+
+export type ResultadoVenta = {
+  uid: string;
+  estado: "aplicada" | "duplicada" | "error";
+  saleId?: number;
+  total?: number;
+  error?: string;
+  avisos: string[];
+};
+
+export type ResultadoCliente = {
+  uid: string;
+  estado: "aplicado" | "duplicado" | "error";
+  clientId?: number;
+  error?: string;
+};
+
+/**
+ * Alta de los clientes creados sin conexión. Corre ANTES que las ventas porque
+ * una venta a cuenta los referencia por uid. Idempotente por (storeId, uid).
+ */
+export async function replayClientes(
+  db: any,
+  input: { storeId: number; clientes: ClienteOffline[] }
+): Promise<ResultadoCliente[]> {
+  const resultados: ResultadoCliente[] = [];
+
+  for (const c of input.clientes) {
+    try {
+      const uid = c.uid?.trim();
+      if (!uid) throw new Error("UID_REQUERIDO");
+      if (!c.name?.trim()) throw new Error("EMPTY_NAME");
+
+      const [ya] = await db.select({ id: clients.id }).from(clients)
+        .where(and(eq(clients.storeId, input.storeId), eq(clients.uid, uid)));
+      if (ya) {
+        resultados.push({ uid, estado: "duplicado", clientId: ya.id });
+        continue;
+      }
+
+      const [row] = await db.insert(clients).values({
+        storeId: input.storeId,
+        uid,
+        name: c.name.trim(),
+        phone: c.phone?.trim() || null,
+        docTipo: c.docTipo ?? null,
+        docNro: c.docNro?.trim() || null,
+      }).returning({ id: clients.id });
+      resultados.push({ uid, estado: "aplicado", clientId: row.id });
+    } catch (err) {
+      // Carrera con otro envío del mismo lote: el índice único resuelve el
+      // empate y se relee el ganador.
+      const code = (err as any)?.code ?? (err as any)?.cause?.code;
+      if (code === "23505") {
+        const [ya] = await db.select({ id: clients.id }).from(clients)
+          .where(and(eq(clients.storeId, input.storeId), eq(clients.uid, c.uid)));
+        if (ya) {
+          resultados.push({ uid: c.uid, estado: "duplicado", clientId: ya.id });
+          continue;
+        }
+      }
+      resultados.push({
+        uid: c.uid,
+        estado: "error",
+        error: err instanceof Error ? err.message : "ERROR_DESCONOCIDO",
+      });
+    }
+  }
+
+  return resultados;
+}
+
+/** Acota la fecha del dispositivo a una ventana creíble alrededor del reloj del servidor. */
+function acotarFecha(capturadoEn: string, avisos: string[]): Date {
+  const ahora = Date.now();
+  const t = Date.parse(capturadoEn);
+  if (Number.isNaN(t)) {
+    avisos.push("La fecha del dispositivo era ilegible: se registró con la fecha de sincronización.");
+    return new Date(ahora);
+  }
+  if (t > ahora + TOLERANCIA_FUTURO_MS) {
+    avisos.push("El reloj del dispositivo estaba adelantado: se registró con la fecha de sincronización.");
+    return new Date(ahora);
+  }
+  if (t < ahora - MAX_ANTIGUEDAD_MS) {
+    avisos.push("El reloj del dispositivo estaba atrasado más de 30 días: se registró con la fecha de sincronización.");
+    return new Date(ahora);
+  }
+  return new Date(t);
+}
+
+/**
+ * Registra UNA venta capturada sin conexión. Una transacción por venta y no una
+ * por lote: una venta con un problema no puede frenar a las otras 199.
+ */
+export async function replaySale(
+  db: any,
+  input: { storeId: number; sellerId: string; venta: VentaOffline; clientePorUid?: Map<string, number> }
+): Promise<ResultadoVenta> {
+  const { venta, storeId, sellerId } = input;
+  const avisos: string[] = [];
+  const uid = venta.uid?.trim();
+
+  if (!uid) return { uid: venta.uid, estado: "error", error: "UID_REQUERIDO", avisos };
+  if (!venta.items?.length) return { uid, estado: "error", error: "EMPTY_SALE", avisos };
+  if (venta.items.some((i) => !Number.isInteger(i.quantity) || i.quantity <= 0)) {
+    return { uid, estado: "error", error: "INVALID_QUANTITY", avisos };
+  }
+  if (venta.items.some((i) => typeof i.unitPrice !== "number" || !(i.unitPrice >= 0))) {
+    return { uid, estado: "error", error: "INVALID_PRICE", avisos };
+  }
+
+  // Cliente: por id directo, o por uid si se creó sin conexión.
+  let clientId = venta.clientId ?? null;
+  if (venta.clientUid) {
+    const resuelto = input.clientePorUid?.get(venta.clientUid);
+    if (!resuelto) return { uid, estado: "error", error: "CLIENT_NOT_FOUND", avisos };
+    clientId = resuelto;
+  }
+  if (venta.paymentMethod === "cuenta" && !clientId) {
+    return { uid, estado: "error", error: "CLIENT_REQUIRED", avisos };
+  }
+
+  try {
+    return await db.transaction(async (tx: any) => {
+      const [ya] = await tx.select().from(sales)
+        .where(and(eq(sales.storeId, storeId), eq(sales.uid, uid))).limit(1);
+      if (ya) {
+        return { uid, estado: "duplicada" as const, saleId: ya.id, total: ya.total, avisos };
+      }
+
+      // La caja tiene que ser de esta tienda. Que esté cerrada NO bloquea: la
+      // venta ya se cobró y pertenece a esa jornada. Se avisa, porque los
+      // totales guardados al cierre ya no la incluyen.
+      const [caja] = await tx.select().from(cashSessions)
+        .where(and(eq(cashSessions.id, venta.cashSessionId), eq(cashSessions.storeId, storeId)));
+      if (!caja) throw new Error("CASH_SESSION_NOT_FOUND");
+      const cajaCerrada = caja.closedAt != null;
+
+      const variantRows = await tx
+        .select({
+          id: productVariants.id,
+          name: productVariants.name,
+          price: productVariants.price,
+          basePrice: products.basePrice,
+          productName: products.name,
+        })
+        .from(productVariants)
+        .innerJoin(products, eq(productVariants.productId, products.id))
+        .where(and(
+          eq(productVariants.storeId, storeId),
+          inArray(productVariants.id, venta.items.map((i) => i.variantId)),
+        ));
+
+      const porId = new Map(variantRows.map((v: any) => [v.id, v]));
+      if (porId.size !== new Set(venta.items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
+
+      // Precio capturado, no el actual: es el que el cliente pagó. Si el
+      // catálogo cambió mientras tanto se avisa, no se corrige.
+      for (const i of venta.items) {
+        const v: any = porId.get(i.variantId);
+        const actual = v.price ?? v.basePrice;
+        if (actual !== i.unitPrice) {
+          avisos.push(`Precio distinto en ${v.productName}: se cobró ${i.unitPrice} y hoy figura ${actual}.`);
+        }
+      }
+
+      const { lines, saleDiscount, total } = calcularTotales(
+        venta.items, (i) => i.unitPrice, venta.saleDiscount,
+      );
+
+      if (venta.paymentMethod === "cuenta") {
+        const [client] = await tx.select({ id: clients.id }).from(clients)
+          .where(and(eq(clients.id, clientId as number), eq(clients.storeId, storeId)));
+        if (!client) throw new Error("CLIENT_NOT_FOUND");
+      }
+
+      const [sale] = await tx.insert(sales).values({
+        storeId,
+        uid,
+        sellerId,
+        cashSessionId: caja.id,
+        createdAt: acotarFecha(venta.capturadoEn, avisos),
+        total,
+        discountAmount: saleDiscount,
+        paymentMethod: venta.paymentMethod,
+        clientId: venta.paymentMethod === "cuenta" ? clientId : null,
+      }).returning();
+
+      if (venta.paymentMethod === "cuenta") {
+        await tx.insert(clientAccountMovements).values({
+          storeId,
+          clientId: clientId as number,
+          type: "cargo",
+          amount: total,
+          saleId: sale.id,
+          createdBy: sellerId,
+        });
+      }
+
+      for (const line of lines) {
+        await tx.insert(saleItems).values({
+          saleId: sale.id,
+          variantId: line.variantId,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          discountAmount: line.lineDiscount,
+        });
+        const restante = await applyStockMovement(tx, {
+          variantId: line.variantId,
+          storeId,
+          type: "venta",
+          quantity: -line.quantity,
+          userId: sellerId,
+          saleId: sale.id,
+          permitirNegativo: true,
+          reason: "Venta sin conexión sincronizada",
+        });
+
+        if (restante < 0) {
+          const v: any = porId.get(line.variantId);
+          const etiqueta = v.name ? `${v.productName} — ${v.name}` : v.productName;
+          avisos.push(`Stock negativo en ${etiqueta}: quedó en ${restante}.`);
+          await createSyncNotification(tx, {
+            storeId, userId: sellerId, type: "stock_negativo",
+            label: v.productName, variantName: v.name || null,
+            variantId: line.variantId, stockAtCreate: restante,
+            message: `Stock negativo (${restante} u.) en ${etiqueta} tras sincronizar la venta #${sale.id} hecha sin conexión.`,
+          });
+        }
+      }
+
+      if (cajaCerrada) {
+        avisos.push(`La caja #${caja.id} ya estaba cerrada: sus totales no incluyen esta venta.`);
+        await createSyncNotification(tx, {
+          storeId, userId: sellerId, type: "venta_post_cierre",
+          label: `Caja #${caja.id}`,
+          message: `La venta #${sale.id} (${total}) se sincronizó después de cerrar la caja #${caja.id}. Los totales del cierre no la incluyen.`,
+        });
+      }
+
+      return { uid, estado: "aplicada" as const, saleId: sale.id, total: sale.total, avisos };
+    });
+  } catch (err) {
+    // Carrera con otro envío del mismo lote.
+    const code = (err as any)?.code ?? (err as any)?.cause?.code;
+    if (code === "23505") {
+      const [ya] = await db.select().from(sales)
+        .where(and(eq(sales.storeId, storeId), eq(sales.uid, uid))).limit(1);
+      if (ya) return { uid, estado: "duplicada", saleId: ya.id, total: ya.total, avisos };
+    }
+    return {
+      uid,
+      estado: "error",
+      error: err instanceof Error ? err.message : "ERROR_DESCONOCIDO",
+      avisos,
+    };
+  }
+}
+
+/** Lote completo: primero los clientes, después las ventas. */
+export async function replayLote(
+  db: any,
+  input: { storeId: number; sellerId: string; clientes?: ClienteOffline[]; ventas: VentaOffline[] }
+) {
+  const clientes = await replayClientes(db, { storeId: input.storeId, clientes: input.clientes ?? [] });
+  const clientePorUid = new Map(
+    clientes.filter((c) => c.clientId != null).map((c) => [c.uid, c.clientId as number]),
+  );
+
+  const ventas: ResultadoVenta[] = [];
+  for (const venta of input.ventas) {
+    ventas.push(await replaySale(db, {
+      storeId: input.storeId, sellerId: input.sellerId, venta, clientePorUid,
+    }));
+  }
+
+  return {
+    clientes,
+    ventas,
+    resumen: {
+      aplicadas: ventas.filter((v) => v.estado === "aplicada").length,
+      duplicadas: ventas.filter((v) => v.estado === "duplicada").length,
+      errores: ventas.filter((v) => v.estado === "error").length,
+      conAvisos: ventas.filter((v) => v.avisos.length > 0).length,
+    },
+  };
+}
+
+/** Ventas ya sincronizadas de esta tienda, para que el cliente limpie su cola. */
+export async function uidsYaSincronizados(db: any, storeId: number, uids: string[]): Promise<string[]> {
+  if (uids.length === 0) return [];
+  const filas = await db.select({ uid: sales.uid }).from(sales)
+    .where(and(eq(sales.storeId, storeId), inArray(sales.uid, uids)));
+  return filas.map((f: { uid: string }) => f.uid);
+}

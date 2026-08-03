@@ -5,6 +5,7 @@ import { createSale, type Discount } from "@/domain/sales";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import { createClient } from "@/domain/clients";
 import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit } from "@/domain/fiscal-catalogs";
+import { esErrorDeRed } from "@/lib/errores-red";
 
 /**
  * Alta rápida de cliente desde la pantalla de venta (para venta a cuenta).
@@ -63,11 +64,18 @@ const ERROR_MESSAGES: Record<string, string> = {
   CLIENT_NOT_FOUND: "Cliente no encontrado.",
 };
 
+// Un uid válido es el crypto.randomUUID() que arma el carrito en el cliente.
+// Se valida el formato para que el índice único no termine indexando basura
+// arbitraria mandada a mano.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function submitSale(input: {
   paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
   items: { variantId: number; quantity: number; discount?: Discount }[];
   saleDiscount?: Discount;
   clientId?: number | null;
+  // Clave de idempotencia del carrito. El cliente la conserva entre reintentos.
+  uid?: string;
 }) {
   const { id: sellerId, storeId } = await requireStore();
   const invalid = input.items.some(
@@ -78,10 +86,20 @@ export async function submitSale(input: {
       !validDiscount(i.discount)
   );
   if (invalid || !validDiscount(input.saleDiscount)) return { error: "Cantidad o descuento inválido" };
+  if (input.uid !== undefined && !UUID_RE.test(input.uid)) return { error: "Identificador de venta inválido" };
   try {
     const sale = await createSale(db, { storeId, sellerId, ...input });
-    return { ok: true as const, saleId: sale.id, total: sale.total };
+    return { ok: true as const, saleId: sale.id, total: sale.total, duplicada: sale.duplicada === true };
   } catch (e) {
+    // Un corte de red no dice si la venta entró: puede haberse perdido solo la
+    // respuesta. Se marca como reintentable para que el form reuse el uid en
+    // vez de armar un carrito nuevo (que sí cobraría dos veces).
+    if (esErrorDeRed(e)) {
+      return {
+        error: "Sin conexión con el servidor. Reintentá: si la venta ya entró, no se va a duplicar.",
+        reintentable: true as const,
+      };
+    }
     const msg = e instanceof Error ? ERROR_MESSAGES[e.message] : undefined;
     return { error: msg ?? "Error al registrar la venta" };
   }

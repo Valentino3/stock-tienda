@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Minus, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
@@ -44,6 +45,28 @@ const CLIENT_SELECT_CLASS =
   "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Carrito persistido en localStorage por tienda.
+ *
+ * Un F5, un cuelgue del navegador o un cierre accidental no pueden costar el
+ * carrito que el vendedor tiene armado con el cliente esperando enfrente. Se
+ * guarda también el `uid`: es la clave de idempotencia de esta venta, y si se
+ * regenerara al recargar, un reintento después de un corte de red cobraría dos
+ * veces (ver sales.uid en schema.ts).
+ */
+const CARRITO_VERSION = 1;
+const carritoKey = (storeId: number) => `stock-tienda:carrito:${storeId}`;
+
+type CarritoGuardado = {
+  v: number;
+  uid: string;
+  cart: CartItem[];
+  paymentMethod: PaymentMethod;
+  clientId: string;
+  saleDiscountKind: DiscountKind;
+  saleDiscountValue: number;
+};
 
 /** El tipo de documento se infiere por el largo: un campo, sin selector. */
 function docHint(raw: string): string | null {
@@ -121,7 +144,7 @@ function DiscountControl({
   );
 }
 
-export function SaleForm({ clients: initialClients }: { clients: ClientOption[] }) {
+export function SaleForm({ clients: initialClients, storeId }: { clients: ClientOption[]; storeId: number }) {
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -132,6 +155,49 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
   const [saleDiscountValue, setSaleDiscountValue] = useState(0);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
+  // Clave de idempotencia de la venta en curso. Se genera al confirmar y se
+  // MANTIENE mientras el intento falle: reintentar con el mismo uid es lo que
+  // hace que un corte de red no derive en doble cobro. Se limpia al confirmar.
+  const [saleUid, setSaleUid] = useState("");
+  const [reintentable, setReintentable] = useState(false);
+  const hidratado = useRef(false);
+
+  // Rehidratar el carrito guardado. Corre solo en cliente y una vez, para no
+  // pisar con el estado vacío del render de servidor.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(carritoKey(storeId));
+      const snap = raw ? (JSON.parse(raw) as CarritoGuardado) : null;
+      if (snap?.v === CARRITO_VERSION && Array.isArray(snap.cart) && snap.cart.length > 0) {
+        setCart(snap.cart);
+        setSaleUid(snap.uid ?? "");
+        setPaymentMethod(snap.paymentMethod ?? "efectivo");
+        setClientId(snap.clientId ?? "");
+        setSaleDiscountKind(snap.saleDiscountKind ?? "amount");
+        setSaleDiscountValue(snap.saleDiscountValue ?? 0);
+      }
+    } catch {
+      // Storage lleno, deshabilitado o con contenido de otra versión: se sigue
+      // con el carrito vacío. Nunca vale romper la pantalla de venta por esto.
+    }
+    hidratado.current = true;
+  }, [storeId]);
+
+  useEffect(() => {
+    if (!hidratado.current) return;
+    try {
+      if (cart.length === 0) {
+        localStorage.removeItem(carritoKey(storeId));
+        return;
+      }
+      const snap: CarritoGuardado = {
+        v: CARRITO_VERSION, uid: saleUid, cart, paymentMethod, clientId, saleDiscountKind, saleDiscountValue,
+      };
+      localStorage.setItem(carritoKey(storeId), JSON.stringify(snap));
+    } catch {
+      // Idem: guardar es best-effort.
+    }
+  }, [storeId, cart, saleUid, paymentMethod, clientId, saleDiscountKind, saleDiscountValue]);
 
   // Alta de cliente inline (para venta a cuenta sin salir de la pantalla).
   const [newClientOpen, setNewClientOpen] = useState(false);
@@ -246,6 +312,11 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
       setError("Elegí un cliente para la venta a cuenta.");
       return;
     }
+    // El uid sobrevive a los intentos fallidos: recién se renueva cuando una
+    // venta se confirma y el carrito se vacía.
+    const uid = saleUid || crypto.randomUUID();
+    if (uid !== saleUid) setSaleUid(uid);
+
     startTransition(async () => {
       const res = await submitSale({
         paymentMethod,
@@ -256,14 +327,25 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
           discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
         })),
         saleDiscount: saleDiscountValue > 0 ? { kind: saleDiscountKind, value: saleDiscountValue } : undefined,
+        uid,
       });
       if ("error" in res && res.error) {
         setError(res.error);
+        setReintentable("reintentable" in res && res.reintentable === true);
         return;
       }
       if ("ok" in res && res.ok) {
-        toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
+        // `duplicada` = este uid ya tenía venta: el reintento devolvió la
+        // original en vez de cobrar de nuevo. Se dice explícitamente, porque
+        // el vendedor necesita saber que no duplicó el cobro.
+        if (res.duplicada) {
+          toast.info(`La venta #${res.saleId} ya estaba registrada — ${money(res.total)}. No se cobró de nuevo.`);
+        } else {
+          toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
+        }
         setCart([]);
+        setSaleUid("");
+        setReintentable(false);
         setSaleDiscountValue(0);
         setClientId("");
         setPaymentMethod("efectivo");
@@ -449,9 +531,12 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
           </div>
 
           {error && (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {error}
-            </p>
+            <div role="alert">
+              {/* Un corte de red no es un rechazo: la venta pudo haber entrado.
+                  Se muestra en tono de aviso, no de error, y el botón pasa a
+                  "Reintentar" porque reintentar es la acción correcta. */}
+              <Notice tone={reintentable ? "warn" : "danger"}>{error}</Notice>
+            </div>
           )}
 
           <Button
@@ -461,7 +546,7 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
             disabled={pending || cart.length === 0}
             onClick={confirmSale}
           >
-            {pending ? "Confirmando…" : "Confirmar venta"}
+            {pending ? "Confirmando…" : reintentable ? "Reintentar venta" : "Confirmar venta"}
           </Button>
         </CardContent>
       </Card>

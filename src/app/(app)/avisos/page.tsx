@@ -32,7 +32,10 @@ export default async function AvisosPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader title="Avisos" description="Avisos de stock bajo que reportan los empleados." />
+      <PageHeader
+        title="Avisos"
+        description="Stock bajo reportado por los empleados y problemas detectados al sincronizar ventas hechas sin conexión."
+      />
 
       <Section label={`Pendientes (${number(open.length)})`}>
         {open.length === 0 ? (

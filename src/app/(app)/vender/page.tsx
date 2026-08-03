@@ -36,7 +36,7 @@ export default async function VenderPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Vender" description="Buscá un producto, armá el carrito y cobrá." />
-      <SaleForm clients={clientList} />
+      <SaleForm clients={clientList} storeId={storeId} />
     </div>
   );
 }
