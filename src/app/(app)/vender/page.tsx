@@ -36,7 +36,10 @@ export default async function VenderPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Vender" description="Buscá un producto, armá el carrito y cobrá." />
-      <SaleForm clients={clientList} storeId={storeId} />
+      {/* cashSessionId viaja al cliente porque una venta cobrada sin conexión
+          tiene que quedar imputada a ESTA caja, no a la que esté abierta cuando
+          se sincronice (ver src/domain/sales-replay.ts). */}
+      <SaleForm clients={clientList} storeId={storeId} cashSessionId={session.id} />
     </div>
   );
 }

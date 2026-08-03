@@ -177,4 +177,25 @@
   @page {
     margin: 8mm;
   }
+
+  /* Ticket no fiscal de una venta sin conexión (vender/ticket-offline.tsx).
+     Se imprime desde un overlay montado ENCIMA de la pantalla de venta, así
+     que hay que sacar del medio todo lo demás — si no, la hoja sale con el
+     carrito y el buscador atrás del ticket. */
+  body.imprimiendo-ticket > *:not(.ticket-overlay) {
+    display: none !important;
+  }
+  .ticket-overlay {
+    position: static !important;
+    display: block !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: none !important;
+  }
+  .ticket-overlay .no-imprimir {
+    display: none !important;
+  }
+  .ticket-hoja {
+    box-shadow: none !important;
+  }
 }
