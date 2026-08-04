@@ -141,6 +141,13 @@
       "when": 1785857749608,
       "tag": "0019_productos_uid_offline",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1785867813461,
+      "tag": "0020_business_type",
+      "breakpoints": true
     }
   ]
 }

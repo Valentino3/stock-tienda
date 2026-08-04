@@ -14,11 +14,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveProduct, saveVariant, toggleProductActive } from "./actions";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
+import type { VerticalConfig } from "@/lib/verticals";
 import type { Product } from "@/db/schema";
 
-type Props = { product?: Product; categories?: string[] };
+type Props = { product?: Product; categories?: string[]; vertical: VerticalConfig };
 
-export function ProductForm({ product, categories = [] }: Props) {
+export function ProductForm({ product, categories = [], vertical }: Props) {
+  // Los atributos de carta existen siempre en la base; acá se decide si el
+  // rubro los muestra. Un restaurante no tiene "Set" ni "Foil".
+  const atributos = vertical.atributosCatalogo;
   const isEdit = !!product;
   const [open, setOpen] = useState(false);
   const [addingVariant, setAddingVariant] = useState(false);
@@ -114,7 +118,7 @@ export function ProductForm({ product, categories = [] }: Props) {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product-category">Categoría (opcional)</Label>
-                <Input id="product-category" list="product-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Ej: Pokémon, Magic, Accesorios" />
+                <Input id="product-category" list="product-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder={vertical.etiquetas.ejemploCategoria} />
                 <datalist id="product-categories">
                   {categories.map((c) => <option key={c} value={c} />)}
                 </datalist>
@@ -181,22 +185,30 @@ export function ProductForm({ product, categories = [] }: Props) {
             <Label className="text-xs">Precio (opcional)</Label>
             <Input className="h-8 w-32" type="number" step="0.01" value={vPrice} onChange={(e) => setVPrice(e.target.value)} />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Set</Label>
-            <Input className="h-8" value={vSetName} onChange={(e) => setVSetName(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Condición</Label>
-            <Input className="h-8" list="condition-suggestions" value={vCondition} onChange={(e) => setVCondition(e.target.value)} />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Idioma</Label>
-            <Input className="h-8" list="language-suggestions" value={vLanguage} onChange={(e) => setVLanguage(e.target.value)} />
-          </div>
-          <label className="flex items-center gap-1.5 text-xs">
-            <input type="checkbox" checked={vFoil} onChange={(e) => setVFoil(e.target.checked)} />
-            Foil
-          </label>
+          {atributos.includes("setName") && (
+            <div className="space-y-1">
+              <Label className="text-xs">Set</Label>
+              <Input className="h-8" value={vSetName} onChange={(e) => setVSetName(e.target.value)} />
+            </div>
+          )}
+          {atributos.includes("condition") && (
+            <div className="space-y-1">
+              <Label className="text-xs">Condición</Label>
+              <Input className="h-8" list="condition-suggestions" value={vCondition} onChange={(e) => setVCondition(e.target.value)} />
+            </div>
+          )}
+          {atributos.includes("language") && (
+            <div className="space-y-1">
+              <Label className="text-xs">Idioma</Label>
+              <Input className="h-8" list="language-suggestions" value={vLanguage} onChange={(e) => setVLanguage(e.target.value)} />
+            </div>
+          )}
+          {atributos.includes("foil") && (
+            <label className="flex items-center gap-1.5 text-xs">
+              <input type="checkbox" checked={vFoil} onChange={(e) => setVFoil(e.target.checked)} />
+              Foil
+            </label>
+          )}
           {vError && <p className="text-xs text-destructive">{vError}</p>}
           <Button type="submit" size="sm" disabled={pending}>
             Agregar

@@ -26,6 +26,14 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Node 22 trae npm 10, y npm 10 y 11 no resuelven igual las
+      # peerDependencies OPCIONALES: vite declara `esbuild` como peer opcional,
+      # npm 11 la omite del lock y npm 10 la exige, así que `npm ci` falla con
+      # "Missing: esbuild@0.28.1 from lock file" contra un lock perfectamente
+      # válido. Se fija la versión para que CI resuelva igual que la máquina
+      # donde se genera el lock.
+      - run: npm i -g npm@11
+
       - run: npm ci
 
       - name: Typecheck

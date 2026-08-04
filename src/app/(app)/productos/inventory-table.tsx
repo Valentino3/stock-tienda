@@ -7,6 +7,7 @@ import {
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
 import type { InventoryFilters, InventoryRow, SortKey } from "@/domain/inventory";
+import type { AtributoCatalogo } from "@/lib/verticals";
 import { buildQuery } from "./filters";
 import { VariantActions } from "./variant-actions";
 
@@ -21,10 +22,13 @@ export function InventoryTable({
   rows,
   filters,
   isOwner,
+  atributos,
 }: {
   rows: InventoryRow[];
   filters: InventoryFilters;
   isOwner: boolean;
+  /** Atributos de catálogo que este rubro muestra. Ver src/lib/verticals. */
+  atributos: readonly AtributoCatalogo[];
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
@@ -42,13 +46,13 @@ export function InventoryTable({
               <SortableHead field="margin" filters={filters} align="right">Margen</SortableHead>
             )}
             <SortableHead field="supplier" filters={filters}>Proveedor</SortableHead>
-            <TableHead>Atributos</TableHead>
+            {atributos.length > 0 && <TableHead>Atributos</TableHead>}
             <TableHead className="text-right">Acciones</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.map((row) => (
-            <InventoryTableRow key={row.variantId} row={row} isOwner={isOwner} />
+            <InventoryTableRow key={row.variantId} row={row} isOwner={isOwner} atributos={atributos} />
           ))}
         </TableBody>
       </Table>
@@ -90,7 +94,9 @@ function SortableHead({
   );
 }
 
-function InventoryTableRow({ row, isOwner }: { row: InventoryRow; isOwner: boolean }) {
+function InventoryTableRow({
+  row, isOwner, atributos,
+}: { row: InventoryRow; isOwner: boolean; atributos: readonly AtributoCatalogo[] }) {
   const inactive = !row.variantActive || !row.productActive;
   const lowStock = row.stock <= row.lowStockThreshold;
 
@@ -157,18 +163,29 @@ function InventoryTableRow({ row, isOwner }: { row: InventoryRow; isOwner: boole
         {row.supplier ?? "—"}
       </TableCell>
 
-      <TableCell>
-        <div className="flex flex-wrap items-center gap-1">
-          {row.setName && (
-            <span className="max-w-[9rem] truncate text-xs text-muted-foreground" title={row.setName}>
-              {row.setName}
-            </span>
-          )}
-          {row.condition && <Badge variant="outline" className="h-5">{row.condition}</Badge>}
-          {row.foil && <Badge variant="secondary" className="h-5">Foil</Badge>}
-          {row.language && <Badge variant="outline" className="h-5">{row.language}</Badge>}
-        </div>
-      </TableCell>
+      {/* Columna de atributos de carta. Un rubro que no los declara ni siquiera
+          renderiza la celda — las columnas siguen existiendo en la base con sus
+          defaults, pero acá serían siempre vacías. */}
+      {atributos.length > 0 && (
+        <TableCell>
+          <div className="flex flex-wrap items-center gap-1">
+            {atributos.includes("setName") && row.setName && (
+              <span className="max-w-[9rem] truncate text-xs text-muted-foreground" title={row.setName}>
+                {row.setName}
+              </span>
+            )}
+            {atributos.includes("condition") && row.condition && (
+              <Badge variant="outline" className="h-5">{row.condition}</Badge>
+            )}
+            {atributos.includes("foil") && row.foil && (
+              <Badge variant="secondary" className="h-5">Foil</Badge>
+            )}
+            {atributos.includes("language") && row.language && (
+              <Badge variant="outline" className="h-5">{row.language}</Badge>
+            )}
+          </div>
+        </TableCell>
+      )}
 
       <TableCell className="text-right">
         <VariantActions

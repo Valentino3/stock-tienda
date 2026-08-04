@@ -17,6 +17,18 @@ export const stores = pgTable("stores", {
   slug: text("slug").notNull().unique(),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Rubro del comercio. Decide qué muestra la app: navegación, etiquetas y qué
+  // atributos de catálogo existen. NUNCA decide cómo se cobra — ver la nota en
+  // src/lib/verticals/index.ts.
+  //
+  // Va acá y no en una tabla aparte como store_fiscal_config: resolveActiveStore
+  // ya hace un SELECT sobre stores en CADA request, y el rubro se necesita en
+  // el 100% de ellos para armar el shell. La config fiscal se necesita en el 1%.
+  //
+  // `text` y no pgEnum: agregar un rubro tiene que ser un deploy, no una
+  // migración con ALTER TYPE. El conjunto válido lo valida el registro, que
+  // ante un valor desconocido cae a 'retail' en vez de romper la pantalla.
+  businessType: text("business_type").notNull().default("retail"),
 });
 
 // ---- better-auth ----

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { listInventory, getInventoryFacets, PAGE_SIZE } from "@/domain/inventory";
+import { verticalDe } from "@/lib/verticals";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProductForm } from "./product-form";
@@ -16,6 +17,7 @@ export default async function ProductosPage({
 }) {
   const user = await requireStore();
   const isOwner = user.role === "owner";
+  const vertical = verticalDe(user.businessType);
   // Al empleado no se le ocultan costo y margen solo en la UI: los filtros y el
   // orden por esas columnas se descartan acá. Si no, bastaba con escribir
   // ?mmin=60 en la barra de direcciones y, tanteando el valor, deducir a cuánto
@@ -33,12 +35,18 @@ export default async function ProductosPage({
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Productos"
+        title={vertical.etiquetas.productos}
         description="Inventario por variante, con filtros y orden."
-        actions={isOwner ? <ProductForm categories={facets.categories} /> : undefined}
+        actions={isOwner ? <ProductForm categories={facets.categories} vertical={vertical} /> : undefined}
       />
 
-      <InventoryFilters filters={filters} facets={facets} isOwner={isOwner} total={total} />
+      <InventoryFilters
+        filters={filters}
+        facets={facets}
+        isOwner={isOwner}
+        total={total}
+        atributos={vertical.atributosCatalogo}
+      />
 
       {rows.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
@@ -47,7 +55,12 @@ export default async function ProductosPage({
             : "No hay productos cargados todavía."}
         </p>
       ) : (
-        <InventoryTable rows={rows} filters={filters} isOwner={isOwner} />
+        <InventoryTable
+          rows={rows}
+          filters={filters}
+          isOwner={isOwner}
+          atributos={vertical.atributosCatalogo}
+        />
       )}
 
       {(filters.page > 1 || hasNextPage) && (

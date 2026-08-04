@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { stores, user as userTable } from "@/db/schema";
 import { requireSuperAdmin } from "@/lib/session";
+import { esRubroConocido } from "@/lib/verticals";
 
 function slugify(name: string): string {
   return name
@@ -18,9 +19,13 @@ function slugify(name: string): string {
     .slice(0, 48) || "tienda";
 }
 
-export async function createStore(name: string) {
+export async function createStore(name: string, businessType?: string) {
   await requireSuperAdmin();
   if (!name.trim()) return { error: "Nombre requerido" };
+  // El rubro decide qué ve la tienda. Se valida contra el registro y no contra
+  // un enum de base: agregar un rubro tiene que ser un deploy, no un ALTER TYPE.
+  const rubro = businessType ?? "retail";
+  if (!esRubroConocido(rubro)) return { error: "Rubro desconocido" };
   let slug = slugify(name);
   // Desambiguar slug si ya existe.
   const existing = await db.select({ slug: stores.slug }).from(stores);
@@ -30,7 +35,9 @@ export async function createStore(name: string) {
     while (taken.has(`${slug}-${n}`)) n++;
     slug = `${slug}-${n}`;
   }
-  const [store] = await db.insert(stores).values({ name: name.trim(), slug }).returning();
+  const [store] = await db.insert(stores)
+    .values({ name: name.trim(), slug, businessType: rubro })
+    .returning();
   revalidatePath("/admin");
   return { ok: true as const, storeId: store.id, slug: store.slug };
 }
