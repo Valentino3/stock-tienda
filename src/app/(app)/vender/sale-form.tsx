@@ -43,10 +43,15 @@ type CartItem = {
   language: string | null;
   price: number;
   stock: number;
+  /** false = no se cuenta por unidades (un plato, un servicio): no tiene tope. */
+  llevaStock: boolean;
   quantity: number;
   discountKind: DiscountKind;
   discountValue: number;
 };
+
+/** Tope de cantidad de una línea. Sin stock trackeado no hay techo. */
+const topeDe = (i: CartItem) => (i.llevaStock ? i.stock : Number.POSITIVE_INFINITY);
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "efectivo", label: "Efectivo" },
@@ -398,7 +403,10 @@ export function SaleForm({
   }
 
   function addToCart(r: SearchResult) {
-    if (r.stock <= 0) {
+    // `!== false` y no `=== true`: una fila del catálogo guardada por una
+    // versión anterior no trae el campo, y el default es que SÍ lleva stock.
+    const llevaStock = r.tracksStock !== false;
+    if (llevaStock && r.stock <= 0) {
       setError(`Sin stock: ${label(r)}`);
       return;
     }
@@ -406,9 +414,10 @@ export function SaleForm({
     setCart((prev) => {
       const existing = prev.find((i) => i.variantId === r.variantId);
       if (existing) {
-        // No superar el stock disponible.
+        // No superar el stock disponible. Lo que no lleva stock no tiene tope:
+        // se pueden vender diez milanesas aunque el número diga 0.
         return prev.map((i) =>
-          i.variantId === r.variantId ? { ...i, quantity: Math.min(i.stock, i.quantity + 1) } : i
+          i.variantId === r.variantId ? { ...i, quantity: Math.min(topeDe(i), i.quantity + 1) } : i
         );
       }
       return [
@@ -423,6 +432,7 @@ export function SaleForm({
           language: r.language,
           price: r.price ?? r.basePrice,
           stock: r.stock,
+          llevaStock,
           quantity: 1,
           discountKind: "amount" as DiscountKind,
           discountValue: 0,
@@ -437,7 +447,7 @@ export function SaleForm({
     setCart((prev) =>
       prev.map((i) =>
         i.variantId === variantId
-          ? { ...i, quantity: Math.min(i.stock, Math.max(1, i.quantity + delta)) }
+          ? { ...i, quantity: Math.min(topeDe(i), Math.max(1, i.quantity + delta)) }
           : i
       )
     );
@@ -657,7 +667,11 @@ export function SaleForm({
                       <span className="min-w-0 truncate">{label(r)}</span>
                       <span className="flex shrink-0 items-center gap-3">
                         <span className="figure font-medium">{money(r.price ?? r.basePrice)}</span>
-                        <span className="ledger-label">stock {number(r.stock)}</span>
+                        {/* Mostrar "stock 0" en un plato es ruido que además
+                            parece un error. Lo que no se cuenta, no se informa. */}
+                        {r.tracksStock !== false && (
+                          <span className="ledger-label">stock {number(r.stock)}</span>
+                        )}
                       </span>
                     </button>
                   </li>
@@ -712,12 +726,12 @@ export function SaleForm({
                         size="icon"
                         className="size-7"
                         onClick={() => step(item.variantId, 1)}
-                        disabled={item.quantity >= item.stock}
+                        disabled={item.quantity >= topeDe(item)}
                         aria-label="Sumar uno"
                       >
                         <Plus className="size-3" />
                       </Button>
-                      {item.quantity >= item.stock && (
+                      {item.llevaStock && item.quantity >= item.stock && (
                         <span className="ledger-label ml-1 text-muted-foreground">máx {number(item.stock)}</span>
                       )}
                     </div>

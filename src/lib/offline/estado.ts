@@ -187,6 +187,10 @@ function aVarianteLocal(p: ProductoNuevoLocal): VarianteCatalogo {
     variantName: null,
     sku: p.sku ?? null,
     stock: p.stock,
+    // Un producto cargado sin conexión declara una cantidad, así que lleva
+    // stock. El rubro define el default al crearlo desde la pantalla, pero
+    // acá ya viene con la cantidad que el vendedor contó.
+    tracksStock: true,
     price: null,
     basePrice: p.basePrice,
     setName: null,

@@ -137,6 +137,21 @@ export const products = pgTable("products", {
   name: text("name").notNull(),
   category: text("category"), // texto libre, opcional (agrupar/filtrar catálogo)
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  /**
+   * Si es false, vender este producto NO mueve stock: no descuenta, no lo
+   * frena el guard de existencias y no aparece en los avisos de stock bajo.
+   *
+   * Es lo que permite vender algo que no se cuenta por unidades: un plato, una
+   * hora de trabajo, un recargo por delivery, el cubierto. La alternativa
+   * —hacer `sale_items.variantId` nullable— convertía seis innerJoin en
+   * leftJoin y volvía normal el descarte silencioso de líneas que hoy es
+   * imposible. Un menú ES un catálogo: el plato necesita precio, búsqueda,
+   * reportes y descripción en la factura.
+   *
+   * `stock` y `lowStockThreshold` siguen existiendo en la fila con sus
+   * defaults; simplemente nadie los mira.
+   */
+  tracksStock: boolean("tracks_stock").notNull().default(true),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),

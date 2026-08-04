@@ -56,6 +56,8 @@ export type InventoryRow = {
   sku: string | null;
   stock: number;
   lowStockThreshold: number;
+  /** false = no se cuenta por unidades. La UI oculta stock y sus acciones. */
+  tracksStock: boolean;
   /** Precio de venta ya resuelto: el propio de la variante o el base del producto. */
   price: number;
   /** El precio propio de la variante, null si hereda. Lo necesita el form de edición. */
@@ -136,6 +138,11 @@ function buildWhere(db: any, storeId: number, f: InventoryFilters): SQL | undefi
   if (f.languages.length) conditions.push(inArray(productVariants.language, f.languages));
 
   // El umbral de stock bajo es POR PRODUCTO, no una constante global.
+  //
+  // Filtrar por estado de stock excluye lo que no lleva stock: un plato no
+  // está "sin stock", simplemente no se cuenta. Si no, filtrar por "Sin stock"
+  // en un restaurante devolvería la carta entera.
+  if (f.stockState !== undefined) conditions.push(eq(products.tracksStock, true));
   if (f.stockState === "out") conditions.push(eq(productVariants.stock, 0));
   if (f.stockState === "low") {
     conditions.push(sql`${productVariants.stock} > 0 and ${productVariants.stock} <= ${products.lowStockThreshold}`);
@@ -198,6 +205,7 @@ export async function listInventory(
         sku: productVariants.sku,
         stock: productVariants.stock,
         lowStockThreshold: products.lowStockThreshold,
+        tracksStock: products.tracksStock,
         price: effectivePrice.mapWith(Number),
         ownPrice: productVariants.price,
         priceCash: productVariants.priceCash,

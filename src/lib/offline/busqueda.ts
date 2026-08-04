@@ -14,6 +14,12 @@ export type VarianteCatalogo = {
   variantName: string | null;
   sku: string | null;
   stock: number;
+  /**
+   * Opcional a propósito: un dispositivo que venía de una versión anterior
+   * tiene filas de catálogo sin este campo. SIEMPRE leerlo como
+   * `tracksStock !== false`, nunca `=== true` — ver src/lib/offline/db.ts.
+   */
+  tracksStock?: boolean;
   price: number | null;
   basePrice: number;
   setName: string | null;

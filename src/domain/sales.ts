@@ -97,6 +97,7 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           id: productVariants.id,
           price: productVariants.price,
           basePrice: products.basePrice,
+          tracksStock: products.tracksStock,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -106,6 +107,11 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         ));
 
       const priceOf = new Map(variantRows.map((v: any) => [v.id, v.price ?? v.basePrice]));
+      // `!== false` y no `=== true`: una fila anterior a la columna, o un
+      // driver que devuelva undefined, tiene que comportarse como el default
+      // (sí descuenta). Un producto deja de mover stock solo si alguien lo
+      // pidió explícitamente.
+      const mueveStock = new Map(variantRows.map((v: any) => [v.id, v.tracksStock !== false]));
       if (priceOf.size !== new Set(input.items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
 
       const { lines, saleDiscount, total } = calcularTotales(
@@ -152,14 +158,19 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           unitPrice: line.unitPrice,
           discountAmount: line.lineDiscount,
         });
-        await applyStockMovement(tx, {
-          variantId: line.variantId,
-          storeId: input.storeId,
-          type: "venta",
-          quantity: -line.quantity,
-          userId: input.sellerId,
-          saleId: sale.id,
-        });
+        // Un producto que no lleva stock no genera movimiento. Sin esta
+        // guarda, un plato con existencias en 0 rebota con INSUFFICIENT_STOCK
+        // y el restaurante no puede vender nada.
+        if (mueveStock.get(line.variantId)) {
+          await applyStockMovement(tx, {
+            variantId: line.variantId,
+            storeId: input.storeId,
+            type: "venta",
+            quantity: -line.quantity,
+            userId: input.sellerId,
+            saleId: sale.id,
+          });
+        }
       }
       return sale;
     });
@@ -195,8 +206,23 @@ export async function voidSale(db: any, input: { saleId: number; storeId: number
       throw new Error(existing ? "ALREADY_VOIDED" : "SALE_NOT_FOUND");
     }
 
-    const items = await tx.select().from(saleItems).where(eq(saleItems.saleId, input.saleId));
+    // La guarda de stock tiene que ser SIMÉTRICA con createSale. Si al vender
+    // un plato no se descontó nada, al anular no se puede devolver nada: se
+    // estaría inventando stock de la nada, en silencio y para siempre. Es peor
+    // que el error del lado de la venta, porque ese al menos falla ruidoso.
+    const items = await tx
+      .select({
+        variantId: saleItems.variantId,
+        quantity: saleItems.quantity,
+        tracksStock: products.tracksStock,
+      })
+      .from(saleItems)
+      .innerJoin(productVariants, eq(saleItems.variantId, productVariants.id))
+      .innerJoin(products, eq(productVariants.productId, products.id))
+      .where(eq(saleItems.saleId, input.saleId));
+
     for (const item of items) {
+      if (item.tracksStock === false) continue;
       await applyStockMovement(tx, {
         variantId: item.variantId,
         storeId: input.storeId,

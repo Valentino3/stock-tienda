@@ -26,6 +26,10 @@ export async function snapshotCatalogo(db: any, storeId: number) {
       variantName: productVariants.name,
       sku: productVariants.sku,
       stock: productVariants.stock,
+      // Viaja al dispositivo para que la venta offline sepa si tiene que
+      // frenar por falta de stock o no. Ver la nota de DB_VERSION en
+      // src/lib/offline/db.ts: el default de una fila vieja es "sí descuenta".
+      tracksStock: products.tracksStock,
       price: productVariants.price,
       basePrice: products.basePrice,
       setName: productVariants.setName,
@@ -76,6 +80,10 @@ export async function searchVariants(db: any, storeId: number, term: string) {
       variantName: productVariants.name,
       sku: productVariants.sku,
       stock: productVariants.stock,
+      // Viaja al dispositivo para que la venta offline sepa si tiene que
+      // frenar por falta de stock o no. Ver la nota de DB_VERSION en
+      // src/lib/offline/db.ts: el default de una fila vieja es "sí descuenta".
+      tracksStock: products.tracksStock,
       price: productVariants.price,
       basePrice: products.basePrice,
       setName: productVariants.setName,
