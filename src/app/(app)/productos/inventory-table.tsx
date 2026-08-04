@@ -98,7 +98,9 @@ function InventoryTableRow({
   row, isOwner, atributos,
 }: { row: InventoryRow; isOwner: boolean; atributos: readonly AtributoCatalogo[] }) {
   const inactive = !row.variantActive || !row.productActive;
-  const lowStock = row.stock <= row.lowStockThreshold;
+  // Lo que no lleva stock nunca está bajo: apaga el badge rojo y también el
+  // botón de avisar al dueño y las acciones de reponer/ajustar.
+  const lowStock = row.tracksStock && row.stock <= row.lowStockThreshold;
 
   return (
     <TableRow className={cn(inactive && "opacity-55")}>
@@ -116,7 +118,11 @@ function InventoryTableRow({
       <TableCell className="figure text-xs text-muted-foreground">{row.sku ?? "—"}</TableCell>
 
       <TableCell className="text-right">
-        {lowStock ? (
+        {!row.tracksStock ? (
+          // Sin control de stock el número existe en la fila pero no significa
+          // nada. Mostrar "0" en rojo sería mentirle al dueño.
+          <span className="text-muted-foreground" title="Este producto no lleva control de stock">—</span>
+        ) : lowStock ? (
           <Badge variant="destructive" className="font-mono">{number(row.stock)}</Badge>
         ) : (
           <span className="figure">{number(row.stock)}</span>
@@ -210,6 +216,7 @@ function InventoryTableRow({
           }}
           lowStock={lowStock}
           isOwner={isOwner}
+          tracksStock={row.tracksStock}
         />
       </TableCell>
     </TableRow>

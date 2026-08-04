@@ -78,6 +78,9 @@ export async function getLowStock(db: any, storeId: number, opts: { setName?: st
     .where(and(
       eq(productVariants.storeId, storeId),
       eq(products.active, true), eq(productVariants.active, true),
+      // Lo que no lleva stock no puede tener stock bajo. Sin esto, TODOS los
+      // platos de un restaurante aparecen en rojo con 0 ≤ 3.
+      eq(products.tracksStock, true),
       sql`${productVariants.stock} <= ${products.lowStockThreshold}`,
       opts.setName ? ilike(productVariants.setName, `%${opts.setName}%`) : undefined,
     ))

@@ -364,6 +364,7 @@ export async function replaySale(
           price: productVariants.price,
           basePrice: products.basePrice,
           productName: products.name,
+          tracksStock: products.tracksStock,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -426,6 +427,13 @@ export async function replaySale(
           unitPrice: line.unitPrice,
           discountAmount: line.lineDiscount,
         });
+        // Simétrico con createSale: lo que no lleva stock no lo mueve ni acá.
+        // Sin esta guarda, cada plato vendido sin conexión dejaría el stock en
+        // negativo y levantaría un aviso al sincronizar, por un número que a
+        // nadie le importa.
+        const v: any = porId.get(line.variantId);
+        if (v.tracksStock === false) continue;
+
         const restante = await applyStockMovement(tx, {
           variantId: line.variantId,
           storeId,
@@ -438,7 +446,6 @@ export async function replaySale(
         });
 
         if (restante < 0) {
-          const v: any = porId.get(line.variantId);
           const etiqueta = v.name ? `${v.productName} — ${v.name}` : v.productName;
           avisos.push(`Stock negativo en ${etiqueta}: quedó en ${restante}.`);
           await createSyncNotification(tx, {

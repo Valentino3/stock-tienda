@@ -52,10 +52,12 @@ export function VariantActions({
   variant,
   lowStock,
   isOwner,
+  tracksStock,
 }: {
   variant: ActionableVariant;
   lowStock: boolean;
   isOwner: boolean;
+  tracksStock: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [notified, setNotified] = useState(false);
@@ -87,8 +89,15 @@ export function VariantActions({
   return (
     <div className="flex items-center justify-end gap-1">
       <EditVariantDialog variant={variant} />
-      <RestockPopover variant={variant} />
-      <AdjustPopover variant={variant} />
+      {/* Reponer y ajustar no tienen sentido sin control de stock. El servidor
+          igual los rechaza (ver llevaStock en productos/actions.ts): esconder
+          el botón es comodidad, no la validación. */}
+      {tracksStock && (
+        <>
+          <RestockPopover variant={variant} />
+          <AdjustPopover variant={variant} />
+        </>
+      )}
       <Button variant="ghost" size="xs" disabled={pending} onClick={toggleActive}>
         {variant.active ? "Desactivar" : "Activar"}
       </Button>

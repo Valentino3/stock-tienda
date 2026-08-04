@@ -14,7 +14,7 @@ import type { VarianteCatalogo } from "./busqueda";
  */
 
 const DB_NOMBRE = "stock-tienda-offline";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 export const TIENDA_META = "meta";
 export const TIENDA_CATALOGO = "catalogo";
@@ -98,7 +98,7 @@ export const hayIndexedDB = () => typeof indexedDB !== "undefined";
 function abrir(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NOMBRE, DB_VERSION);
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (evento) => {
       const db = req.result;
       if (!db.objectStoreNames.contains(TIENDA_META)) db.createObjectStore(TIENDA_META);
       if (!db.objectStoreNames.contains(TIENDA_CATALOGO)) db.createObjectStore(TIENDA_CATALOGO, { keyPath: "variantId" });
@@ -107,6 +107,27 @@ function abrir(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(TIENDA_CLIENTES_NUEVOS)) db.createObjectStore(TIENDA_CLIENTES_NUEVOS, { keyPath: "uid" });
       if (!db.objectStoreNames.contains(TIENDA_RECHAZADAS)) db.createObjectStore(TIENDA_RECHAZADAS, { keyPath: "uid" });
       if (!db.objectStoreNames.contains(TIENDA_PRODUCTOS_NUEVOS)) db.createObjectStore(TIENDA_PRODUCTOS_NUEVOS, { keyPath: "uid" });
+
+      /**
+       * v4 sumó `tracksStock` a las filas del catálogo. Este handler solo crea
+       * stores que faltan: NO migra la forma de las filas que ya están. Un
+       * dispositivo que viene de v3 conservaría un catálogo sin ese campo.
+       *
+       * Se vacían las tres tiendas que se pueden volver a bajar del servidor,
+       * para forzar un snapshot nuevo. NUNCA se tocan la cola, los clientes o
+       * productos creados sin conexión, ni las rechazadas: ahí hay plata
+       * cobrada y no está en ningún otro lado.
+       *
+       * Igual, el código que lee `tracksStock` usa `!== false`, así que un
+       * catálogo viejo se comporta como antes en vez de dejar de descontar
+       * stock. Esto es el cinturón; aquello es los tirantes.
+       */
+      if (evento.oldVersion > 0 && evento.oldVersion < 4) {
+        const tx = req.transaction;
+        for (const tienda of [TIENDA_CATALOGO, TIENDA_CLIENTES, TIENDA_META]) {
+          if (db.objectStoreNames.contains(tienda)) tx?.objectStore(tienda).clear();
+        }
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

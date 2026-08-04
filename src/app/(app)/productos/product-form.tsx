@@ -33,6 +33,11 @@ export function ProductForm({ product, categories = [], vertical }: Props) {
   const [category, setCategory] = useState(product?.category ?? "");
   const [basePrice, setBasePrice] = useState(product ? String(product.basePrice) : "");
   const [lowStockThreshold, setLowStockThreshold] = useState(product ? String(product.lowStockThreshold) : "3");
+  // Al crear, el default sale del rubro: un comercio cuenta unidades, un
+  // restaurante no. Al editar, manda lo que ya tenía el producto.
+  const [tracksStock, setTracksStock] = useState(
+    product ? product.tracksStock : vertical.defaultsProducto.tracksStock,
+  );
 
   const [vName, setVName] = useState("");
   const [vSku, setVSku] = useState("");
@@ -52,6 +57,7 @@ export function ProductForm({ product, categories = [], vertical }: Props) {
         category,
         basePrice: Number(basePrice),
         lowStockThreshold: Number(lowStockThreshold),
+        tracksStock,
       });
       if ("error" in res && res.error) setError(res.error);
       else {
@@ -135,17 +141,35 @@ export function ProductForm({ product, categories = [], vertical }: Props) {
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="product-threshold">Umbral stock bajo</Label>
-                <Input
-                  id="product-threshold"
-                  type="number"
-                  min="0"
-                  value={lowStockThreshold}
-                  onChange={(e) => setLowStockThreshold(e.target.value)}
-                  required
+              <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={tracksStock}
+                  onChange={(e) => setTracksStock(e.target.checked)}
                 />
-              </div>
+                <span>
+                  Lleva control de stock
+                  <span className="block text-xs text-muted-foreground">
+                    Destildalo para algo que no se cuenta por unidades: un plato, un
+                    servicio, un recargo. Se puede vender siempre y no aparece en los
+                    avisos de stock bajo.
+                  </span>
+                </span>
+              </label>
+              {tracksStock && (
+                <div className="space-y-2">
+                  <Label htmlFor="product-threshold">Umbral stock bajo</Label>
+                  <Input
+                    id="product-threshold"
+                    type="number"
+                    min="0"
+                    value={lowStockThreshold}
+                    onChange={(e) => setLowStockThreshold(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
               {error && <p className="text-sm text-destructive">{error}</p>}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>

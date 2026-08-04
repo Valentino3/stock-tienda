@@ -25,7 +25,10 @@ export async function notifyLowStock(variantId: number, note?: string) {
 // src/domain/cash.ts openCashSession.
 const PG_UNIQUE_VIOLATION = "23505";
 
-export async function saveProduct(input: { id?: number; name: string; category?: string; basePrice: number; lowStockThreshold: number }) {
+export async function saveProduct(input: {
+  id?: number; name: string; category?: string; basePrice: number;
+  lowStockThreshold: number; tracksStock?: boolean;
+}) {
   const { storeId } = await requireStoreOwner();
   if (
     !input.name.trim() ||
@@ -34,13 +37,18 @@ export async function saveProduct(input: { id?: number; name: string; category?:
     input.lowStockThreshold < 0
   ) return { error: "Datos inválidos" };
   const category = input.category?.trim() || null;
+  // `!== false` para que un cliente viejo que no manda el campo conserve el
+  // comportamiento de siempre.
+  const tracksStock = input.tracksStock !== false;
   if (input.id) {
     await db.update(products).set({
-      name: input.name.trim(), category, basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
+      name: input.name.trim(), category, basePrice: input.basePrice,
+      lowStockThreshold: input.lowStockThreshold, tracksStock,
     }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
     const [p] = await db.insert(products).values({
-      storeId, name: input.name.trim(), category, basePrice: input.basePrice, lowStockThreshold: input.lowStockThreshold,
+      storeId, name: input.name.trim(), category, basePrice: input.basePrice,
+      lowStockThreshold: input.lowStockThreshold, tracksStock,
     }).returning();
     // variante default para producto sin variantes reales
     await db.insert(productVariants).values({ storeId, productId: p.id, name: "" });
@@ -114,14 +122,33 @@ export async function saveVariant(input: {
   return { ok: true };
 }
 
+/**
+ * ¿Esta variante lleva stock? Se valida en el servidor y no solo escondiendo
+ * el botón: la regla del repo es que una acción no puede confiar en que la UI
+ * la haya filtrado.
+ */
+async function llevaStock(tx: any, variantId: number, storeId: number): Promise<boolean> {
+  const [row] = await tx
+    .select({ tracksStock: products.tracksStock })
+    .from(productVariants)
+    .innerJoin(products, eq(productVariants.productId, products.id))
+    .where(and(eq(productVariants.id, variantId), eq(productVariants.storeId, storeId)));
+  if (!row) throw new Error("VARIANT_NOT_FOUND");
+  return row.tracksStock !== false;
+}
+
 export async function restock(variantId: number, quantity: number) {
   const { id: userId, storeId } = await requireStoreOwner();
   if (!Number.isInteger(quantity) || quantity <= 0) return { error: "Cantidad inválida" };
   try {
     await db.transaction(async (tx) => {
+      if (!(await llevaStock(tx, variantId, storeId))) throw new Error("NO_LLEVA_STOCK");
       await applyStockMovement(tx, { variantId, storeId, type: "reposicion", quantity, userId });
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message === "NO_LLEVA_STOCK") {
+      return { error: "Este producto no lleva stock." };
+    }
     return { error: "No se pudo reponer" };
   }
   revalidatePath("/productos");
@@ -133,6 +160,7 @@ export async function adjustStock(variantId: number, newStock: number, reason: s
   if (!Number.isInteger(newStock) || newStock < 0 || !reason.trim()) return { error: "Datos inválidos" };
   try {
     await db.transaction(async (tx) => {
+      if (!(await llevaStock(tx, variantId, storeId))) throw new Error("NO_LLEVA_STOCK");
       const [v] = await tx.select().from(productVariants)
         .where(and(eq(productVariants.id, variantId), eq(productVariants.storeId, storeId)));
       if (!v) throw new Error("VARIANT_NOT_FOUND");
@@ -144,6 +172,9 @@ export async function adjustStock(variantId: number, newStock: number, reason: s
   } catch (err) {
     if (err instanceof Error && err.message === "INSUFFICIENT_STOCK") {
       return { error: "Stock insuficiente para el ajuste" };
+    }
+    if (err instanceof Error && err.message === "NO_LLEVA_STOCK") {
+      return { error: "Este producto no lleva stock." };
     }
     return { error: "No se pudo ajustar el stock" };
   }
