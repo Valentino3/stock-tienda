@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import type { InventoryFilters as Filters, StockState } from "@/domain/inventory";
+import type { AtributoCatalogo } from "@/lib/verticals";
 import { buildQuery, activeChips } from "./filters";
 
 export type Facets = {
@@ -38,11 +39,14 @@ export function InventoryFilters({
   facets,
   isOwner,
   total,
+  atributos,
 }: {
   filters: Filters;
   facets: Facets;
   isOwner: boolean;
   total: number;
+  /** Atributos de catálogo que este rubro muestra. Ver src/lib/verticals. */
+  atributos: readonly AtributoCatalogo[];
 }) {
   const router = useRouter();
   const go = (patch: Partial<Filters>) => router.push(buildQuery(filters, patch));
@@ -75,7 +79,7 @@ export function InventoryFilters({
           })}
         </div>
 
-        <FiltersPanel filters={filters} facets={facets} isOwner={isOwner} />
+        <FiltersPanel filters={filters} facets={facets} isOwner={isOwner} atributos={atributos} />
 
         <span className="ml-auto text-sm text-muted-foreground">
           {total === 1 ? "1 variante" : `${total.toLocaleString("es-AR")} variantes`}
@@ -150,10 +154,12 @@ function FiltersPanel({
   filters,
   facets,
   isOwner,
+  atributos,
 }: {
   filters: Filters;
   facets: Facets;
   isOwner: boolean;
+  atributos: readonly AtributoCatalogo[];
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -197,24 +203,30 @@ function FiltersPanel({
             selected={draft.suppliers}
             onChange={(suppliers) => patch({ suppliers })}
           />
-          <FacetList
-            label="Set"
-            options={facets.sets}
-            selected={draft.sets}
-            onChange={(sets) => patch({ sets })}
-          />
-          <FacetList
-            label="Condición"
-            options={facets.conditions}
-            selected={draft.conditions}
-            onChange={(conditions) => patch({ conditions })}
-          />
-          <FacetList
-            label="Idioma"
-            options={facets.languages}
-            selected={draft.languages}
-            onChange={(languages) => patch({ languages })}
-          />
+          {atributos.includes("setName") && (
+            <FacetList
+              label="Set"
+              options={facets.sets}
+              selected={draft.sets}
+              onChange={(sets) => patch({ sets })}
+            />
+          )}
+          {atributos.includes("condition") && (
+            <FacetList
+              label="Condición"
+              options={facets.conditions}
+              selected={draft.conditions}
+              onChange={(conditions) => patch({ conditions })}
+            />
+          )}
+          {atributos.includes("language") && (
+            <FacetList
+              label="Idioma"
+              options={facets.languages}
+              selected={draft.languages}
+              onChange={(languages) => patch({ languages })}
+            />
+          )}
 
           <Range
             label="Precio de venta"
@@ -237,12 +249,14 @@ function FiltersPanel({
             </>
           )}
 
-          <Tri
-            label="Foil"
-            value={draft.foil}
-            labels={["Solo foil", "Sin foil"]}
-            onChange={(foil) => patch({ foil })}
-          />
+          {atributos.includes("foil") && (
+            <Tri
+              label="Foil"
+              value={draft.foil}
+              labels={["Solo foil", "Sin foil"]}
+              onChange={(foil) => patch({ foil })}
+            />
+          )}
           <Tri
             label="Estado"
             value={draft.active}

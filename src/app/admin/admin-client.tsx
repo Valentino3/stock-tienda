@@ -8,18 +8,20 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
+import { RUBROS } from "@/lib/verticals";
 import { createStore, createStoreOwner, toggleStoreActive } from "./actions";
 
 export function NewStoreForm() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [name, setName] = useState("");
+  const [businessType, setBusinessType] = useState("retail");
   const [error, setError] = useState("");
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const res = await createStore(name);
+      const res = await createStore(name, businessType);
       if ("error" in res && res.error) return setError(res.error);
       setError("");
       setName("");
@@ -33,6 +35,20 @@ export function NewStoreForm() {
       <label className="flex min-w-56 flex-1 flex-col gap-1.5">
         <span className="ledger-label">Nueva tienda</span>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del comercio" required />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="ledger-label">Rubro</span>
+        {/* Decide navegación, etiquetas y qué campos de catálogo ve la tienda.
+            Se elige al crearla porque cambiarlo después reordena toda la app. */}
+        <select
+          value={businessType}
+          onChange={(e) => setBusinessType(e.target.value)}
+          className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {RUBROS.map((r) => (
+            <option key={r.key} value={r.key}>{r.nombre}</option>
+          ))}
+        </select>
       </label>
       <Button type="submit" size="sm" disabled={pending}>
         {pending ? "Creando…" : "Crear tienda"}

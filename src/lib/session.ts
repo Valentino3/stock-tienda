@@ -5,6 +5,16 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { user as userTable, stores } from "@/db/schema";
 
+/**
+ * Lo que aporta la tienda activa. Se devuelve junto al usuario para que una
+ * página o acción tenga todo en una sola llamada.
+ *
+ * `businessType` es `string` y no `BusinessType` a propósito: viene de una
+ * columna de texto y este deploy puede no conocer el valor. Quien lo consume
+ * lo pasa por `verticalDe()`, que resuelve el desconocido a retail.
+ */
+export type StoreContext = { storeId: number; businessType: string };
+
 export type SessionUser = {
   id: string;
   name: string;
@@ -38,29 +48,34 @@ export async function requireSuperAdmin(): Promise<SessionUser> {
 
 // Tienda activa: storeId no-null y stores.active. Una tienda desactivada por el
 // super-admin no puede operar (redirige a login).
-async function resolveActiveStore(u: SessionUser): Promise<number> {
+//
+// De paso trae el rubro: este SELECT ya corría en cada request, así que una
+// columna más es gratis y evita una segunda consulta en el camino más caliente
+// de la app (ver la nota en stores, src/db/schema.ts).
+async function resolveActiveStore(u: SessionUser): Promise<{ storeId: number; businessType: string }> {
   if (u.storeId == null) redirect("/login");
-  const [store] = await db.select({ active: stores.active }).from(stores).where(eq(stores.id, u.storeId));
+  const [store] = await db
+    .select({ active: stores.active, businessType: stores.businessType })
+    .from(stores)
+    .where(eq(stores.id, u.storeId));
   if (!store || !store.active) redirect("/login");
-  return u.storeId;
+  return { storeId: u.storeId, businessType: store.businessType };
 }
 
 /** Dueño CON tienda activa: owner-gate + store activa. Para rutas admin de tienda. */
-export async function requireStoreOwner(): Promise<SessionUser & { storeId: number }> {
+export async function requireStoreOwner(): Promise<SessionUser & StoreContext> {
   const u = await requireUser();
   if (u.role !== "owner") throw new Error("FORBIDDEN");
-  const storeId = await resolveActiveStore(u);
-  return { ...u, storeId };
+  return { ...u, ...(await resolveActiveStore(u)) };
 }
 
 /**
  * Exige un usuario con tienda activa (owner o employee). Puerta de entrada a
  * todo el scope de tienda: cada acción y página resuelve el storeId acá.
  */
-export async function requireStore(): Promise<SessionUser & { storeId: number }> {
+export async function requireStore(): Promise<SessionUser & StoreContext> {
   const u = await requireUser();
-  const storeId = await resolveActiveStore(u);
-  return { ...u, storeId };
+  return { ...u, ...(await resolveActiveStore(u)) };
 }
 
 /**
