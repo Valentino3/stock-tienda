@@ -1,7 +1,7 @@
 import { db } from "@/db";
 import { assertSameOrigin, requireStore } from "@/lib/session";
 import {
-  replayLote, uidsYaSincronizados,
+  puedeSincronizar, replayLote, uidsYaSincronizados,
   type ClienteOffline, type ProductoOffline, type VentaOffline,
 } from "@/domain/sales-replay";
 
@@ -34,11 +34,13 @@ const fail = (status: number, error: string) =>
 export async function POST(req: Request) {
   let storeId: number;
   let sellerId: string;
+  let esDueno: boolean;
   try {
     await assertSameOrigin();
     const u = await requireStore();
     storeId = u.storeId;
     sellerId = u.id;
+    esDueno = u.role === "owner";
   } catch {
     return fail(403, "No tenés permiso para hacer esto.");
   }
@@ -63,6 +65,10 @@ export async function POST(req: Request) {
   ) {
     return fail(413, `Mandá de a ${MAX_VENTAS_POR_LOTE} ventas como máximo.`);
   }
+
+  // Guarda por CONTENIDO, no sobre todo el endpoint. Ver puedeSincronizar.
+  const permiso = puedeSincronizar({ esDueno, cantidadProductos: productos.length });
+  if (!permiso.ok) return fail(403, permiso.error);
 
   // El vendedor de la venta offline es quien sincroniza: es el único usuario que
   // el servidor puede acreditar. Que el dispositivo mande otro id sería confiar

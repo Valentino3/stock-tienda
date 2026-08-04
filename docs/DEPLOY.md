@@ -39,9 +39,16 @@ vercel env add BETTER_AUTH_URL production
 vercel --prod
 ```
 
-> **Migraciones**: si producción usa la MISMA base Neon que `.env.local`, ya están
-> aplicadas (0007 + 0008). Si es otra base, corré `npx drizzle-kit migrate` apuntando
-> a esa `DATABASE_URL` antes del primer deploy.
+> **Migraciones**: `npm run migrate` (aplica las pendientes a la `DATABASE_URL`
+> de `.env.local`). Van SIEMPRE antes del deploy que las necesita.
+>
+> ⚠️ **Nunca `drizzle-kit push` contra Neon.** Hay cuatro índices únicos
+> parciales que `src/db/schema.ts` no modela —`cash_sessions_one_open_idx` y los
+> tres `comprobantes_*` de `drizzle/0015`— porque drizzle-kit no soporta
+> cláusulas `WHERE` en índices. `push` sincroniza la base contra el schema y los
+> borra. No falla nada en el momento: falla el día que aparecen dos cajas
+> abiertas a la vez o dos comprobantes con el mismo número, que es un problema
+> fiscal. Usá siempre `migrate`.
 
 Al terminar, Vercel imprime la URL pública (algo como `https://stock-tienda-xxxx.vercel.app`). Esa es la demo.
 

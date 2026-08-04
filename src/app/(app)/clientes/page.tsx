@@ -25,6 +25,10 @@ export default async function ClientesPage() {
         description="Cuenta corriente y fiado."
         actions={
           <Button asChild size="sm">
+            {/* `<a>` y no `<Link>` a propósito: /clientes/export es un route
+                handler que devuelve un .xlsx. Con Link, Next lo prefetchea y
+                lo navega del lado cliente, y la descarga no se dispara. */}
+            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a href="/clientes/export">Exportar Excel</a>
           </Button>
         }
