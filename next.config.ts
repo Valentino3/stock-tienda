@@ -17,6 +17,20 @@ const nextConfig: NextConfig = {
     // MAX_UPLOAD_BYTES en src/lib/import-limits.ts.
     serverActions: { bodySizeLimit: "4mb" },
   },
+  async headers() {
+    return [
+      {
+        // El service worker no se cachea nunca: si el navegador sirviera una
+        // copia vieja de /sw.js, la app quedaría clavada en una versión
+        // anterior sin forma de actualizarse. Ver public/sw.js.
+        source: "/sw.js",
+        headers: [
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

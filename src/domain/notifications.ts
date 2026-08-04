@@ -43,6 +43,42 @@ export async function createLowStockNotification(
   return row;
 }
 
+/**
+ * Aviso generado al sincronizar ventas hechas sin conexión.
+ *
+ * Va a la misma bandeja que los avisos de stock bajo porque el problema es el
+ * mismo: algo que el dueño tiene que mirar y resolver a mano. Sin esto, un
+ * stock que quedó negativo o una venta que entró después del cierre de caja
+ * serían divergencias silenciosas entre lo que pasó y lo que dice el sistema.
+ *
+ * No deduplica: cada venta sincronizada con un problema es un hecho distinto.
+ */
+export async function createSyncNotification(
+  db: any,
+  input: {
+    storeId: number;
+    userId: string;
+    type: "stock_negativo" | "venta_post_cierre" | "precio_distinto";
+    message: string;
+    label: string; // se guarda en product_name, que es NOT NULL
+    variantId?: number | null;
+    variantName?: string | null;
+    stockAtCreate?: number | null;
+  }
+) {
+  const [row] = await db.insert(notifications).values({
+    storeId: input.storeId,
+    type: input.type,
+    variantId: input.variantId ?? null,
+    productName: input.label,
+    variantName: input.variantName ?? null,
+    message: input.message,
+    stockAtCreate: input.stockAtCreate ?? null,
+    createdBy: input.userId,
+  }).returning();
+  return row;
+}
+
 export async function listNotifications(db: any, storeId: number, opts: { status?: "open" | "resolved" } = {}) {
   const conditions = [eq(notifications.storeId, storeId)];
   if (opts.status) conditions.push(eq(notifications.status, opts.status));

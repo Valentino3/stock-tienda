@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Minus, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,14 +9,26 @@ import { Label } from "@/components/ui/label";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
+import { buscarEnCatalogo, precioDe } from "@/lib/offline/busqueda";
+import { descargarSnapshot, encolar, altaClienteOffline, useEstadoOffline } from "@/lib/offline/estado";
+import type { VentaEnCola } from "@/lib/offline/db";
 import { searchVariants, submitSale, createClientForSale } from "./actions";
+import { TicketOffline } from "./ticket-offline";
 
 type SearchResult = Awaited<ReturnType<typeof searchVariants>>[number];
 type PaymentMethod = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
-type ClientOption = { id: number; name: string };
+/**
+ * Un cliente creado sin conexión todavía no tiene id: el servidor lo asigna al
+ * sincronizar. Hasta entonces se lo referencia por `uid`, y el `<select>` usa
+ * un valor con prefijo para no confundir los dos espacios de identidad.
+ */
+type ClientOption = { id: number | null; uid?: string; name: string };
+
+const valorCliente = (c: ClientOption) => (c.id != null ? `id:${c.id}` : `uid:${c.uid}`);
 type DiscountKind = "amount" | "percent";
 type CartItem = {
   variantId: number;
@@ -44,6 +56,28 @@ const CLIENT_SELECT_CLASS =
   "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Carrito persistido en localStorage por tienda.
+ *
+ * Un F5, un cuelgue del navegador o un cierre accidental no pueden costar el
+ * carrito que el vendedor tiene armado con el cliente esperando enfrente. Se
+ * guarda también el `uid`: es la clave de idempotencia de esta venta, y si se
+ * regenerara al recargar, un reintento después de un corte de red cobraría dos
+ * veces (ver sales.uid en schema.ts).
+ */
+const CARRITO_VERSION = 1;
+const carritoKey = (storeId: number) => `stock-tienda:carrito:${storeId}`;
+
+type CarritoGuardado = {
+  v: number;
+  uid: string;
+  cart: CartItem[];
+  paymentMethod: PaymentMethod;
+  clientId: string;
+  saleDiscountKind: DiscountKind;
+  saleDiscountValue: number;
+};
 
 /** El tipo de documento se infiere por el largo: un campo, sin selector. */
 function docHint(raw: string): string | null {
@@ -121,7 +155,16 @@ function DiscountControl({
   );
 }
 
-export function SaleForm({ clients: initialClients }: { clients: ClientOption[] }) {
+export function SaleForm({
+  clients: initialClients, storeId, cashSessionId,
+}: { clients: ClientOption[]; storeId: number; cashSessionId: number }) {
+  const { conectado, verificado, catalogo, clientesNuevos, meta } = useEstadoOffline();
+  // Sin conexión NO se busca contra el servidor, pero tampoco se cae: si hay
+  // catálogo guardado se busca ahí. Sin catálogo guardado no hay nada que
+  // hacer, y la UI lo dice en vez de devolver cero resultados en silencio.
+  const offline = verificado && !conectado;
+  const [ticket, setTicket] = useState<VentaEnCola | null>(null);
+  const [bajando, setBajando] = useState(false);
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -132,6 +175,49 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
   const [saleDiscountValue, setSaleDiscountValue] = useState(0);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
+  // Clave de idempotencia de la venta en curso. Se genera al confirmar y se
+  // MANTIENE mientras el intento falle: reintentar con el mismo uid es lo que
+  // hace que un corte de red no derive en doble cobro. Se limpia al confirmar.
+  const [saleUid, setSaleUid] = useState("");
+  const [reintentable, setReintentable] = useState(false);
+  const hidratado = useRef(false);
+
+  // Rehidratar el carrito guardado. Corre solo en cliente y una vez, para no
+  // pisar con el estado vacío del render de servidor.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(carritoKey(storeId));
+      const snap = raw ? (JSON.parse(raw) as CarritoGuardado) : null;
+      if (snap?.v === CARRITO_VERSION && Array.isArray(snap.cart) && snap.cart.length > 0) {
+        setCart(snap.cart);
+        setSaleUid(snap.uid ?? "");
+        setPaymentMethod(snap.paymentMethod ?? "efectivo");
+        setClientId(snap.clientId ?? "");
+        setSaleDiscountKind(snap.saleDiscountKind ?? "amount");
+        setSaleDiscountValue(snap.saleDiscountValue ?? 0);
+      }
+    } catch {
+      // Storage lleno, deshabilitado o con contenido de otra versión: se sigue
+      // con el carrito vacío. Nunca vale romper la pantalla de venta por esto.
+    }
+    hidratado.current = true;
+  }, [storeId]);
+
+  useEffect(() => {
+    if (!hidratado.current) return;
+    try {
+      if (cart.length === 0) {
+        localStorage.removeItem(carritoKey(storeId));
+        return;
+      }
+      const snap: CarritoGuardado = {
+        v: CARRITO_VERSION, uid: saleUid, cart, paymentMethod, clientId, saleDiscountKind, saleDiscountValue,
+      };
+      localStorage.setItem(carritoKey(storeId), JSON.stringify(snap));
+    } catch {
+      // Idem: guardar es best-effort.
+    }
+  }, [storeId, cart, saleUid, paymentMethod, clientId, saleDiscountKind, saleDiscountValue]);
 
   // Alta de cliente inline (para venta a cuenta sin salir de la pantalla).
   const [newClientOpen, setNewClientOpen] = useState(false);
@@ -144,6 +230,32 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
   function submitNewClient(e: React.FormEvent) {
     e.preventDefault();
     startNewClient(async () => {
+      if (offline) {
+        if (!newClientName.trim()) {
+          setNewClientError("Nombre requerido");
+          return;
+        }
+        // Sin conexión no se puede validar el CUIT contra nada ni pedirle un id
+        // al servidor. Se guarda con uid y el replay lo crea al sincronizar
+        // (ver replayClientes en src/domain/sales-replay.ts).
+        const doc = newClientDoc.replace(/\D/g, "");
+        const uid = crypto.randomUUID();
+        await altaClienteOffline({
+          uid,
+          name: newClientName.trim(),
+          phone: newClientPhone.trim() || null,
+          docNro: doc || null,
+          docTipo: doc ? (doc.length === 11 ? 80 : 96) : null,
+        });
+        setClientId(`uid:${uid}`);
+        setNewClientOpen(false);
+        setNewClientName("");
+        setNewClientPhone("");
+        setNewClientDoc("");
+        setNewClientError("");
+        return;
+      }
+
       const res = await createClientForSale(
         newClientName,
         newClientPhone || undefined,
@@ -155,7 +267,7 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
       }
       if ("ok" in res && res.ok) {
         setClients((prev) => [...prev, { id: res.id, name: res.name }].sort((a, b) => a.name.localeCompare(b.name)));
-        setClientId(String(res.id));
+        setClientId(`id:${res.id}`);
         setNewClientOpen(false);
         setNewClientName("");
         setNewClientPhone("");
@@ -168,12 +280,39 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
     const handle = setTimeout(() => {
       if (term.trim().length < 2) {
         setResults([]);
-      } else {
-        searchVariants(term).then(setResults);
+        return;
       }
+      if (offline) {
+        setResults(catalogo ? buscarEnCatalogo(catalogo, term) : []);
+        return;
+      }
+      // El debounce de 300 ms existe por el viaje al servidor; offline la
+      // búsqueda es en memoria y responde igual de rápido igualmente.
+      searchVariants(term).then(setResults).catch(() => setResults([]));
     }, 300);
     return () => clearTimeout(handle);
-  }, [term]);
+  }, [term, offline, catalogo]);
+
+  // Los clientes creados sin conexión se pueden elegir enseguida, antes de
+  // existir en el servidor. Se mezclan con los que vinieron del snapshot.
+  const clientesDisponibles: ClientOption[] = [
+    ...clients,
+    ...clientesNuevos.map((c) => ({ id: null, uid: c.uid, name: `${c.name} (sin sincronizar)` })),
+  ].sort((a, b) => a.name.localeCompare(b.name));
+
+  async function prepararOffline() {
+    setBajando(true);
+    const res = await descargarSnapshot();
+    setBajando(false);
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    toast.success(`Catálogo guardado en este dispositivo: ${number(res.variantes)} producto(s).`);
+    if (res.truncado) {
+      toast.warning("El catálogo es más grande que el máximo que se puede guardar. Faltan productos.");
+    }
+  }
 
   function addToCart(r: SearchResult) {
     if (r.stock <= 0) {
@@ -246,24 +385,57 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
       setError("Elegí un cliente para la venta a cuenta.");
       return;
     }
+    // El uid sobrevive a los intentos fallidos: recién se renueva cuando una
+    // venta se confirma y el carrito se vacía.
+    const uid = saleUid || crypto.randomUUID();
+    if (uid !== saleUid) setSaleUid(uid);
+
+    const [tipoCliente, valorId] = clientId.split(":");
+    const clienteIdNumerico = tipoCliente === "id" ? Number(valorId) : null;
+    const clienteUid = tipoCliente === "uid" ? valorId : null;
+
+    if (offline) {
+      void guardarVentaOffline(uid, clienteIdNumerico, clienteUid);
+      return;
+    }
+
+    // Volvió la conexión pero el cliente elegido todavía es uno creado sin
+    // conexión: no existe en el servidor, así que la venta a cuenta no tiene a
+    // quién imputarle la deuda. Se sincroniza primero.
+    if (paymentMethod === "cuenta" && clienteUid) {
+      setError("Ese cliente todavía no se sincronizó. Sincronizá las ventas pendientes y volvé a intentar.");
+      return;
+    }
+
     startTransition(async () => {
       const res = await submitSale({
         paymentMethod,
-        clientId: paymentMethod === "cuenta" ? Number(clientId) : undefined,
+        clientId: paymentMethod === "cuenta" ? clienteIdNumerico ?? undefined : undefined,
         items: cart.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
           discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
         })),
         saleDiscount: saleDiscountValue > 0 ? { kind: saleDiscountKind, value: saleDiscountValue } : undefined,
+        uid,
       });
       if ("error" in res && res.error) {
         setError(res.error);
+        setReintentable("reintentable" in res && res.reintentable === true);
         return;
       }
       if ("ok" in res && res.ok) {
-        toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
+        // `duplicada` = este uid ya tenía venta: el reintento devolvió la
+        // original en vez de cobrar de nuevo. Se dice explícitamente, porque
+        // el vendedor necesita saber que no duplicó el cobro.
+        if (res.duplicada) {
+          toast.info(`La venta #${res.saleId} ya estaba registrada — ${money(res.total)}. No se cobró de nuevo.`);
+        } else {
+          toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
+        }
         setCart([]);
+        setSaleUid("");
+        setReintentable(false);
         setSaleDiscountValue(0);
         setClientId("");
         setPaymentMethod("efectivo");
@@ -271,13 +443,89 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
     });
   }
 
+  /**
+   * Venta sin conexión: se guarda en el dispositivo y se sincroniza sola
+   * cuando vuelva internet.
+   *
+   * Se imputa a `cashSessionId`: la caja que estaba abierta cuando se cobró.
+   * Si al sincronizar hay otra caja abierta —o ninguna— la venta igual entra
+   * en la suya, que es lo que hace que el arqueo del día cierre.
+   *
+   * El precio unitario viaja capturado: es el que el cliente pagó. El servidor
+   * lo respeta y avisa si el catálogo cambió mientras tanto.
+   */
+  async function guardarVentaOffline(uid: string, clienteId: number | null, clienteUid: string | null) {
+    const venta: VentaEnCola = {
+      uid,
+      capturadoEn: new Date().toISOString(),
+      cashSessionId: meta?.cashSessionId ?? cashSessionId,
+      paymentMethod,
+      items: cart.map((i) => ({
+        variantId: i.variantId,
+        quantity: i.quantity,
+        unitPrice: i.price,
+        discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
+        productName: i.productName,
+        variantName: i.variantName,
+      })),
+      saleDiscount: saleDiscountValue > 0 ? { kind: saleDiscountKind, value: saleDiscountValue } : undefined,
+      clientId: paymentMethod === "cuenta" ? clienteId : null,
+      clientUid: paymentMethod === "cuenta" ? clienteUid : null,
+      total,
+      intentos: 0,
+    };
+
+    try {
+      const nuevo = clienteUid
+        ? clientesNuevos.find((c) => c.uid === clienteUid)
+        : undefined;
+      await encolar(venta, nuevo);
+    } catch {
+      // No se pudo escribir en el dispositivo: es lo único que puede hacer
+      // perder la venta, así que NO se limpia el carrito.
+      setError("No se pudo guardar la venta en este dispositivo. Anotala aparte antes de seguir.");
+      return;
+    }
+
+    toast.success(`Venta guardada sin conexión — ${money(total)}. Se sincroniza al volver internet.`);
+    setTicket(venta);
+    setCart([]);
+    setSaleUid("");
+    setReintentable(false);
+    setSaleDiscountValue(0);
+    setClientId("");
+    setPaymentMethod("efectivo");
+  }
+
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[1fr_360px]">
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between gap-4">
           <CardTitle className="text-base">Buscar producto</CardTitle>
+          <div className="text-right">
+            <Button type="button" variant="outline" size="sm" disabled={bajando || offline} onClick={prepararOffline}>
+              {bajando ? "Descargando…" : catalogo ? "Actualizar catálogo offline" : "Preparar para vender sin conexión"}
+            </Button>
+            {meta && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Catálogo guardado el {new Date(meta.generadoEn).toLocaleString("es-AR")}
+              </p>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {offline && !catalogo && (
+            <Notice tone="danger">
+              Este dispositivo no tiene el catálogo guardado, así que no se puede buscar
+              sin conexión. Cuando vuelva internet, tocá «Preparar para vender sin conexión».
+            </Notice>
+          )}
+          {offline && catalogo && (
+            <Notice tone="warn">
+              Buscando en el catálogo guardado en este dispositivo. El stock que se muestra
+              es del último momento con conexión.
+            </Notice>
+          )}
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -437,8 +685,8 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
                   aria-label="Cliente"
                 >
                   <option value="">Elegí cliente…</option>
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
+                  {clientesDisponibles.map((c) => (
+                    <option key={valorCliente(c)} value={valorCliente(c)}>{c.name}</option>
                   ))}
                 </select>
                 <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setNewClientOpen(true)}>
@@ -449,9 +697,12 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
           </div>
 
           {error && (
-            <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
-              {error}
-            </p>
+            <div role="alert">
+              {/* Un corte de red no es un rechazo: la venta pudo haber entrado.
+                  Se muestra en tono de aviso, no de error, y el botón pasa a
+                  "Reintentar" porque reintentar es la acción correcta. */}
+              <Notice tone={reintentable ? "warn" : "danger"}>{error}</Notice>
+            </div>
           )}
 
           <Button
@@ -461,8 +712,19 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
             disabled={pending || cart.length === 0}
             onClick={confirmSale}
           >
-            {pending ? "Confirmando…" : "Confirmar venta"}
+            {pending
+              ? "Confirmando…"
+              : reintentable
+                ? "Reintentar venta"
+                : offline
+                  ? "Cobrar sin conexión"
+                  : "Confirmar venta"}
           </Button>
+          {offline && cart.length > 0 && (
+            <p className="text-center text-xs text-muted-foreground">
+              Se guarda en este dispositivo y se sincroniza al volver internet.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -500,6 +762,8 @@ export function SaleForm({ clients: initialClients }: { clients: ClientOption[] 
           </form>
         </DialogContent>
       </Dialog>
+
+      <TicketOffline venta={ticket} onClose={() => setTicket(null)} />
     </div>
   );
 }

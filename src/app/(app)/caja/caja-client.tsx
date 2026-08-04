@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { StatTile } from "@/components/ui/stat-tile";
 import { money, number } from "@/lib/format";
+import { useEstadoOffline } from "@/lib/offline/estado";
 import { openSession, closeSession, addGasto, addEgreso } from "./actions";
 
 const METHOD_LABEL: Record<string, string> = {
@@ -35,6 +36,7 @@ type Props = {
 export function CajaClient({ session, openedByName, totals, movements, isOwner }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const { pendientes } = useEstadoOffline();
 
   const [openingCash, setOpeningCash] = useState("");
   const [openError, setOpenError] = useState("");
@@ -81,6 +83,17 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
 
   function submitClose(e: React.FormEvent) {
     e.preventDefault();
+    // Cerrar con ventas sin sincronizar deja un arqueo que no cuadra: los
+    // totales del cierre se calculan sobre lo que hay en el servidor, y esas
+    // ventas todavía no llegaron. Se sincroniza primero. El servidor igual
+    // acepta la venta tardía y levanta un aviso (ver sales-replay.ts), pero
+    // el número del cierre ya quedó mal.
+    if (pendientes > 0) {
+      setCloseError(
+        `Hay ${pendientes} venta(s) sin sincronizar. Sincronizalas antes de cerrar la caja para que el arqueo cuadre.`,
+      );
+      return;
+    }
     startTransition(async () => {
       const res = await closeSession(Number(countedCash), notes);
       if ("error" in res && res.error) {

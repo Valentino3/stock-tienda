@@ -1,6 +1,51 @@
 import { and, eq, ilike, inArray, or } from "drizzle-orm";
 import { products, productVariants } from "@/db/schema";
 
+/**
+ * Tope de variantes que se bajan al dispositivo. 20k cubre con holgura los
+ * catálogos reales (los docs hablan de "miles") y acota el peso: a ~150 bytes
+ * por fila son unos 3 MB de JSON. Si una tienda lo supera, el snapshot avisa
+ * en vez de mandar un catálogo cortado en silencio.
+ */
+export const MAX_VARIANTES_SNAPSHOT = 20_000;
+
+/**
+ * Catálogo completo para vender sin conexión. Mismas columnas que
+ * searchVariants: el resultado se guarda tal cual en el dispositivo y la
+ * pantalla de venta no distingue de dónde salió cada fila.
+ *
+ * El `stock` viaja pero es una foto: sirve para avisar en el momento, no para
+ * garantizar nada. La garantía real la da el índice del servidor al sincronizar
+ * (ver src/domain/sales-replay.ts).
+ */
+export async function snapshotCatalogo(db: any, storeId: number) {
+  const filas = await db
+    .select({
+      variantId: productVariants.id,
+      productName: products.name,
+      variantName: productVariants.name,
+      sku: productVariants.sku,
+      stock: productVariants.stock,
+      price: productVariants.price,
+      basePrice: products.basePrice,
+      setName: productVariants.setName,
+      condition: productVariants.condition,
+      foil: productVariants.foil,
+      language: productVariants.language,
+    })
+    .from(productVariants)
+    .innerJoin(products, eq(productVariants.productId, products.id))
+    .where(and(
+      eq(productVariants.storeId, storeId),
+      eq(products.active, true), eq(productVariants.active, true),
+    ))
+    .orderBy(products.name)
+    .limit(MAX_VARIANTES_SNAPSHOT + 1);
+
+  const truncado = filas.length > MAX_VARIANTES_SNAPSHOT;
+  return { variantes: truncado ? filas.slice(0, MAX_VARIANTES_SNAPSHOT) : filas, truncado };
+}
+
 export async function searchVariants(db: any, storeId: number, term: string) {
   const t = term.trim();
   if (t.length < 2) return [];

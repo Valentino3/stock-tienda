@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Stock Tienda">
+  <rect width="512" height="512" rx="112" fill="#3b5bd6"/>
+  <!-- Toldo de comercio: tres paños. -->
+  <path d="M128 176h256v40a40 40 0 0 1-40 40 40 40 0 0 1-40-40 40 40 0 0 1-40 40 40 40 0 0 1-40-40 40 40 0 0 1-40 40 40 40 0 0 1-40-40z" fill="#ffffff" opacity=".92"/>
+  <!-- Cuerpo del local. -->
+  <path d="M160 288h192v112a16 16 0 0 1-16 16H176a16 16 0 0 1-16-16z" fill="#ffffff" opacity=".92"/>
+  <rect x="216" y="328" width="80" height="88" rx="8" fill="#3b5bd6"/>
+</svg>

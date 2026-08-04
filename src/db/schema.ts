@@ -195,6 +195,12 @@ export const cashSessions = pgTable("cash_sessions", {
 export const sales = pgTable("sales", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   storeId: integer("store_id").notNull().references(() => stores.id),
+  // Clave de idempotencia generada por el navegador (crypto.randomUUID) al
+  // armar el carrito. Si la respuesta de submitSale se pierde por un corte de
+  // red, el vendedor reintenta con el MISMO uid y createSale devuelve la venta
+  // que ya había entrado en vez de cobrar dos veces. null para las ventas
+  // anteriores a esta columna y para cualquier alta que no venga del mostrador.
+  uid: text("uid"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   sellerId: text("seller_id").notNull().references(() => user.id),
   cashSessionId: integer("cash_session_id").notNull().references(() => cashSessions.id),
@@ -207,7 +213,14 @@ export const sales = pgTable("sales", {
   voided: boolean("voided").notNull().default(false),
   voidedAt: timestamp("voided_at"),
   voidedBy: text("voided_by").references(() => user.id),
-}, (t) => [index("sales_store_idx").on(t.storeId)]);
+}, (t) => [
+  index("sales_store_idx").on(t.storeId),
+  // Backstop en DB de la idempotencia: dos submits con el mismo uid no pueden
+  // producir dos ventas ni aunque corran en paralelo. No necesita cláusula
+  // WHERE porque Postgres trata cada NULL como distinto, así que las ventas
+  // sin uid conviven sin chocar (mismo criterio que product_variants.sku).
+  uniqueIndex("sales_store_uid_idx").on(t.storeId, t.uid),
+]);
 
 export const saleItems = pgTable("sale_items", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -264,6 +277,11 @@ export const commissions = pgTable("commissions", {
 export const clients = pgTable("clients", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   storeId: integer("store_id").notNull().references(() => stores.id),
+  // Identidad estable de un cliente dado de alta sin conexión: el dispositivo
+  // no puede conocer el id que va a asignar la secuencia, así que las ventas
+  // offline lo referencian por uid y el replay lo resuelve al sincronizar.
+  // Mismo criterio que sales.uid.
+  uid: text("uid"),
   name: text("name").notNull(),
   phone: text("phone"),
   // Para mandarle el comprobante. Opcional: el teléfono ya alcanza para
@@ -286,6 +304,10 @@ export const clients = pgTable("clients", {
   // Buscar cliente por CUIT/DNI al facturar. NO único: los duplicados de carga
   // son reales y una restricción única rompería createClient.
   index("clients_store_doc_idx").on(t.storeId, t.docNro),
+  // Sí único, a diferencia del índice de documento: reenviar el mismo lote de
+  // sincronización no puede crear dos veces el mismo cliente. Los NULL no
+  // chocan entre sí, así que las altas normales no se ven afectadas.
+  uniqueIndex("clients_store_uid_idx").on(t.storeId, t.uid),
 ]);
 
 // Movimientos de cuenta: cargo (venta a cuenta) suma deuda, pago la baja.

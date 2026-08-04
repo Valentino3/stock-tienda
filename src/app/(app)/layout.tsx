@@ -4,6 +4,7 @@ import { stores } from "@/db/schema";
 import { requireStore } from "@/lib/session";
 import { APP_NAME } from "@/lib/config";
 import { countOpenNotifications } from "@/domain/notifications";
+import { BarraOffline } from "@/components/offline/barra-offline";
 import { AppSidebar, type NavGroup } from "./app-sidebar";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -50,7 +51,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         storeName={storeName}
       />
       <main className="flex-1 px-4 py-6 lg:px-10 lg:py-8">
-        <div className="mx-auto w-full max-w-6xl space-y-8">{children}</div>
+        <div className="mx-auto w-full max-w-6xl space-y-8">
+          <BarraOffline />
+          {children}
+        </div>
       </main>
     </div>
   );
