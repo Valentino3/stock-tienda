@@ -134,6 +134,13 @@
       "when": 1785768712257,
       "tag": "0018_clients_uid_replay",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1785857749608,
+      "tag": "0019_productos_uid_offline",
+      "breakpoints": true
     }
   ]
 }

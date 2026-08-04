@@ -74,10 +74,30 @@ describe("planificarLimpieza", () => {
     expect(plan.clienteUidsResueltos).toEqual([]);
   });
 
-  it("tolera una respuesta sin ventas ni clientes", () => {
+  it("tolera una respuesta sin ventas, clientes ni productos", () => {
     expect(planificarLimpieza({})).toEqual({
-      uidsResueltos: [], clienteUidsResueltos: [], rechazadas: [], avisos: [],
+      uidsResueltos: [], clienteUidsResueltos: [], productoUidsResueltos: [],
+      rechazadas: [], avisos: [],
     });
+  });
+
+  it("resuelve los productos creados y los que ya existían", () => {
+    const plan = planificarLimpieza({
+      productos: [
+        { uid: "p1", estado: "aplicado", variantId: 10 },
+        { uid: "p2", estado: "duplicado", variantId: 11 },
+        { uid: "p3", estado: "error", error: "EMPTY_NAME" },
+      ],
+    });
+    expect(plan.productoUidsResueltos).toEqual(["p1", "p2"]);
+  });
+
+  it("los avisos de productos llegan junto con los de ventas", () => {
+    const plan = planificarLimpieza({
+      productos: [{ uid: "p1", estado: "aplicado", avisos: ['El SKU "X" ya existía.'] }],
+      ventas: [{ uid: "v1", estado: "aplicada", saleId: 3, avisos: ["Stock negativo."] }],
+    });
+    expect(plan.avisos.map((a) => a.uid)).toEqual(["p1", "v1"]);
   });
 });
 

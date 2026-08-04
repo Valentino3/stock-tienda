@@ -1,6 +1,9 @@
 import { db } from "@/db";
 import { assertSameOrigin, requireStore } from "@/lib/session";
-import { replayLote, uidsYaSincronizados, type ClienteOffline, type VentaOffline } from "@/domain/sales-replay";
+import {
+  replayLote, uidsYaSincronizados,
+  type ClienteOffline, type ProductoOffline, type VentaOffline,
+} from "@/domain/sales-replay";
 
 /**
  * Sincronización de ventas cobradas sin conexión.
@@ -40,7 +43,7 @@ export async function POST(req: Request) {
     return fail(403, "No tenés permiso para hacer esto.");
   }
 
-  let body: { ventas?: VentaOffline[]; clientes?: ClienteOffline[] };
+  let body: { ventas?: VentaOffline[]; clientes?: ClienteOffline[]; productos?: ProductoOffline[] };
   try {
     body = await req.json();
   } catch {
@@ -49,15 +52,22 @@ export async function POST(req: Request) {
 
   const ventas = Array.isArray(body.ventas) ? body.ventas : [];
   const clientes = Array.isArray(body.clientes) ? body.clientes : [];
-  if (ventas.length === 0 && clientes.length === 0) return fail(400, "El lote está vacío.");
-  if (ventas.length > MAX_VENTAS_POR_LOTE || clientes.length > MAX_CLIENTES_POR_LOTE) {
+  const productos = Array.isArray(body.productos) ? body.productos : [];
+  if (ventas.length === 0 && clientes.length === 0 && productos.length === 0) {
+    return fail(400, "El lote está vacío.");
+  }
+  if (
+    ventas.length > MAX_VENTAS_POR_LOTE ||
+    clientes.length > MAX_CLIENTES_POR_LOTE ||
+    productos.length > MAX_CLIENTES_POR_LOTE
+  ) {
     return fail(413, `Mandá de a ${MAX_VENTAS_POR_LOTE} ventas como máximo.`);
   }
 
   // El vendedor de la venta offline es quien sincroniza: es el único usuario que
   // el servidor puede acreditar. Que el dispositivo mande otro id sería confiar
   // en el cliente para atribuir ventas.
-  const resultado = await replayLote(db, { storeId, sellerId, clientes, ventas });
+  const resultado = await replayLote(db, { storeId, sellerId, productos, clientes, ventas });
 
   // 207: el lote se procesó pero no todo entró. El cliente tiene que mirar
   // venta por venta, no asumir éxito global.

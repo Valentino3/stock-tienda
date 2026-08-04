@@ -14,13 +14,15 @@ import type { VarianteCatalogo } from "./busqueda";
  */
 
 const DB_NOMBRE = "stock-tienda-offline";
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 
 export const TIENDA_META = "meta";
 export const TIENDA_CATALOGO = "catalogo";
 export const TIENDA_CLIENTES = "clientes";
 export const TIENDA_COLA = "cola";
 export const TIENDA_CLIENTES_NUEVOS = "clientesNuevos";
+export const TIENDA_RECHAZADAS = "rechazadas";
+export const TIENDA_PRODUCTOS_NUEVOS = "productosNuevos";
 
 export type MetaSnapshot = {
   storeId: number;
@@ -37,6 +39,36 @@ export type ClienteNuevoLocal = {
   phone?: string | null;
   docTipo?: number | null;
   docNro?: string | null;
+};
+
+/**
+ * Venta que el servidor rechazó al sincronizar.
+ *
+ * Se guarda en el dispositivo en vez de solo mostrarse: es plata cobrada que NO
+ * quedó registrada en ningún lado, y si el aviso viviera únicamente en memoria
+ * se lo comería la primera recarga. Sale de acá cuando una persona la resuelve
+ * a mano y la descarta.
+ */
+export type VentaRechazada = VentaEnCola & { error: string; rechazadaEn: string };
+
+/**
+ * Producto cargado sin conexión, típicamente mercadería que apareció en una
+ * feria y no está en el catálogo.
+ *
+ * `localVariantId` es un id NEGATIVO y persistido. Existe para que el carrito,
+ * la búsqueda y el ticket sigan trabajando con un `variantId` numérico como
+ * siempre, sin ramas especiales en toda la UI. Las secuencias de Postgres
+ * arrancan en 1, así que un negativo nunca puede chocar con un id real; al
+ * armar el payload se traduce a `variantUid`.
+ */
+export type ProductoNuevoLocal = {
+  uid: string;
+  variantUid: string;
+  localVariantId: number;
+  name: string;
+  basePrice: number;
+  stock: number;
+  sku?: string | null;
 };
 
 export type VentaEnCola = {
@@ -73,6 +105,8 @@ function abrir(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(TIENDA_CLIENTES)) db.createObjectStore(TIENDA_CLIENTES, { keyPath: "id" });
       if (!db.objectStoreNames.contains(TIENDA_COLA)) db.createObjectStore(TIENDA_COLA, { keyPath: "uid" });
       if (!db.objectStoreNames.contains(TIENDA_CLIENTES_NUEVOS)) db.createObjectStore(TIENDA_CLIENTES_NUEVOS, { keyPath: "uid" });
+      if (!db.objectStoreNames.contains(TIENDA_RECHAZADAS)) db.createObjectStore(TIENDA_RECHAZADAS, { keyPath: "uid" });
+      if (!db.objectStoreNames.contains(TIENDA_PRODUCTOS_NUEVOS)) db.createObjectStore(TIENDA_PRODUCTOS_NUEVOS, { keyPath: "uid" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -139,6 +173,46 @@ export const leerCatalogo = () => leerTodo<VarianteCatalogo>(TIENDA_CATALOGO);
 export const leerClientes = () => leerTodo<ClienteLocal>(TIENDA_CLIENTES);
 export const leerCola = () => leerTodo<VentaEnCola>(TIENDA_COLA);
 export const leerClientesNuevos = () => leerTodo<ClienteNuevoLocal>(TIENDA_CLIENTES_NUEVOS);
+export const leerRechazadas = () => leerTodo<VentaRechazada>(TIENDA_RECHAZADAS);
+export const leerProductosNuevos = () => leerTodo<ProductoNuevoLocal>(TIENDA_PRODUCTOS_NUEVOS);
+
+export async function guardarProductoNuevo(p: ProductoNuevoLocal): Promise<void> {
+  const db = await abrir();
+  const tx = db.transaction(TIENDA_PRODUCTOS_NUEVOS, "readwrite");
+  tx.objectStore(TIENDA_PRODUCTOS_NUEVOS).put(p);
+  await cerrarAlTerminar(db, tx);
+}
+
+export async function quitarProductosNuevos(uids: string[]): Promise<void> {
+  if (uids.length === 0) return;
+  const db = await abrir();
+  const tx = db.transaction(TIENDA_PRODUCTOS_NUEVOS, "readwrite");
+  for (const uid of uids) tx.objectStore(TIENDA_PRODUCTOS_NUEVOS).delete(uid);
+  await cerrarAlTerminar(db, tx);
+}
+
+/**
+ * Mueve las rechazadas de la cola al registro de rechazos, en UNA transacción:
+ * si se hicieran en dos, un corte en el medio dejaría la venta borrada de la
+ * cola y sin registrar en ningún lado — el peor resultado posible.
+ */
+export async function archivarRechazadas(rechazadas: VentaRechazada[]): Promise<void> {
+  if (rechazadas.length === 0) return;
+  const db = await abrir();
+  const tx = db.transaction([TIENDA_COLA, TIENDA_RECHAZADAS], "readwrite");
+  for (const r of rechazadas) {
+    tx.objectStore(TIENDA_RECHAZADAS).put(r);
+    tx.objectStore(TIENDA_COLA).delete(r.uid);
+  }
+  await cerrarAlTerminar(db, tx);
+}
+
+export async function descartarRechazada(uid: string): Promise<void> {
+  const db = await abrir();
+  const tx = db.transaction(TIENDA_RECHAZADAS, "readwrite");
+  tx.objectStore(TIENDA_RECHAZADAS).delete(uid);
+  await cerrarAlTerminar(db, tx);
+}
 
 export async function encolarVenta(venta: VentaEnCola, clienteNuevo?: ClienteNuevoLocal): Promise<void> {
   const db = await abrir();
@@ -166,6 +240,24 @@ export async function quitarDeLaCola(uids: string[], clienteUids: string[] = [])
   await cerrarAlTerminar(db, tx);
 }
 
+/**
+ * Restaura ventas y clientes desde un respaldo en archivo. `put` y no `add`:
+ * si una venta ya está en la cola, queda la que ya estaba (quien llama filtra
+ * las presentes con ventasAFaltantes). Una sola transacción, así que un corte
+ * no deja media cola.
+ */
+export async function restaurarEnCola(
+  ventas: VentaEnCola[],
+  clientesNuevos: ClienteNuevoLocal[],
+): Promise<void> {
+  if (ventas.length === 0 && clientesNuevos.length === 0) return;
+  const db = await abrir();
+  const tx = db.transaction([TIENDA_COLA, TIENDA_CLIENTES_NUEVOS], "readwrite");
+  for (const v of ventas) tx.objectStore(TIENDA_COLA).put(v);
+  for (const c of clientesNuevos) tx.objectStore(TIENDA_CLIENTES_NUEVOS).put(c);
+  await cerrarAlTerminar(db, tx);
+}
+
 /** Marca el intento fallido sin sacar la venta de la cola. */
 export async function marcarIntento(uid: string, error: string | null): Promise<void> {
   const db = await abrir();
@@ -183,7 +275,10 @@ export async function marcarIntento(uid: string, error: string | null): Promise<
  */
 export async function borrarTodo(): Promise<void> {
   const db = await abrir();
-  const tiendas = [TIENDA_META, TIENDA_CATALOGO, TIENDA_CLIENTES, TIENDA_COLA, TIENDA_CLIENTES_NUEVOS];
+  const tiendas = [
+    TIENDA_META, TIENDA_CATALOGO, TIENDA_CLIENTES, TIENDA_COLA, TIENDA_CLIENTES_NUEVOS,
+    TIENDA_RECHAZADAS, TIENDA_PRODUCTOS_NUEVOS,
+  ];
   const tx = db.transaction(tiendas, "readwrite");
   for (const t of tiendas) tx.objectStore(t).clear();
   await cerrarAlTerminar(db, tx);

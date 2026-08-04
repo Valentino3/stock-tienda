@@ -35,12 +35,41 @@ import { createSyncNotification } from "@/domain/notifications";
 const MAX_ANTIGUEDAD_MS = 30 * 24 * 60 * 60 * 1000;
 const TOLERANCIA_FUTURO_MS = 5 * 60 * 1000;
 
+const PG_UNIQUE_VIOLATION = "23505";
+
 export type ClienteOffline = {
   uid: string;
   name: string;
   phone?: string | null;
   docTipo?: number | null;
   docNro?: string | null;
+};
+
+/**
+ * Producto dado de alta sin conexión. En una feria aparece mercadería que no
+ * está en el catálogo, y la alternativa a poder cargarla es peor: no venderla,
+ * o cobrarla como si fuera otro producto — que ensucia el stock y el reporte
+ * de los dos.
+ *
+ * Deliberadamente mínimo: nombre, precio, cantidad. Una variante por producto.
+ * El resto (categoría, proveedor, costo) se completa después desde Productos,
+ * con tiempo y sin cola en el mostrador.
+ */
+export type ProductoOffline = {
+  uid: string;
+  variantUid: string;
+  name: string;
+  basePrice: number;
+  stock: number;
+  sku?: string | null;
+};
+
+export type ResultadoProducto = {
+  uid: string;
+  estado: "aplicado" | "duplicado" | "error";
+  variantId?: number;
+  error?: string;
+  avisos: string[];
 };
 
 export type VentaOffline = {
@@ -50,7 +79,17 @@ export type VentaOffline = {
   /** Caja que estaba abierta al vender, NO la que esté abierta al sincronizar. */
   cashSessionId: number;
   paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
-  items: { variantId: number; quantity: number; unitPrice: number; discount?: Discount }[];
+  /**
+   * `variantId` para lo que ya existía en el catálogo; `variantUid` para un
+   * producto creado sin conexión, cuyo id todavía no existe.
+   */
+  items: {
+    variantId?: number;
+    variantUid?: string;
+    quantity: number;
+    unitPrice: number;
+    discount?: Discount;
+  }[];
   saleDiscount?: Discount;
   clientId?: number | null;
   /** Cliente dado de alta sin conexión, que todavía no tiene id. */
@@ -72,6 +111,80 @@ export type ResultadoCliente = {
   clientId?: number;
   error?: string;
 };
+
+/**
+ * Alta de los productos creados sin conexión. Corre ANTES que las ventas: sus
+ * items referencian la variante por uid. Idempotente por (storeId, uid).
+ */
+export async function replayProductos(
+  db: any,
+  input: { storeId: number; productos: ProductoOffline[] }
+): Promise<ResultadoProducto[]> {
+  const resultados: ResultadoProducto[] = [];
+
+  for (const p of input.productos) {
+    const avisos: string[] = [];
+    try {
+      const uid = p.uid?.trim();
+      const variantUid = p.variantUid?.trim();
+      if (!uid || !variantUid) throw new Error("UID_REQUERIDO");
+      if (!p.name?.trim()) throw new Error("EMPTY_NAME");
+      if (typeof p.basePrice !== "number" || !(p.basePrice >= 0)) throw new Error("INVALID_PRICE");
+      if (!Number.isInteger(p.stock) || p.stock < 0) throw new Error("INVALID_QUANTITY");
+
+      const [ya] = await db.select({ id: productVariants.id }).from(productVariants)
+        .where(and(eq(productVariants.storeId, input.storeId), eq(productVariants.uid, variantUid)));
+      if (ya) {
+        resultados.push({ uid, estado: "duplicado", variantId: ya.id, avisos });
+        continue;
+      }
+
+      const variantId = await db.transaction(async (tx: any) => {
+        const [prod] = await tx.insert(products).values({
+          storeId: input.storeId, uid, name: p.name.trim(), basePrice: p.basePrice,
+        }).returning({ id: products.id });
+
+        // El SKU es único por tienda. Si el que se tipeó en la feria ya existe,
+        // se guarda el producto SIN sku en vez de perder la venta: el nombre y
+        // el precio son lo que hace falta para que el registro cierre.
+        let sku = p.sku?.trim() || null;
+        if (sku) {
+          const [choca] = await tx.select({ id: productVariants.id }).from(productVariants)
+            .where(and(eq(productVariants.storeId, input.storeId), eq(productVariants.sku, sku)));
+          if (choca) {
+            avisos.push(`El SKU "${sku}" ya existía: el producto "${p.name.trim()}" se creó sin SKU.`);
+            sku = null;
+          }
+        }
+
+        const [variante] = await tx.insert(productVariants).values({
+          storeId: input.storeId, productId: prod.id, uid: variantUid, name: "", sku, stock: p.stock,
+        }).returning({ id: productVariants.id });
+        return variante.id as number;
+      });
+
+      resultados.push({ uid, estado: "aplicado", variantId, avisos });
+    } catch (err) {
+      const code = (err as any)?.code ?? (err as any)?.cause?.code;
+      if (code === PG_UNIQUE_VIOLATION) {
+        const [ya] = await db.select({ id: productVariants.id }).from(productVariants)
+          .where(and(eq(productVariants.storeId, input.storeId), eq(productVariants.uid, p.variantUid)));
+        if (ya) {
+          resultados.push({ uid: p.uid, estado: "duplicado", variantId: ya.id, avisos });
+          continue;
+        }
+      }
+      resultados.push({
+        uid: p.uid,
+        estado: "error",
+        error: err instanceof Error ? err.message : "ERROR_DESCONOCIDO",
+        avisos,
+      });
+    }
+  }
+
+  return resultados;
+}
 
 /**
  * Alta de los clientes creados sin conexión. Corre ANTES que las ventas porque
@@ -109,7 +222,7 @@ export async function replayClientes(
       // Carrera con otro envío del mismo lote: el índice único resuelve el
       // empate y se relee el ganador.
       const code = (err as any)?.code ?? (err as any)?.cause?.code;
-      if (code === "23505") {
+      if (code === PG_UNIQUE_VIOLATION) {
         const [ya] = await db.select({ id: clients.id }).from(clients)
           .where(and(eq(clients.storeId, input.storeId), eq(clients.uid, c.uid)));
         if (ya) {
@@ -153,7 +266,13 @@ function acotarFecha(capturadoEn: string, avisos: string[]): Date {
  */
 export async function replaySale(
   db: any,
-  input: { storeId: number; sellerId: string; venta: VentaOffline; clientePorUid?: Map<string, number> }
+  input: {
+    storeId: number;
+    sellerId: string;
+    venta: VentaOffline;
+    clientePorUid?: Map<string, number>;
+    variantePorUid?: Map<string, number>;
+  }
 ): Promise<ResultadoVenta> {
   const { venta, storeId, sellerId } = input;
   const avisos: string[] = [];
@@ -166,6 +285,25 @@ export async function replaySale(
   }
   if (venta.items.some((i) => typeof i.unitPrice !== "number" || !(i.unitPrice >= 0))) {
     return { uid, estado: "error", error: "INVALID_PRICE", avisos };
+  }
+
+  // Se resuelven los uid de variantes creadas sin conexión ANTES de abrir la
+  // transacción: si el producto no se pudo crear, la venta no entra en vez de
+  // entrar colgada de una variante equivocada.
+  const items: { variantId: number; quantity: number; unitPrice: number; discount?: Discount }[] = [];
+  for (const i of venta.items) {
+    const resuelto = i.variantUid != null
+      ? input.variantePorUid?.get(i.variantUid)
+      : i.variantId;
+    if (!Number.isInteger(resuelto)) {
+      return { uid, estado: "error", error: "VARIANT_NOT_FOUND", avisos };
+    }
+    items.push({
+      variantId: resuelto as number,
+      quantity: i.quantity,
+      unitPrice: i.unitPrice,
+      discount: i.discount,
+    });
   }
 
   // Cliente: por id directo, o por uid si se creó sin conexión.
@@ -207,15 +345,15 @@ export async function replaySale(
         .innerJoin(products, eq(productVariants.productId, products.id))
         .where(and(
           eq(productVariants.storeId, storeId),
-          inArray(productVariants.id, venta.items.map((i) => i.variantId)),
+          inArray(productVariants.id, items.map((i) => i.variantId)),
         ));
 
       const porId = new Map(variantRows.map((v: any) => [v.id, v]));
-      if (porId.size !== new Set(venta.items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
+      if (porId.size !== new Set(items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
 
       // Precio capturado, no el actual: es el que el cliente pagó. Si el
       // catálogo cambió mientras tanto se avisa, no se corrige.
-      for (const i of venta.items) {
+      for (const i of items) {
         const v: any = porId.get(i.variantId);
         const actual = v.price ?? v.basePrice;
         if (actual !== i.unitPrice) {
@@ -224,7 +362,7 @@ export async function replaySale(
       }
 
       const { lines, saleDiscount, total } = calcularTotales(
-        venta.items, (i) => i.unitPrice, venta.saleDiscount,
+        items, (i) => i.unitPrice, venta.saleDiscount,
       );
 
       if (venta.paymentMethod === "cuenta") {
@@ -302,7 +440,7 @@ export async function replaySale(
   } catch (err) {
     // Carrera con otro envío del mismo lote.
     const code = (err as any)?.code ?? (err as any)?.cause?.code;
-    if (code === "23505") {
+    if (code === PG_UNIQUE_VIOLATION) {
       const [ya] = await db.select().from(sales)
         .where(and(eq(sales.storeId, storeId), eq(sales.uid, uid))).limit(1);
       if (ya) return { uid, estado: "duplicada", saleId: ya.id, total: ya.total, avisos };
@@ -316,11 +454,28 @@ export async function replaySale(
   }
 }
 
-/** Lote completo: primero los clientes, después las ventas. */
+/**
+ * Lote completo. El orden es obligatorio, no una preferencia: las ventas
+ * referencian productos y clientes creados sin conexión por uid, así que esos
+ * tienen que existir antes de procesarlas.
+ */
 export async function replayLote(
   db: any,
-  input: { storeId: number; sellerId: string; clientes?: ClienteOffline[]; ventas: VentaOffline[] }
+  input: {
+    storeId: number;
+    sellerId: string;
+    productos?: ProductoOffline[];
+    clientes?: ClienteOffline[];
+    ventas: VentaOffline[];
+  }
 ) {
+  const productos = await replayProductos(db, { storeId: input.storeId, productos: input.productos ?? [] });
+  const variantePorUid = new Map(
+    input.productos
+      ?.map((p, i) => [p.variantUid, productos[i]?.variantId] as const)
+      .filter((par): par is readonly [string, number] => par[1] != null) ?? [],
+  );
+
   const clientes = await replayClientes(db, { storeId: input.storeId, clientes: input.clientes ?? [] });
   const clientePorUid = new Map(
     clientes.filter((c) => c.clientId != null).map((c) => [c.uid, c.clientId as number]),
@@ -329,11 +484,12 @@ export async function replayLote(
   const ventas: ResultadoVenta[] = [];
   for (const venta of input.ventas) {
     ventas.push(await replaySale(db, {
-      storeId: input.storeId, sellerId: input.sellerId, venta, clientePorUid,
+      storeId: input.storeId, sellerId: input.sellerId, venta, clientePorUid, variantePorUid,
     }));
   }
 
   return {
+    productos,
     clientes,
     ventas,
     resumen: {
@@ -341,6 +497,7 @@ export async function replayLote(
       duplicadas: ventas.filter((v) => v.estado === "duplicada").length,
       errores: ventas.filter((v) => v.estado === "error").length,
       conAvisos: ventas.filter((v) => v.avisos.length > 0).length,
+      productosCreados: productos.filter((p) => p.estado === "aplicado").length,
     },
   };
 }

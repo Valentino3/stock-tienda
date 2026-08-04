@@ -24,9 +24,14 @@ export default function manifest(): MetadataRoute.Manifest {
     lang: "es-AR",
     background_color: "#fafafb",
     theme_color: "#3b5bd6",
+    // PNG primero y SVG como extra: varios launchers de Android ignoran el SVG
+    // en silencio y muestran un ícono genérico. Los PNG los genera
+    // scripts/generar-iconos.ts (sin dependencias: el ícono son rectángulos).
     icons: [
+      { src: "/icono-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icono-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icono-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
       { src: "/icono.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
-      { src: "/icono-maskable.svg", sizes: "any", type: "image/svg+xml", purpose: "maskable" },
     ],
   };
 }

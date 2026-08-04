@@ -18,6 +18,15 @@ export const metadata: Metadata = {
   title: APP_NAME,
   description: "Sistema de stock y ventas",
   manifest: "/manifest.webmanifest",
+  // iOS ignora el manifest para el ícono de inicio y no acepta SVG: sin este
+  // PNG, agregar la app a la pantalla de inicio muestra una captura de la web.
+  icons: {
+    icon: [
+      { url: "/icono-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icono.svg", type: "image/svg+xml" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   // Instalada en iOS no hay manifest: estas dos hacen que abra en ventana
   // propia en vez de Safari, que es lo que evita cerrar la pestaña con la cola
   // de ventas pendientes adentro.

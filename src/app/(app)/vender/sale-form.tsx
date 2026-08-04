@@ -14,7 +14,10 @@ import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
 import { buscarEnCatalogo, precioDe } from "@/lib/offline/busqueda";
-import { descargarSnapshot, encolar, altaClienteOffline, useEstadoOffline } from "@/lib/offline/estado";
+import {
+  descargarSnapshot, encolar, altaClienteOffline, altaProductoOffline, restaurarRespaldo,
+  useEstadoOffline,
+} from "@/lib/offline/estado";
 import type { VentaEnCola } from "@/lib/offline/db";
 import { searchVariants, submitSale, createClientForSale } from "./actions";
 import { TicketOffline } from "./ticket-offline";
@@ -165,6 +168,16 @@ export function SaleForm({
   const offline = verificado && !conectado;
   const [ticket, setTicket] = useState<VentaEnCola | null>(null);
   const [bajando, setBajando] = useState(false);
+  const archivoRef = useRef<HTMLInputElement>(null);
+
+  // Alta de producto sin conexión (mercadería nueva en una feria).
+  const [nuevoProdOpen, setNuevoProdOpen] = useState(false);
+  const [nuevoProdNombre, setNuevoProdNombre] = useState("");
+  const [nuevoProdPrecio, setNuevoProdPrecio] = useState("");
+  const [nuevoProdStock, setNuevoProdStock] = useState("");
+  const [nuevoProdSku, setNuevoProdSku] = useState("");
+  const [nuevoProdError, setNuevoProdError] = useState("");
+  const [nuevoProdPending, startNuevoProd] = useTransition();
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -299,6 +312,70 @@ export function SaleForm({
     ...clients,
     ...clientesNuevos.map((c) => ({ id: null, uid: c.uid, name: `${c.name} (sin sincronizar)` })),
   ].sort((a, b) => a.name.localeCompare(b.name));
+
+  /**
+   * Alta de producto sin conexión. Existe para el caso de feria: aparece
+   * mercadería que no está en el catálogo, y las alternativas son no venderla o
+   * cobrarla como si fuera otra cosa — que ensucia el stock de las dos.
+   *
+   * Queda con id local negativo, entra al buscador y se puede cobrar enseguida.
+   * El servidor lo crea de verdad al sincronizar.
+   */
+  function submitNuevoProducto(e: React.FormEvent) {
+    e.preventDefault();
+    const precio = Number(nuevoProdPrecio.replace(",", "."));
+    const cantidad = Number(nuevoProdStock || "0");
+
+    if (!nuevoProdNombre.trim()) return setNuevoProdError("Poné un nombre.");
+    if (!Number.isFinite(precio) || precio < 0) return setNuevoProdError("El precio no es válido.");
+    if (!Number.isInteger(cantidad) || cantidad < 0) return setNuevoProdError("La cantidad no es válida.");
+
+    startNuevoProd(async () => {
+      try {
+        const localVariantId = await altaProductoOffline({
+          name: nuevoProdNombre, basePrice: precio, stock: cantidad, sku: nuevoProdSku,
+        });
+        // Se agrega directo al carrito: se está cargando porque lo están
+        // comprando. La cantidad disponible puede ser 0 y la venta igual entra
+        // (queda stock negativo, con aviso, al sincronizar).
+        addToCart({
+          variantId: localVariantId,
+          productName: nuevoProdNombre.trim(),
+          variantName: null,
+          sku: nuevoProdSku.trim() || null,
+          stock: Math.max(cantidad, 1),
+          price: precio,
+          basePrice: precio,
+          setName: null, condition: null, foil: false, language: null,
+        });
+        setNuevoProdOpen(false);
+        setNuevoProdNombre(""); setNuevoProdPrecio(""); setNuevoProdStock(""); setNuevoProdSku("");
+        setNuevoProdError("");
+        toast.success("Producto cargado en este dispositivo. Se crea al sincronizar.");
+      } catch {
+        setNuevoProdError("No se pudo guardar el producto en este dispositivo.");
+      }
+    });
+  }
+
+  async function restaurarDesdeArchivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const archivo = e.target.files?.[0];
+    // Se limpia el input para que elegir el MISMO archivo otra vez vuelva a
+    // disparar onChange.
+    e.target.value = "";
+    if (!archivo) return;
+
+    const res = await restaurarRespaldo(await archivo.text());
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
+    if (res.restauradas === 0) {
+      toast.info(`El respaldo no traía ventas nuevas (${number(res.yaEstaban)} ya estaban en la cola).`);
+      return;
+    }
+    toast.success(`${number(res.restauradas)} venta(s) restaurada(s). Sincronizalas cuando haya conexión.`);
+  }
 
   async function prepararOffline() {
     setBajando(true);
@@ -503,9 +580,25 @@ export function SaleForm({
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <CardTitle className="text-base">Buscar producto</CardTitle>
           <div className="text-right">
-            <Button type="button" variant="outline" size="sm" disabled={bajando || offline} onClick={prepararOffline}>
-              {bajando ? "Descargando…" : catalogo ? "Actualizar catálogo offline" : "Preparar para vender sin conexión"}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="outline" size="sm" disabled={bajando || offline} onClick={prepararOffline}>
+                {bajando ? "Descargando…" : catalogo ? "Actualizar catálogo offline" : "Preparar para vender sin conexión"}
+              </Button>
+              {/* Restaurar un respaldo se usa poquísimo pero es la única salida
+                  si el navegador borró la cola. Vive acá y no en la barra
+                  porque la barra desaparece cuando no hay pendientes, que es
+                  exactamente el estado en el que hace falta restaurar. */}
+              <Button type="button" variant="ghost" size="sm" onClick={() => archivoRef.current?.click()}>
+                Restaurar respaldo
+              </Button>
+              <input
+                ref={archivoRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={restaurarDesdeArchivo}
+              />
+            </div>
             {meta && (
               <p className="mt-1 text-xs text-muted-foreground">
                 Catálogo guardado el {new Date(meta.generadoEn).toLocaleString("es-AR")}
@@ -525,6 +618,14 @@ export function SaleForm({
               Buscando en el catálogo guardado en este dispositivo. El stock que se muestra
               es del último momento con conexión.
             </Notice>
+          )}
+          {offline && (
+            <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+              <span>¿El producto no está en el catálogo?</span>
+              <Button type="button" variant="outline" size="sm" onClick={() => setNuevoProdOpen(true)}>
+                Cargar producto nuevo
+              </Button>
+            </div>
           )}
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -758,6 +859,61 @@ export function SaleForm({
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setNewClientOpen(false)}>Cancelar</Button>
               <Button type="submit" disabled={newClientPending}>{newClientPending ? "Creando…" : "Crear"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={nuevoProdOpen} onOpenChange={setNuevoProdOpen}>
+        <DialogContent>
+          <form onSubmit={submitNuevoProducto} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>Producto nuevo (sin conexión)</DialogTitle>
+              <DialogDescription>
+                Lo mínimo para poder cobrarlo. Queda guardado en este dispositivo y se crea en
+                el sistema al sincronizar; el resto de los datos se completan después desde
+                Productos.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <Label htmlFor="prod-nombre">Nombre</Label>
+              <Input
+                id="prod-nombre" value={nuevoProdNombre} autoFocus
+                onChange={(e) => setNuevoProdNombre(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="prod-precio">Precio</Label>
+                <Input
+                  id="prod-precio" inputMode="decimal" value={nuevoProdPrecio}
+                  onChange={(e) => setNuevoProdPrecio(e.target.value)} placeholder="0,00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="prod-stock">Cantidad que tenés</Label>
+                <Input
+                  id="prod-stock" inputMode="numeric" value={nuevoProdStock}
+                  onChange={(e) => setNuevoProdStock(e.target.value)} placeholder="0"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prod-sku">SKU (opcional)</Label>
+              <Input
+                id="prod-sku" value={nuevoProdSku}
+                onChange={(e) => setNuevoProdSku(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Si ese SKU ya existe en el sistema, el producto se crea sin SKU y te avisa.
+              </p>
+            </div>
+            {nuevoProdError && <p className="text-sm text-destructive" role="alert">{nuevoProdError}</p>}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setNuevoProdOpen(false)}>Cancelar</Button>
+              <Button type="submit" disabled={nuevoProdPending}>
+                {nuevoProdPending ? "Guardando…" : "Cargar y agregar al carrito"}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>
