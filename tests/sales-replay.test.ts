@@ -218,8 +218,8 @@ describe("replayLote", () => {
     const primera = await replayLote(db, lote);
     const segunda = await replayLote(db, lote);
 
-    expect(primera.resumen).toEqual({ aplicadas: 2, duplicadas: 0, errores: 0, conAvisos: 0 });
-    expect(segunda.resumen).toEqual({ aplicadas: 0, duplicadas: 2, errores: 0, conAvisos: 0 });
+    expect(primera.resumen).toEqual({ aplicadas: 2, duplicadas: 0, errores: 0, conAvisos: 0, productosCreados: 0 });
+    expect(segunda.resumen).toEqual({ aplicadas: 0, duplicadas: 2, errores: 0, conAvisos: 0, productosCreados: 0 });
     expect(segunda.clientes[0].estado).toBe("duplicado");
     expect(segunda.clientes[0].clientId).toBe(primera.clientes[0].clientId);
 
@@ -264,7 +264,7 @@ describe("replayLote", () => {
       storeId: store, sellerId: "u1",
       ventas: [ventaOffline({ items: [{ variantId: vId, quantity: 99, unitPrice: 1000 }] })],
     });
-    expect(r.resumen).toEqual({ aplicadas: 1, duplicadas: 0, errores: 0, conAvisos: 1 });
+    expect(r.resumen).toEqual({ aplicadas: 1, duplicadas: 0, errores: 0, conAvisos: 1, productosCreados: 0 });
   });
 });
 

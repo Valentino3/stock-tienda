@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { number } from "@/lib/format";
 import {
-  iniciarOffline, limpiarReportes, mensajeDeRechazo, sincronizarCola, useEstadoOffline,
+  exportarRespaldo, iniciarOffline, limpiarAvisos, sincronizarCola, useEstadoOffline,
 } from "@/lib/offline/estado";
 
 /**
@@ -51,6 +52,15 @@ export function BarraOffline() {
     }
   }
 
+  async function descargarRespaldo() {
+    const res = await exportarRespaldo();
+    if (!res.ok) {
+      toast.error("No se pudo generar el respaldo.");
+      return;
+    }
+    toast.success(`Respaldo de ${number(res.ventas)} venta(s) descargado. Guardalo hasta que sincronicen.`);
+  }
+
   const hayReportes = rechazadas.length > 0 || avisos.length > 0;
   if (!verificado && pendientes === 0 && !hayReportes) return null;
   if (conectado && pendientes === 0 && !hayReportes) return null;
@@ -76,26 +86,46 @@ export function BarraOffline() {
               </>
             )}
           </span>
-          {conectado && pendientes > 0 && (
-            <Button size="sm" variant="outline" disabled={sincronizando} onClick={sincronizarAhora}>
-              {sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
-            </Button>
-          )}
+          <span className="flex shrink-0 gap-2">
+            {/* Bajar el respaldo tiene que poder hacerse SIN conexión: es la
+                defensa contra que el navegador borre la cola, y ese riesgo
+                existe justamente durante el corte. */}
+            {pendientes > 0 && (
+              <Button size="sm" variant="ghost" onClick={descargarRespaldo}>
+                Descargar respaldo
+              </Button>
+            )}
+            {conectado && pendientes > 0 && (
+              <Button size="sm" variant="outline" disabled={sincronizando} onClick={sincronizarAhora}>
+                {sincronizando ? "Sincronizando…" : "Sincronizar ahora"}
+              </Button>
+            )}
+          </span>
         </div>
       )}
 
-      {hayReportes && (
+      {rechazadas.length > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm"
+        >
+          <span>
+            <strong>{number(rechazadas.length)} venta(s) cobradas no quedaron registradas.</strong>{" "}
+            Hay que cargarlas a mano.
+          </span>
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href="/vender/revision">Ver detalle</Link>
+          </Button>
+        </div>
+      )}
+
+      {avisos.length > 0 && (
         <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-xs">
           <div className="flex items-center justify-between gap-3">
-            <strong>Resultado de la última sincronización</strong>
-            <Button size="sm" variant="ghost" onClick={limpiarReportes}>Entendido</Button>
+            <strong>Avisos de la última sincronización</strong>
+            <Button size="sm" variant="ghost" onClick={limpiarAvisos}>Entendido</Button>
           </div>
           <ul className="mt-2 space-y-1 text-muted-foreground">
-            {rechazadas.map((r) => (
-              <li key={r.uid} className="text-destructive">
-                Venta rechazada: {mensajeDeRechazo(r.error)}
-              </li>
-            ))}
             {avisos.map((a) => (
               <li key={a.uid}>
                 {a.saleId ? `Venta #${a.saleId}: ` : ""}{a.avisos.join(" ")}

@@ -21,7 +21,16 @@ export type ResultadoClienteRemoto = {
   error?: string;
 };
 
+export type ResultadoProductoRemoto = {
+  uid: string;
+  estado: "aplicado" | "duplicado" | "error";
+  variantId?: number;
+  error?: string;
+  avisos?: string[];
+};
+
 export type RespuestaLote = {
+  productos?: ResultadoProductoRemoto[];
   clientes?: ResultadoClienteRemoto[];
   ventas?: ResultadoVentaRemoto[];
 };
@@ -41,6 +50,8 @@ export type PlanDeLimpieza = {
   uidsResueltos: string[];
   /** Clientes offline ya creados: salen de la cola. */
   clienteUidsResueltos: string[];
+  /** Productos offline ya creados en el servidor: salen de la cola. */
+  productoUidsResueltos: string[];
   /**
    * Ventas rechazadas. Salen de la cola igual, porque NINGÚN error que
    * devuelve el replay se arregla reintentando: variante o caja inexistente,
@@ -57,8 +68,12 @@ export type PlanDeLimpieza = {
 export function planificarLimpieza(respuesta: RespuestaLote): PlanDeLimpieza {
   const ventas = respuesta.ventas ?? [];
   const clientes = respuesta.clientes ?? [];
+  const productos = respuesta.productos ?? [];
 
   return {
+    productoUidsResueltos: productos
+      .filter((p) => p.estado === "aplicado" || p.estado === "duplicado")
+      .map((p) => p.uid),
     uidsResueltos: ventas
       .filter((v) => v.estado === "aplicada" || v.estado === "duplicada")
       .map((v) => v.uid),
@@ -68,9 +83,14 @@ export function planificarLimpieza(respuesta: RespuestaLote): PlanDeLimpieza {
     rechazadas: ventas
       .filter((v) => v.estado === "error")
       .map((v) => ({ uid: v.uid, error: v.error ?? "ERROR_DESCONOCIDO" })),
-    avisos: ventas
-      .filter((v) => (v.avisos?.length ?? 0) > 0)
-      .map((v) => ({ uid: v.uid, saleId: v.saleId, avisos: v.avisos ?? [] })),
+    avisos: [
+      ...productos
+        .filter((p) => (p.avisos?.length ?? 0) > 0)
+        .map((p) => ({ uid: p.uid, avisos: p.avisos ?? [] })),
+      ...ventas
+        .filter((v) => (v.avisos?.length ?? 0) > 0)
+        .map((v) => ({ uid: v.uid, saleId: v.saleId, avisos: v.avisos ?? [] })),
+    ],
   };
 }
 

@@ -11,6 +11,7 @@ donde directamente no hay señal.
 | Cobrar (efectivo, transferencia, tarjeta, cuenta) | Sí, la venta queda en cola |
 | Imprimir un comprobante para el cliente | Sí, ticket **no fiscal** |
 | Dar de alta un cliente | Sí, se crea al sincronizar |
+| Cargar un producto que no está en el catálogo | Sí, nombre + precio + cantidad |
 | Abrir o cerrar la caja | **No.** Se abre antes de salir y se cierra al volver |
 | Facturar en ARCA | **No.** Se emite al volver la conexión, desde `/ventas` |
 | Productos, Ventas, Clientes, Reportes, Importar | **No.** Necesitan servidor |
@@ -41,6 +42,14 @@ Antes de salir a una feria, repetir el paso 3 para llevar el catálogo del día.
 - Cada venta cobrada se guarda en el dispositivo y muestra un ticket no fiscal
   para imprimir.
 - El carrito a medio armar sobrevive a un F5 o a un cierre accidental.
+- Si aparece mercadería que no está en el catálogo, **«Cargar producto nuevo»**
+  pide nombre, precio y cantidad, y lo agrega al carrito. El producto se crea de
+  verdad al sincronizar; el resto de los datos (categoría, costo, proveedor) se
+  completan después desde Productos.
+- **«Descargar respaldo»** baja las ventas pendientes a un archivo. Conviene
+  hacerlo una vez al día si el evento dura varios: es lo único que las salva si
+  el navegador borra su almacenamiento. Se restaura desde Vender →
+  «Restaurar respaldo».
 
 ## Al volver la conexión
 
@@ -57,8 +66,17 @@ Después de sincronizar puede aparecer un resumen con:
 - **Venta rechazada.** No entró y no va a entrar reintentando (por ejemplo, el
   producto se borró del catálogo). Hay que cargarla a mano. Es plata cobrada
   que no está registrada — mirarlo el mismo día.
+- **SKU repetido.** Si el SKU que se tipeó en la feria ya existía, el producto
+  se crea sin SKU en vez de perderse la venta.
 
-Lo mismo queda en **Avisos**, así que no se pierde si nadie leyó el resumen.
+Los avisos quedan en **Avisos** (los registra el servidor) y las ventas
+rechazadas en **Vender → Revisión**, guardadas en el dispositivo hasta que
+alguien las carga a mano y las marca como resueltas. Ni una ni otra depende de
+que alguien haya leído el mensaje en pantalla.
+
+Después de sincronizar productos cargados sin conexión, conviene tocar
+«Actualizar catálogo offline»: esos productos ya existen en el servidor y el
+catálogo guardado todavía no los tiene con su id definitivo.
 
 **Cerrar la caja recién después de sincronizar.** El arqueo se calcula sobre lo
 que hay en el servidor; con ventas en cola, el número no cuadra. La app lo
@@ -80,8 +98,9 @@ contador antes de una feria de varios días.
   offline a la vez pueden vender la misma unidad; al sincronizar, la segunda
   venta entra igual y deja el stock negativo.
 - **Borrar los datos de navegación borra la cola.** Si el navegador limpia el
-  almacenamiento del sitio, las ventas pendientes se pierden. Sincronizar
-  seguido es la mitigación; no vaciar el historial con cola pendiente, la otra.
+  almacenamiento del sitio, las ventas pendientes se pierden. Mitigaciones, en
+  orden: sincronizar seguido, bajar el respaldo a un archivo, y no vaciar el
+  historial con cola pendiente.
 - **Hasta 20.000 variantes** por dispositivo. Si el catálogo es más grande, el
   guardado avisa que quedó incompleto.
 - **La app se actualiza al cerrarla y volver a abrirla.** Es a propósito:

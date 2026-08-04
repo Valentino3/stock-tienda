@@ -117,6 +117,10 @@ export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egre
 
 export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  // Identidad de un producto dado de alta sin conexión (típicamente en una
+  // feria, con mercadería que no estaba en el catálogo). Mismo criterio que
+  // sales.uid y clients.uid.
+  uid: text("uid"),
   storeId: integer("store_id").notNull().references(() => stores.id),
   name: text("name").notNull(),
   category: text("category"), // texto libre, opcional (agrupar/filtrar catálogo)
@@ -128,10 +132,15 @@ export const products = pgTable("products", {
   index("products_store_idx").on(t.storeId),
   // Filtro por categoría en el inventario.
   index("products_store_category_idx").on(t.storeId, t.category),
+  // Reenviar el mismo lote de sincronización no puede crear el producto dos veces.
+  uniqueIndex("products_store_uid_idx").on(t.storeId, t.uid),
 ]);
 
 export const productVariants = pgTable("product_variants", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  // Ver products.uid. Las ventas offline de un producto nuevo referencian la
+  // variante por acá, porque su id lo asigna el servidor al sincronizar.
+  uid: text("uid"),
   storeId: integer("store_id").notNull().references(() => stores.id),
   productId: integer("product_id").notNull().references(() => products.id),
   // '' para la variante default de productos sin variantes reales (UI la oculta)
@@ -168,6 +177,7 @@ export const productVariants = pgTable("product_variants", {
   index("product_variants_store_active_idx").on(t.storeId, t.active),
   index("product_variants_store_stock_idx").on(t.storeId, t.stock),
   index("product_variants_store_supplier_idx").on(t.storeId, t.supplier),
+  uniqueIndex("product_variants_store_uid_idx").on(t.storeId, t.uid),
 ]);
 
 // NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`

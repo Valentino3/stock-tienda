@@ -2,10 +2,14 @@
 import { useSyncExternalStore } from "react";
 import { hayConexion, invalidarCacheDeConexion } from "./conexion";
 import {
-  encolarVenta, guardarClienteNuevo, guardarSnapshot, hayIndexedDB, leerCatalogo, leerClientes,
-  leerClientesNuevos, leerCola, leerMeta, marcarIntento, quitarDeLaCola,
-  type ClienteLocal, type ClienteNuevoLocal, type MetaSnapshot, type VentaEnCola,
+  archivarRechazadas, descartarRechazada, encolarVenta, guardarClienteNuevo, guardarProductoNuevo,
+  guardarSnapshot, hayIndexedDB, leerCatalogo, leerClientes, leerClientesNuevos, leerCola, leerMeta,
+  leerProductosNuevos, leerRechazadas, marcarIntento, quitarDeLaCola, quitarProductosNuevos,
+  restaurarEnCola,
+  type ClienteLocal, type ClienteNuevoLocal, type MetaSnapshot, type ProductoNuevoLocal,
+  type VentaEnCola, type VentaRechazada,
 } from "./db";
+import { armarRespaldo, nombreDeArchivo, validarRespaldo, ventasAFaltantes } from "./respaldo";
 import { indexarCatalogo, type CatalogoIndexado, type VarianteCatalogo } from "./busqueda";
 import {
   partirEnLotes, planificarLimpieza, resumirSincronizacion, mensajeDeRechazo,
@@ -30,8 +34,14 @@ export type EstadoOffline = {
   catalogo: CatalogoIndexado | null;
   clientes: ClienteLocal[];
   clientesNuevos: ClienteNuevoLocal[];
+  productosNuevos: ProductoNuevoLocal[];
   meta: MetaSnapshot | null;
-  rechazadas: { uid: string; error: string }[];
+  /**
+   * Ventas cobradas que el servidor rechazó. Persisten en el dispositivo, no
+   * solo en memoria: es plata sin registrar y no puede desaparecer con una
+   * recarga.
+   */
+  rechazadas: VentaRechazada[];
   avisos: { uid: string; saleId?: number; avisos: string[] }[];
 };
 
@@ -43,6 +53,7 @@ let estado: EstadoOffline = {
   catalogo: null,
   clientes: [],
   clientesNuevos: [],
+  productosNuevos: [],
   meta: null,
   rechazadas: [],
   avisos: [],
@@ -92,15 +103,23 @@ export async function iniciarOffline() {
 export async function recargarDesdeDisco() {
   if (!hayIndexedDB()) return;
   try {
-    const [meta, variantes, clientes, clientesNuevos, cola] = await Promise.all([
-      leerMeta(), leerCatalogo(), leerClientes(), leerClientesNuevos(), leerCola(),
-    ]);
+    const [meta, variantes, clientes, clientesNuevos, cola, rechazadas, productosNuevos] =
+      await Promise.all([
+        leerMeta(), leerCatalogo(), leerClientes(), leerClientesNuevos(), leerCola(),
+        leerRechazadas(), leerProductosNuevos(),
+      ]);
+
+    // Los productos cargados sin conexión entran al MISMO índice de búsqueda
+    // que el catálogo: si no, el vendedor los carga y después no los encuentra.
+    const todas = [...variantes, ...productosNuevos.map(aVarianteLocal)];
     set({
       meta,
-      catalogo: variantes.length > 0 ? indexarCatalogo(variantes) : null,
+      catalogo: todas.length > 0 ? indexarCatalogo(todas) : null,
       clientes,
       clientesNuevos,
+      productosNuevos,
       pendientes: cola.length,
+      rechazadas,
     });
   } catch {
     // Navegador en modo privado, storage lleno o permisos denegados. La app
@@ -160,6 +179,47 @@ export async function altaClienteOffline(cliente: ClienteNuevoLocal) {
   set({ clientesNuevos: await leerClientesNuevos() });
 }
 
+/** Un producto local se ve como cualquier otra fila del catálogo. */
+function aVarianteLocal(p: ProductoNuevoLocal): VarianteCatalogo {
+  return {
+    variantId: p.localVariantId,
+    productName: p.name,
+    variantName: null,
+    sku: p.sku ?? null,
+    stock: p.stock,
+    price: null,
+    basePrice: p.basePrice,
+    setName: null,
+    condition: null,
+    foil: false,
+    language: null,
+  };
+}
+
+/**
+ * Alta de producto sin conexión. Devuelve el id local (negativo) para que quien
+ * llama lo pueda meter al carrito enseguida — es el caso de uso real: se carga
+ * el producto porque lo están comprando en ese momento.
+ */
+export async function altaProductoOffline(input: {
+  name: string; basePrice: number; stock: number; sku?: string | null;
+}): Promise<number> {
+  const existentes = await leerProductosNuevos();
+  const producto: ProductoNuevoLocal = {
+    uid: crypto.randomUUID(),
+    variantUid: crypto.randomUUID(),
+    // Menor que todos los locales que ya hay: negativo, estable y persistido.
+    localVariantId: Math.min(0, ...existentes.map((p) => p.localVariantId)) - 1,
+    name: input.name.trim(),
+    basePrice: input.basePrice,
+    stock: input.stock,
+    sku: input.sku?.trim() || null,
+  };
+  await guardarProductoNuevo(producto);
+  await recargarDesdeDisco();
+  return producto.localVariantId;
+}
+
 /**
  * Drena la cola contra /ventas/replay.
  *
@@ -179,10 +239,13 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
   const planes: PlanDeLimpieza[] = [];
 
   try {
-    const clientesNuevos = await leerClientesNuevos();
-    // Los clientes van completos en el primer lote: son pocos y las ventas los
-    // referencian por uid, así que tienen que existir antes.
-    let clientesPendientes = clientesNuevos;
+    // Productos y clientes viajan en TODOS los lotes, no solo en el primero.
+    // El servidor resuelve los uid de cada request contra lo que ese request
+    // trae: si se mandaran una sola vez, una venta del lote 2 que referencia un
+    // producto creado en el lote 1 no encontraría su uid y se rechazaría. Son
+    // pocos e idempotentes por uid, así que repetirlos es gratis.
+    const clientesPendientes = await leerClientesNuevos();
+    const productosPendientes = await leerProductosNuevos();
 
     for (const lote of partirEnLotes(cola)) {
       let respuesta: Response;
@@ -190,7 +253,11 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
         respuesta = await fetch("/ventas/replay", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clientes: clientesPendientes, ventas: lote.map(aPayload) }),
+          body: JSON.stringify({
+            productos: productosPendientes.map(aPayloadProducto),
+            clientes: clientesPendientes,
+            ventas: lote.map((v) => aPayload(v, productosPendientes)),
+          }),
         });
       } catch {
         // Se cortó a mitad: lo ya confirmado quedó limpio, el resto sigue en
@@ -203,48 +270,134 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
       }
 
       const plan = planificarLimpieza(await respuesta.json());
-      await quitarDeLaCola(
-        [...plan.uidsResueltos, ...plan.rechazadas.map((r) => r.uid)],
-        plan.clienteUidsResueltos,
+
+      // Las rechazadas se ARCHIVAN antes de sacarlas de la cola: si se borraran
+      // sin dejar rastro, una venta cobrada desaparecería del sistema.
+      const porUid = new Map(lote.map((v) => [v.uid, v]));
+      const rechazadaEn = new Date().toISOString();
+      await archivarRechazadas(
+        plan.rechazadas.flatMap((r) => {
+          const venta = porUid.get(r.uid);
+          return venta ? [{ ...venta, error: r.error, rechazadaEn }] : [];
+        }),
       );
+      await quitarDeLaCola(plan.uidsResueltos, plan.clienteUidsResueltos);
       planes.push(plan);
-      clientesPendientes = [];
+    }
+
+    // Productos y clientes locales se dan de baja DESPUÉS del último lote: los
+    // lotes intermedios todavía los necesitaban en el payload. Y solo si la
+    // cola quedó vacía — si algo sigue pendiente, esas ventas pueden
+    // referenciarlos en el próximo intento.
+    if ((await leerCola()).length === 0) {
+      await quitarProductosNuevos([...new Set(planes.flatMap((p) => p.productoUidsResueltos))]);
     }
 
     const resumen = resumirSincronizacion(planes);
-    const rechazadas = planes.flatMap((p) => p.rechazadas);
-    const avisos = planes.flatMap((p) => p.avisos);
-    set({
-      pendientes: (await leerCola()).length,
-      clientesNuevos: await leerClientesNuevos(),
-      rechazadas: [...estado.rechazadas, ...rechazadas],
-      avisos: [...estado.avisos, ...avisos],
-    });
+    // Se relee todo del disco en vez de parchear campo por campo: los productos
+    // locales que se sincronizaron tienen que salir TAMBIÉN del índice de
+    // búsqueda. Si quedaran, una venta nueva los referenciaría por un uid que
+    // ya no está en el dispositivo y el servidor la rechazaría.
+    await recargarDesdeDisco();
+    set({ avisos: [...estado.avisos, ...planes.flatMap((p) => p.avisos)] });
     return resumen;
   } finally {
     set({ sincronizando: false });
   }
 }
 
-export function limpiarReportes() {
-  set({ rechazadas: [], avisos: [] });
+/**
+ * Descarta los avisos, que son informativos. Las rechazadas NO se tocan: se dan
+ * de baja de a una desde la pantalla de revisión, cuando alguien realmente
+ * cargó esa venta a mano.
+ */
+export function limpiarAvisos() {
+  set({ avisos: [] });
+}
+
+export async function resolverRechazada(uid: string) {
+  await descartarRechazada(uid);
+  set({ rechazadas: await leerRechazadas() });
+}
+
+// ---- respaldo a archivo ----
+
+/**
+ * Baja las ventas pendientes a un archivo. Es la única defensa contra que el
+ * navegador borre el almacenamiento del sitio con la cola adentro.
+ */
+export async function exportarRespaldo(): Promise<{ ok: boolean; ventas: number }> {
+  if (!hayIndexedDB()) return { ok: false, ventas: 0 };
+  const [ventas, clientesNuevos, meta] = await Promise.all([leerCola(), leerClientesNuevos(), leerMeta()]);
+  if (ventas.length === 0) return { ok: false, ventas: 0 };
+
+  const respaldo = armarRespaldo({ storeId: meta?.storeId ?? 0, ventas, clientesNuevos });
+  const blob = new Blob([JSON.stringify(respaldo, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombreDeArchivo(respaldo);
+  a.click();
+  URL.revokeObjectURL(url);
+  return { ok: true, ventas: ventas.length };
+}
+
+export async function restaurarRespaldo(texto: string): Promise<
+  { ok: true; restauradas: number; yaEstaban: number } | { ok: false; error: string }
+> {
+  if (!hayIndexedDB()) return { ok: false, error: "Este navegador no permite guardar datos." };
+
+  const meta = await leerMeta();
+  const validado = validarRespaldo(texto, meta?.storeId);
+  if (!validado.ok) return validado;
+
+  const enCola = await leerCola();
+  const { ventas, clientesNuevos, yaEstaban } = ventasAFaltantes(
+    validado.respaldo, enCola.map((v) => v.uid),
+  );
+  await restaurarEnCola(ventas, clientesNuevos);
+  await recargarDesdeDisco();
+  return { ok: true, restauradas: ventas.length, yaEstaban };
 }
 
 export { mensajeDeRechazo };
 
-/** La cola guarda nombres para mostrar; el servidor no los necesita. */
-function aPayload(v: VentaEnCola) {
+const aPayloadProducto = (p: ProductoNuevoLocal) => ({
+  uid: p.uid,
+  variantUid: p.variantUid,
+  name: p.name,
+  basePrice: p.basePrice,
+  stock: p.stock,
+  sku: p.sku ?? null,
+});
+
+/**
+ * La cola guarda nombres para mostrar; el servidor no los necesita. Y traduce
+ * los id locales negativos al `variantUid` del producto correspondiente: el
+ * servidor no conoce —ni podría conocer— esos id.
+ */
+function aPayload(v: VentaEnCola, productosLocales: ProductoNuevoLocal[]) {
+  const uidPorLocalId = new Map(productosLocales.map((p) => [p.localVariantId, p.variantUid]));
   return {
     uid: v.uid,
     capturadoEn: v.capturadoEn,
     cashSessionId: v.cashSessionId,
     paymentMethod: v.paymentMethod,
-    items: v.items.map((i) => ({
-      variantId: i.variantId,
-      quantity: i.quantity,
-      unitPrice: i.unitPrice,
-      discount: i.discount,
-    })),
+    items: v.items.map((i) => (
+      i.variantId < 0
+        ? {
+            variantUid: uidPorLocalId.get(i.variantId),
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            discount: i.discount,
+          }
+        : {
+            variantId: i.variantId,
+            quantity: i.quantity,
+            unitPrice: i.unitPrice,
+            discount: i.discount,
+          }
+    )),
     saleDiscount: v.saleDiscount,
     clientId: v.clientId ?? null,
     clientUid: v.clientUid ?? null,

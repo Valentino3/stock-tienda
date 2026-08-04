@@ -18,7 +18,9 @@
  * nueva entra la próxima vez que la app se abre de cero.
  */
 
-const VERSION = "v1";
+// Subir la versión invalida los cachés viejos en `activate`. Hay que tocarla
+// cuando cambia la lista de precache o la estrategia de alguna ruta.
+const VERSION = "v2";
 const CACHE_DOCS = `stock-tienda-docs-${VERSION}`;
 const CACHE_ASSETS = `stock-tienda-assets-${VERSION}`;
 const CACHE_SHELL = `stock-tienda-shell-${VERSION}`;
@@ -31,7 +33,7 @@ const RUTAS_OFFLINE = ["/vender"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_SHELL).then((cache) => cache.addAll([FALLBACK_OFFLINE, "/icono.svg"]))
+    caches.open(CACHE_SHELL).then((cache) => cache.addAll([FALLBACK_OFFLINE, "/icono-192.png"]))
   );
 });
 
@@ -105,7 +107,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname === "/icono.svg" || url.pathname === "/icono-maskable.svg") {
+  if (/^\/(icono|apple-icon)[\w-]*\.(png|svg)$/.test(url.pathname)) {
     event.respondWith(cachePrimero(request, CACHE_SHELL));
     return;
   }
