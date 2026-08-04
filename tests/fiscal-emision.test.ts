@@ -457,7 +457,7 @@ describe("regresiones de numeración y reconciliación", () => {
     await emitirFactura(db, fakeArca().port, { storeId: store, saleId: a.sale.id, userId: "u1" });
 
     // Mientras tanto el contador emitió del 2 al 5 desde el portal de ARCA.
-    let ultimoEnArca = 5;
+    const ultimoEnArca = 5;
     const { port, llamadas } = fakeArca({
       ultimo: () => ultimoEnArca,
       responder: (req, n) => (n === 1 ? rechazado("El numero de comprobante no es correlativo", 10016) : aprobado(req)),

@@ -9,7 +9,7 @@ import { Notice } from "@/components/ui/notice";
 import { SaleForm } from "./sale-form";
 
 export default async function VenderPage() {
-  const { storeId } = await requireStore();
+  const { storeId, role } = await requireStore();
   const session = await getOpenSession(db, storeId);
 
   if (!session) {
@@ -39,7 +39,12 @@ export default async function VenderPage() {
       {/* cashSessionId viaja al cliente porque una venta cobrada sin conexión
           tiene que quedar imputada a ESTA caja, no a la que esté abierta cuando
           se sincronice (ver src/domain/sales-replay.ts). */}
-      <SaleForm clients={clientList} storeId={storeId} cashSessionId={session.id} />
+      <SaleForm
+        clients={clientList}
+        storeId={storeId}
+        cashSessionId={session.id}
+        esDueno={role === "owner"}
+      />
     </div>
   );
 }

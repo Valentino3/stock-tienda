@@ -113,6 +113,30 @@ export type ResultadoCliente = {
 };
 
 /**
+ * Quién puede sincronizar qué.
+ *
+ * Vive acá y no dentro del route handler para poder testearla como el resto del
+ * dominio, sin mockear sesión ni base.
+ *
+ * Sincronizar ventas y clientes es del empleado: vender es su trabajo, y
+ * exigir dueño dejaría sus ventas offline sin poder entrar. Dar de alta
+ * PRODUCTOS es del dueño, igual que `saveProduct` en
+ * src/app/(app)/productos/actions.ts — sin esta guarda el replay sería una
+ * puerta lateral para crear catálogo.
+ */
+export function puedeSincronizar(input: { esDueno: boolean; cantidadProductos: number }):
+  | { ok: true }
+  | { ok: false; error: string } {
+  if (input.cantidadProductos > 0 && !input.esDueno) {
+    return {
+      ok: false,
+      error: "Solo el dueño puede dar de alta productos. Pedile que sincronice él, o que los cargue desde Productos.",
+    };
+  }
+  return { ok: true };
+}
+
+/**
  * Alta de los productos creados sin conexión. Corre ANTES que las ventas: sus
  * items referencian la variante por uid. Idempotente por (storeId, uid).
  */

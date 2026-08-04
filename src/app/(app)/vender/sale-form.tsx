@@ -13,7 +13,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
-import { buscarEnCatalogo, precioDe } from "@/lib/offline/busqueda";
+import { buscarEnCatalogo } from "@/lib/offline/busqueda";
 import {
   descargarSnapshot, encolar, altaClienteOffline, altaProductoOffline, restaurarRespaldo,
   useEstadoOffline,
@@ -159,8 +159,8 @@ function DiscountControl({
 }
 
 export function SaleForm({
-  clients: initialClients, storeId, cashSessionId,
-}: { clients: ClientOption[]; storeId: number; cashSessionId: number }) {
+  clients: initialClients, storeId, cashSessionId, esDueno,
+}: { clients: ClientOption[]; storeId: number; cashSessionId: number; esDueno: boolean }) {
   const { conectado, verificado, catalogo, clientesNuevos, meta } = useEstadoOffline();
   // Sin conexión NO se busca contra el servidor, pero tampoco se cae: si hay
   // catálogo guardado se busca ahí. Sin catálogo guardado no hay nada que
@@ -197,11 +197,17 @@ export function SaleForm({
 
   // Rehidratar el carrito guardado. Corre solo en cliente y una vez, para no
   // pisar con el estado vacío del render de servidor.
+  //
+  // El setState sincrónico acá es intencional y no se puede evitar con un
+  // inicializador perezoso de useState: el servidor no ve localStorage, así
+  // que inicializar desde ahí daría un desajuste de hidratación. El costo es
+  // un render extra, una sola vez al montar.
   useEffect(() => {
     try {
       const raw = localStorage.getItem(carritoKey(storeId));
       const snap = raw ? (JSON.parse(raw) as CarritoGuardado) : null;
       if (snap?.v === CARRITO_VERSION && Array.isArray(snap.cart) && snap.cart.length > 0) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setCart(snap.cart);
         setSaleUid(snap.uid ?? "");
         setPaymentMethod(snap.paymentMethod ?? "efectivo");
@@ -619,7 +625,10 @@ export function SaleForm({
               es del último momento con conexión.
             </Notice>
           )}
-          {offline && (
+          {/* Dar de alta un producto es del dueño, igual que en Productos. Si el
+              empleado pudiera encolarlo, el lote entero rebotaría con 403 al
+              sincronizar y tampoco entrarían sus ventas. */}
+          {offline && esDueno && (
             <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
               <span>¿El producto no está en el catálogo?</span>
               <Button type="button" variant="outline" size="sm" onClick={() => setNuevoProdOpen(true)}>

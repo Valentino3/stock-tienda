@@ -228,7 +228,15 @@ export async function altaProductoOffline(input: {
  * dependen del orden de llegada. Con la cola de un solo dispositivo, la
  * secuencia es barata y el resultado es reproducible.
  */
-export async function sincronizarCola(): Promise<{ sincronizadas: number; rechazadas: number; conAvisos: number } | null> {
+export type ResumenSincronizacion = {
+  sincronizadas: number;
+  rechazadas: number;
+  conAvisos: number;
+  /** El servidor contestó y rechazó el lote. No es falta de conexión. */
+  errorDelServidor?: string;
+};
+
+export async function sincronizarCola(): Promise<ResumenSincronizacion | null> {
   if (estado.sincronizando || !hayIndexedDB()) return null;
 
   const cola = await leerCola();
@@ -237,6 +245,7 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
 
   set({ sincronizando: true });
   const planes: PlanDeLimpieza[] = [];
+  let errorDelServidor: string | undefined;
 
   try {
     // Productos y clientes viajan en TODOS los lotes, no solo en el primero.
@@ -265,7 +274,15 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
         break;
       }
       if (!respuesta.ok && respuesta.status !== 207) {
-        for (const v of lote) await marcarIntento(v.uid, `HTTP ${respuesta.status}`);
+        // El servidor contestó y dijo que no. Es distinto de "no hay red", y
+        // reintentar solo no lo va a arreglar: el caso típico es un 403 porque
+        // hay un producto en la cola y quien sincroniza no es el dueño. Se
+        // muestra el motivo en vez de dejarlo reintentando en silencio.
+        const motivo = await respuesta.json()
+          .then((b: { error?: string }) => b?.error)
+          .catch(() => undefined);
+        for (const v of lote) await marcarIntento(v.uid, motivo ?? `HTTP ${respuesta.status}`);
+        errorDelServidor = motivo ?? `El servidor rechazó la sincronización (HTTP ${respuesta.status}).`;
         break;
       }
 
@@ -300,7 +317,7 @@ export async function sincronizarCola(): Promise<{ sincronizadas: number; rechaz
     // ya no está en el dispositivo y el servidor la rechazaría.
     await recargarDesdeDisco();
     set({ avisos: [...estado.avisos, ...planes.flatMap((p) => p.avisos)] });
-    return resumen;
+    return { ...resumen, errorDelServidor };
   } finally {
     set({ sincronizando: false });
   }

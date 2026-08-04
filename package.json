@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
+    "migrate": "drizzle-kit migrate",
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
     "seed:store": "tsx scripts/seed-store.ts",
     "seed:demo": "tsx scripts/seed-demo.ts"

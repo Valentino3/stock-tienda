@@ -44,6 +44,12 @@ export function BarraOffline() {
       toast.error("No se pudo conectar con el servidor. Se reintenta solo.");
       return;
     }
+    if (resumen.errorDelServidor) {
+      // El servidor contestó que no. Reintentar no lo arregla, así que se dice
+      // el motivo en vez del genérico de conexión.
+      toast.error(resumen.errorDelServidor, { duration: 10_000 });
+      return;
+    }
     if (resumen.sincronizadas > 0) {
       toast.success(`${number(resumen.sincronizadas)} venta(s) sincronizada(s).`);
     }

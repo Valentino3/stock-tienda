@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo a la misma rama cancela la corrida anterior: no tiene sentido
+# esperar tests de un commit que ya quedó viejo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    # La suite levanta un PGlite por archivo de test y replica las 20+
+    # migraciones en cada uno; en local tarda ~100 s y el runner es más lento.
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Node 22 trae npm 10, y npm 10 y 11 no resuelven igual las
+      # peerDependencies OPCIONALES: vite declara `esbuild` como peer opcional,
+      # npm 11 la omite del lock y npm 10 la exige, así que `npm ci` falla con
+      # "Missing: esbuild@0.28.1 from lock file" contra un lock perfectamente
+      # válido. Se fija la versión para que CI resuelva igual que la máquina
+      # donde se genera el lock.
+      - run: npm i -g npm@11
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      # No necesita base: los tests corren contra PGlite en memoria
+      # (tests/helpers/db.ts), que replica los .sql de drizzle/.
+      - name: Tests
+        run: npm test
+
+      # El schema de Drizzle y las migraciones tienen que estar sincronizados.
+      # Si alguien tocó src/db/schema.ts sin generar la migración, acá aparece
+      # un archivo nuevo sin commitear y el job falla.
+      - name: El schema no tiene migraciones pendientes
+        run: |
+          npx drizzle-kit generate
+          if [ -n "$(git status --porcelain drizzle/)" ]; then
+            echo "::error::src/db/schema.ts cambió sin su migración. Corré 'npx drizzle-kit generate' y commiteá el resultado."
+            git status --porcelain drizzle/
+            git diff -- drizzle/
+            exit 1
+          fi
+        env:
+          # drizzle.config.ts lee DATABASE_URL de .env.local, que no existe en
+          # CI. `generate` no se conecta a la base — compara el schema contra
+          # los snapshots de drizzle/meta — pero la config igual necesita que
+          # la variable esté definida.
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          BETTER_AUTH_SECRET: ci-secret-no-se-usa-en-runtime
+          BETTER_AUTH_URL: http://localhost:3000
