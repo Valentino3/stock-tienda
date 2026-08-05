@@ -55,12 +55,13 @@ export type VerticalConfig = {
   nav: (ctx: ContextoNav) => NavGroup[];
 };
 
-const NAV_ADMIN = (ctx: ContextoNav, extra: { importar: boolean }): NavGroup[] =>
+const NAV_ADMIN = (ctx: ContextoNav, extra: { importar: boolean; mesas?: boolean }): NavGroup[] =>
   ctx.isOwner
     ? [
         {
           label: "Administración",
           links: [
+            ...(extra.mesas ? [{ href: "/mesas", label: "Mesas" }] : []),
             ...(extra.importar ? [{ href: "/importar", label: "Importar" }] : []),
             { href: "/reportes", label: "Reportes" },
             { href: "/comisiones", label: "Comisiones" },
@@ -108,9 +109,8 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
    * Restaurante, bar, cafetería. Un plato es una variante sin stock: se cobra,
    * se factura y se reporta igual que cualquier otra cosa.
    *
-   * Todavía sin Salón ni Comandas — esas rutas llegan con las fases de mesas y
-   * órdenes. Hasta entonces un local gastronómico ya puede cobrar de mostrador
-   * con las etiquetas correctas.
+   * Salón va primero porque es la pantalla donde el mozo pasa el turno.
+   * "Vender" sigue estando para el mostrador y el para llevar.
    */
   gastronomia: {
     key: "gastronomia",
@@ -126,7 +126,8 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
       {
         label: "Operación",
         links: [
-          { href: "/vender", label: "Vender" },
+          { href: "/salon", label: "Salón" },
+          { href: "/vender", label: "Mostrador" },
           { href: "/productos", label: "Menú" },
           { href: "/ventas", label: "Ventas" },
           { href: "/clientes", label: "Clientes" },
@@ -135,7 +136,7 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
       },
       // Sin "Importar": la carga masiva por Excel está pensada para catálogos
       // de miles de artículos, no para una carta de cincuenta platos.
-      ...NAV_ADMIN(ctx, { importar: false }),
+      ...NAV_ADMIN(ctx, { importar: false, mesas: true }),
     ],
   },
 };
