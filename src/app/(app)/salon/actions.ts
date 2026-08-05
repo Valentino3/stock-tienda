@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
-  abrirOrden, agregarItem, cambiarCantidad, cancelarOrden, crearMesa, pagarOrden,
+  abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
+  crearMesa, pagarOrden,
 } from "@/domain/orders";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import type { Discount } from "@/domain/sales";
@@ -73,6 +74,28 @@ export async function cambiarCantidadDeItem(orderId: number, itemId: number, qua
     revalidatePath(`/salon/${orderId}`);
     revalidatePath("/salon");
     return { ok: true as const, total: orden.total };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function ponerNota(orderId: number, itemId: number, notes: string) {
+  const { storeId } = await requireStore();
+  try {
+    await cambiarNota(db, { storeId, orderId, itemId, notes });
+    revalidatePath(`/salon/${orderId}`);
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function ponerComensales(orderId: number, guests: number | null) {
+  const { storeId } = await requireStore();
+  try {
+    await cambiarComensales(db, { storeId, orderId, guests });
+    revalidatePath(`/salon/${orderId}`);
+    return { ok: true as const };
   } catch (e) {
     return { error: traducir(e) };
   }

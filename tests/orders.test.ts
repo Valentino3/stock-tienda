@@ -7,7 +7,8 @@ import {
 } from "@/db/schema";
 import { closeCashSession, openCashSession } from "@/domain/cash";
 import {
-  abrirOrden, agregarItem, cambiarCantidad, cancelarOrden, crearMesa, getOrden,
+  abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
+  crearMesa, getOrden,
   listarMesas, listarOrdenesAbiertas, pagarOrden,
 } from "@/domain/orders";
 
@@ -368,6 +369,91 @@ describe("pagos parciales — la base de dividir la cuenta", () => {
     await cobrar(o.id, { itemIds: [items[0].id] });
 
     await expect(cancelarOrden(db, { storeId: store, orderId: o.id })).rejects.toThrow("ORDEN_CON_PAGOS");
+  });
+});
+
+describe("notas de cocina y comensales", () => {
+  it("guarda y borra la nota de una línea", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    await cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "  sin sal  " });
+    const [conNota] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(conNota.notes).toBe("sin sal");
+
+    await cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "   " });
+    const [sinNota] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(sinNota.notes).toBeNull();
+  });
+
+  it("la nota se puede poner al agregar", async () => {
+    const o = await abrir();
+    await agregarItem(db, {
+      storeId: store, orderId: o.id, variantId: milanesa, quantity: 1, notes: "a punto",
+    });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    expect(item.notes).toBe("a punto");
+  });
+
+  it("no se puede anotar un ítem ya cobrado", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    await cobrar(o.id);
+
+    await expect(
+      cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "tarde" }),
+    ).rejects.toThrow("ORDEN_CERRADA");
+  });
+
+  it("guarda los comensales", async () => {
+    const o = await abrir();
+    const actualizada = await cambiarComensales(db, { storeId: store, orderId: o.id, guests: 4 });
+    expect(actualizada.guests).toBe(4);
+
+    const vaciada = await cambiarComensales(db, { storeId: store, orderId: o.id, guests: null });
+    expect(vaciada.guests).toBeNull();
+  });
+
+  it("rechaza una cantidad de comensales absurda", async () => {
+    const o = await abrir();
+    await expect(
+      cambiarComensales(db, { storeId: store, orderId: o.id, guests: 0 }),
+    ).rejects.toThrow("INVALID_QUANTITY");
+    await expect(
+      cambiarComensales(db, { storeId: store, orderId: o.id, guests: 2.5 }),
+    ).rejects.toThrow("INVALID_QUANTITY");
+  });
+
+  it("no cruza tiendas", async () => {
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const o = await abrir();
+    await expect(
+      cambiarComensales(db, { storeId: store2, orderId: o.id, guests: 2 }),
+    ).rejects.toThrow("ORDEN_NO_ENCONTRADA");
+  });
+});
+
+describe("descuento al cobrar", () => {
+  it("el descuento general se aplica sobre la venta", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+
+    const r = await cobrar(o.id, { saleDiscount: { kind: "amount", value: 1000 } });
+    expect(r.sale.total).toBe(15000);
+    expect(r.sale.discountAmount).toBe(1000);
+  });
+
+  it("un descuento no dispara el aviso de cambio de precio", async () => {
+    // El aviso compara contra la cuenta YA descontada: un descuento
+    // intencional no es una divergencia de catálogo.
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+
+    const r = await cobrar(o.id, { saleDiscount: { kind: "percent", value: 10 } });
+    expect(r.sale.total).toBe(14400);
+    expect(r.avisoDePrecio).toBeUndefined();
   });
 });
 

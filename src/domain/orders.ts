@@ -172,6 +172,52 @@ export async function cambiarCantidad(
   });
 }
 
+/**
+ * Nota de cocina de una línea: "sin sal", "a punto", "sin cebolla".
+ *
+ * Es lo que hace que la comanda sirva de verdad. Igual que la cantidad, solo
+ * se puede tocar mientras el ítem esté impago.
+ */
+export async function cambiarNota(
+  db: any,
+  input: { storeId: number; orderId: number; itemId: number; notes: string | null },
+): Promise<void> {
+  await db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+
+    const [item] = await tx.select().from(orderItems)
+      .where(and(
+        eq(orderItems.id, input.itemId),
+        eq(orderItems.orderId, input.orderId),
+        eq(orderItems.storeId, input.storeId),
+      ));
+    if (!item) throw new Error("ITEM_NO_ENCONTRADO");
+    if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+
+    await tx.update(orderItems)
+      .set({ notes: input.notes?.trim() || null })
+      .where(eq(orderItems.id, input.itemId));
+  });
+}
+
+/** Cuántos se sentaron. Sirve para dividir la cuenta y para estadística. */
+export async function cambiarComensales(
+  db: any,
+  input: { storeId: number; orderId: number; guests: number | null },
+): Promise<Order> {
+  if (input.guests != null && (!Number.isInteger(input.guests) || input.guests < 1)) {
+    throw new Error("INVALID_QUANTITY");
+  }
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+    const [orden] = await tx.update(orders)
+      .set({ guests: input.guests })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return orden;
+  });
+}
+
 export async function cancelarOrden(
   db: any,
   input: { storeId: number; orderId: number },

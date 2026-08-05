@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Minus, Plus, Search, Trash2 } from "lucide-react";
+import { Minus, Plus, Printer, Search, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,9 @@ import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
   agregarALaComanda, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda, cobrarComanda,
+  ponerComensales, ponerNota,
 } from "../actions";
+import { CuentaImprimible } from "./cuenta-imprimible";
 
 type ClienteOption = { id: number; name: string };
 type Resultado = Awaited<ReturnType<typeof buscarParaComanda>>[number];
@@ -27,12 +29,13 @@ const METODOS = [
 type Metodo = (typeof METODOS)[number]["value"];
 
 export function OrdenClient({
-  orden, items, clientes, ventas,
+  orden, items, clientes, ventas, titulo,
 }: {
   orden: Order;
   items: OrderItem[];
   clientes: ClienteOption[];
   ventas: Sale[];
+  titulo: string;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -42,6 +45,12 @@ export function OrdenClient({
   const [clientId, setClientId] = useState("");
   const [seleccion, setSeleccion] = useState<number[]>([]);
   const [error, setError] = useState("");
+  const [mostrarCuenta, setMostrarCuenta] = useState(false);
+  const [descuento, setDescuento] = useState("");
+  const [tipoDescuento, setTipoDescuento] = useState<"amount" | "percent">("amount");
+  // Qué línea tiene la nota abierta para editar, y su borrador.
+  const [notaAbierta, setNotaAbierta] = useState<number | null>(null);
+  const [borradorNota, setBorradorNota] = useState("");
 
   const cerrada = orden.status === "pagada" || orden.status === "cancelada";
   const impagos = items.filter((i) => i.saleId == null);
@@ -85,6 +94,12 @@ export function OrdenClient({
   const cambiar = (itemId: number, cantidad: number) =>
     correr(() => cambiarCantidadDeItem(orden.id, itemId, cantidad));
 
+  const guardarNota = (itemId: number) =>
+    correr(() => ponerNota(orden.id, itemId, borradorNota), () => {
+      setNotaAbierta(null);
+      setBorradorNota("");
+    });
+
   function cobrar() {
     if (metodo === "cuenta" && !clientId) {
       setError("Elegí un cliente para la venta a cuenta.");
@@ -92,11 +107,13 @@ export function OrdenClient({
     }
     setError("");
     startTransition(async () => {
+      const valorDescuento = Number(descuento.replace(",", "."));
       const res = await cobrarComanda({
         orderId: orden.id,
         paymentMethod: metodo,
         clientId: metodo === "cuenta" ? Number(clientId) : undefined,
         itemIds: seleccion.length ? seleccion : undefined,
+        saleDiscount: valorDescuento > 0 ? { kind: tipoDescuento, value: valorDescuento } : undefined,
       });
       if ("error" in res && res.error) {
         setError(res.error);
@@ -117,6 +134,7 @@ export function OrdenClient({
             : `Venta #${res.saleId} registrada — ${money(res.total)}`,
         );
         setSeleccion([]);
+        setDescuento("");
         if (!res.parcial) router.push("/salon");
         else router.refresh();
       }
@@ -200,6 +218,16 @@ export function OrdenClient({
                     {!cerrada && !cobrado && (
                       <div className="flex items-center gap-1">
                         <Button
+                          type="button" variant="ghost" size="icon" className="size-7"
+                          disabled={pending} aria-label="Nota para cocina"
+                          onClick={() => {
+                            setNotaAbierta(notaAbierta === i.id ? null : i.id);
+                            setBorradorNota(i.notes ?? "");
+                          }}
+                        >
+                          <StickyNote className={cn("size-3", i.notes && "text-brand")} />
+                        </Button>
+                        <Button
                           type="button" variant="outline" size="icon" className="size-7"
                           disabled={pending} aria-label="Restar uno"
                           onClick={() => cambiar(i.id, i.quantity - 1)}
@@ -231,6 +259,28 @@ export function OrdenClient({
               })}
             </ul>
           )}
+
+          {notaAbierta != null && (
+            <div className="flex items-end gap-2 rounded-lg border border-border bg-muted/30 p-3">
+              <div className="flex-1 space-y-1">
+                <span className="ledger-label">Nota para cocina</span>
+                <Input
+                  className="h-8"
+                  value={borradorNota}
+                  autoFocus
+                  placeholder="Sin sal, a punto, sin cebolla…"
+                  onChange={(e) => setBorradorNota(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); guardarNota(notaAbierta); }
+                    if (e.key === "Escape") setNotaAbierta(null);
+                  }}
+                />
+              </div>
+              <Button type="button" size="sm" disabled={pending} onClick={() => guardarNota(notaAbierta)}>
+                Guardar
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -248,6 +298,67 @@ export function OrdenClient({
 
           {!cerrada && (
             <>
+              <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <span className="ledger-label">Comensales</span>
+                  <Input
+                    className="h-8"
+                    inputMode="numeric"
+                    defaultValue={orden.guests ?? ""}
+                    placeholder="—"
+                    aria-label="Cantidad de comensales"
+                    // onBlur y no onChange: guardar en cada tecla dispararía
+                    // una acción de servidor por dígito.
+                    onBlur={(e) => {
+                      const v = e.target.value.trim();
+                      const n = v === "" ? null : Number(v);
+                      if (n === (orden.guests ?? null)) return;
+                      correr(() => ponerComensales(orden.id, n));
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button" variant="outline" size="sm"
+                  disabled={impagos.length === 0}
+                  onClick={() => setMostrarCuenta(true)}
+                >
+                  <Printer className="mr-1 size-3" /> Cuenta
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                <span className="ledger-label">Descuento (opcional)</span>
+                <div className="flex gap-2">
+                  <Input
+                    className="h-8"
+                    inputMode="decimal"
+                    value={descuento}
+                    placeholder="0"
+                    aria-label="Descuento"
+                    onChange={(e) => setDescuento(e.target.value)}
+                  />
+                  <div className="flex overflow-hidden rounded-lg border border-border">
+                    {(["amount", "percent"] as const).map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setTipoDescuento(k)}
+                        aria-pressed={tipoDescuento === k}
+                        aria-label={k === "amount" ? "Descuento en pesos" : "Descuento en porcentaje"}
+                        className={cn(
+                          "size-8 text-sm transition-colors",
+                          tipoDescuento === k
+                            ? "bg-brand text-brand-foreground"
+                            : "text-muted-foreground hover:bg-accent",
+                        )}
+                      >
+                        {k === "amount" ? "$" : "%"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-baseline justify-between">
                 <span className="text-sm text-muted-foreground">
                   {seleccion.length ? `${seleccion.length} ítem(s) elegidos` : "Total de la mesa"}
@@ -317,6 +428,15 @@ export function OrdenClient({
           )}
         </CardContent>
       </Card>
+
+      {mostrarCuenta && (
+        <CuentaImprimible
+          titulo={titulo}
+          items={impagos}
+          comensales={orden.guests}
+          onClose={() => setMostrarCuenta(false)}
+        />
+      )}
     </div>
   );
 }
