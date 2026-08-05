@@ -54,6 +54,8 @@ export type SaleInput = {
   // Clave de idempotencia del carrito (ver sales.uid en schema.ts). Opcional:
   // sin uid la venta entra siempre, que es el comportamiento histórico.
   uid?: string | null;
+  // Orden del salón que originó la venta, si vino de una mesa.
+  orderId?: number | null;
 };
 
 const PG_UNIQUE_VIOLATION = "23505";
@@ -136,6 +138,7 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         discountAmount: saleDiscount,
         paymentMethod: input.paymentMethod,
         clientId: input.paymentMethod === "cuenta" ? input.clientId : null,
+        orderId: input.orderId ?? null,
       }).returning();
 
       // Cargo en la cuenta corriente del cliente (queda como deuda).

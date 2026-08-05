@@ -127,6 +127,13 @@ export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", 
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
 export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egreso"]);
 
+// ---- gastronomía ----
+// Conjuntos cerrados nuestros, no códigos de un tercero: van como pgEnum y en
+// castellano, igual que paymentMethod y movementType. (Los códigos de ARCA sí
+// son smallint, porque los define el organismo.)
+export const tableShapeEnum = pgEnum("table_shape", ["rect", "circle"]);
+export const orderStatusEnum = pgEnum("order_status", ["abierta", "a_cobrar", "pagada", "cancelada"]);
+
 export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   // Identidad de un producto dado de alta sin conexión (típicamente en una
@@ -250,6 +257,14 @@ export const sales = pgTable("sales", {
   voided: boolean("voided").notNull().default(false),
   voidedAt: timestamp("voided_at"),
   voidedBy: text("voided_by").references(() => user.id),
+  /**
+   * Orden (mesa) que originó esta venta, si vino del salón.
+   *
+   * El FK vive acá y no en `orders.saleId` a propósito: cuesta lo mismo y
+   * permite N ventas por orden, que es exactamente lo que necesita dividir la
+   * cuenta. Cada pago parcial es una venta con su propio comprobante.
+   */
+  orderId: integer("order_id").references((): AnyPgColumn => orders.id),
 }, (t) => [
   index("sales_store_idx").on(t.storeId),
   // Backstop en DB de la idempotencia: dos submits con el mismo uid no pueden
@@ -258,6 +273,99 @@ export const sales = pgTable("sales", {
   // sin uid conviven sin chocar (mismo criterio que product_variants.sku).
   uniqueIndex("sales_store_uid_idx").on(t.storeId, t.uid),
 ]);
+
+// ---- gastronomía: mesas y órdenes ----
+//
+// Una orden es una mesa abierta: se le agregan cosas durante una hora y recién
+// al final se cobra. NO es una venta en borrador, y esa es la decisión de
+// diseño que sostiene toda la vertical.
+//
+// `sales` promete cosas que una mesa abierta rompe: cashSessionId es NOT NULL
+// (y una mesa abierta a las 23 y cobrada a la 1 cruza el cierre de caja),
+// paymentMethod es NOT NULL y no tiene valor "sin pagar", createSale descuenta
+// stock en la misma transacción, y `voided` significa "hubo una venta y la
+// revertimos", no "la mesa se fue sin consumir". Modelarla como borrador
+// obligaría a agregar un filtro `status = 'pagada'` a ocho consultas de plata,
+// entre ellas el cierre de caja y la carga de la factura — y una mesa impaga
+// se volvería facturable.
+//
+// Con la orden aparte, `pagarOrden` llama al createSale de siempre y desde ese
+// instante la venta es indistinguible de una de mostrador.
+export const diningTables = pgTable("dining_tables", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  name: text("name").notNull(),
+  // NOT NULL con default: un sector nullable haría inútil el índice único de
+  // abajo, porque Postgres trata cada NULL como distinto.
+  sector: text("sector").notNull().default("Salón"),
+  capacity: integer("capacity"),
+  shape: tableShapeEnum("shape").notNull().default("rect"),
+  // Geometría del plano de salón, en PORCENTAJE del lienzo (0-100). numeric y
+  // no real, para no meter el único tipo flotante del schema.
+  floorX: numeric("floor_x", { precision: 5, scale: 2, mode: "number" }),
+  floorY: numeric("floor_y", { precision: 5, scale: 2, mode: "number" }),
+  floorWidth: numeric("floor_width", { precision: 5, scale: 2, mode: "number" }),
+  floorHeight: numeric("floor_height", { precision: 5, scale: 2, mode: "number" }),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("dining_tables_store_idx").on(t.storeId),
+  uniqueIndex("dining_tables_store_sector_name_idx").on(t.storeId, t.sector, t.name),
+]);
+
+// NOTA: existe además un índice único parcial `orders_una_abierta_por_mesa_idx`
+// que garantiza a nivel de DB como máximo UNA orden viva por mesa:
+//   ON orders (table_id) WHERE status IN ('abierta','a_cobrar')
+// No se modela con drizzle-kit porque es un índice único parcial (mismo caso
+// que cash_sessions_one_open_idx). `table_id` es nullable para las órdenes de
+// mostrador, y como Postgres trata cada NULL como distinto, esas no chocan
+// entre sí — sale gratis. Ver abrirOrden en src/domain/orders.ts para el
+// manejo del 23505.
+export const orders = pgTable("orders", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  // Idempotencia, igual que sales.uid: "abrir mesa 5" tocado dos veces desde
+  // un teléfono con mala señal no puede abrir dos órdenes.
+  uid: text("uid"),
+  // null = orden de mostrador / para llevar.
+  tableId: integer("table_id").references(() => diningTables.id),
+  status: orderStatusEnum("status").notNull().default("abierta"),
+  guests: integer("guests"),
+  notes: text("notes"),
+  openedBy: text("opened_by").notNull().references(() => user.id),
+  openedAt: timestamp("opened_at").notNull().defaultNow(),
+  closedAt: timestamp("closed_at"),
+  // Recalculados por el servidor después de cada cambio. Nunca se confía en un
+  // total mandado por el cliente.
+  subtotal: numeric("subtotal", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  total: numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+}, (t) => [
+  index("orders_store_status_idx").on(t.storeId, t.status),
+  uniqueIndex("orders_store_uid_idx").on(t.storeId, t.uid),
+]);
+
+export const orderItems = pgTable("order_items", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  orderId: integer("order_id").notNull().references(() => orders.id),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  variantId: integer("variant_id").notNull().references(() => productVariants.id),
+  quantity: integer("quantity").notNull(),
+  unitPrice: numeric("unit_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  // Nombre congelado al momento de pedir: el ticket de la comanda tiene que
+  // decir lo que se pidió aunque después se renombre el plato.
+  nameSnapshot: text("name_snapshot").notNull(),
+  notes: text("notes"),
+  /**
+   * Venta que pagó ESTE ítem. null = todavía impago.
+   *
+   * Es la pieza que hace simple la división de cuenta: se cobran los ítems que
+   * se elijan, cada tanda es una venta con su comprobante, y la orden se cierra
+   * cuando no queda ninguno en null.
+   */
+  saleId: integer("sale_id").references(() => sales.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("order_items_order_idx").on(t.orderId)]);
 
 export const saleItems = pgTable("sale_items", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -631,6 +739,10 @@ export type ArcaCredentials = typeof arcaCredentials.$inferSelect;
 export type ArcaAccessTicket = typeof arcaAccessTickets.$inferSelect;
 export type Comprobante = typeof comprobantes.$inferSelect;
 export type NuevoComprobante = typeof comprobantes.$inferInsert;
+export type DiningTable = typeof diningTables.$inferSelect;
+export type Order = typeof orders.$inferSelect;
+export type OrderItem = typeof orderItems.$inferSelect;
+export type OrderStatus = (typeof orderStatusEnum.enumValues)[number];
 export type ArcaAmbiente = (typeof arcaAmbienteEnum.enumValues)[number];
 export type ComprobanteClase = (typeof comprobanteClaseEnum.enumValues)[number];
 export type ComprobanteEstado = (typeof comprobanteEstadoEnum.enumValues)[number];

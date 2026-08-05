@@ -70,6 +70,35 @@ describe("gastronomía", () => {
     expect(VERTICALS.gastronomia.etiquetas.producto).toBe("Plato");
   });
 
+  it("Salón es lo primero: es donde el mozo pasa el turno", () => {
+    const operacion = VERTICALS.gastronomia
+      .nav({ isOwner: true, openAvisos: 0 })
+      .find((g) => g.label === "Operación");
+    expect(operacion?.links[0]).toEqual({ href: "/salon", label: "Salón" });
+  });
+
+  it("el ABM de mesas es del dueño", () => {
+    const delEmpleado = VERTICALS.gastronomia
+      .nav({ isOwner: false, openAvisos: 0 })
+      .flatMap((g) => g.links.map((l) => l.href));
+    const delDueno = VERTICALS.gastronomia
+      .nav({ isOwner: true, openAvisos: 0 })
+      .flatMap((g) => g.links.map((l) => l.href));
+
+    expect(delEmpleado).not.toContain("/mesas");
+    expect(delDueno).toContain("/mesas");
+    // El empleado sí entra al salón: es su pantalla de trabajo.
+    expect(delEmpleado).toContain("/salon");
+  });
+
+  it("retail no tiene salón ni mesas", () => {
+    const hrefs = VERTICALS.retail
+      .nav({ isOwner: true, openAvisos: 0 })
+      .flatMap((g) => g.links.map((l) => l.href));
+    expect(hrefs).not.toContain("/salon");
+    expect(hrefs).not.toContain("/mesas");
+  });
+
   it("no ofrece importar por Excel", () => {
     const hrefs = VERTICALS.gastronomia
       .nav({ isOwner: true, openAvisos: 0 })
