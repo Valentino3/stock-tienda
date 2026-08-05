@@ -3,25 +3,31 @@ import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { getOpenSession } from "@/domain/cash";
 import { listarMesas, listarOrdenesAbiertas } from "@/domain/orders";
+import { getPlano, hayPlano } from "@/domain/floor-plan";
 import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
 import { SalonClient } from "./salon-client";
+import { PlanoSalon } from "./plano-salon";
 
 /**
  * Salón: el estado de las mesas de un vistazo.
  *
- * Es una grilla de tarjetas, no un plano arrastrable. El mozo está en un
- * teléfono y arrastrar cajitas en una pantalla de cinco pulgadas es peor que
- * una lista. El plano visual llega después y esta grilla se queda como vista
- * móvil.
+ * Dos vistas del mismo dato. En pantalla grande, el plano que armó el dueño en
+ * /mesas, que es donde el mozo reconoce el salón real. En el teléfono, una
+ * grilla de tarjetas ordenada por tiempo de espera: apuntar una cajita del 12%
+ * del ancho en cinco pulgadas es peor que tocar una fila de una lista.
+ *
+ * Si todavía nadie acomodó el plano, manda la grilla en las dos.
  */
 export default async function SalonPage() {
   const { storeId } = await requireStore();
 
-  const [mesas, sueltas, caja] = await Promise.all([
+  const [mesas, sueltas, caja, plano, conPlano] = await Promise.all([
     listarMesas(db, storeId),
     listarOrdenesAbiertas(db, storeId),
     getOpenSession(db, storeId),
+    getPlano(db, storeId),
+    hayPlano(db, storeId),
   ]);
 
   // Las de mostrador / para llevar no tienen mesa y se muestran aparte.
@@ -49,7 +55,22 @@ export default async function SalonPage() {
           para empezar.
         </p>
       ) : (
-        <SalonClient mesas={mesas} deMostrador={deMostrador} />
+        <>
+          {/* El plano solo en pantalla grande: en el teléfono, apuntar una
+              cajita del 12% del ancho es peor que tocar una tarjeta de una
+              lista. La grilla no es un respaldo, es la vista móvil. */}
+          {conPlano && (
+            <div className="hidden lg:block">
+              <PlanoSalon plano={plano} ordenes={sueltas} />
+            </div>
+          )}
+          <div className={conPlano ? "lg:hidden" : undefined}>
+            <SalonClient mesas={mesas} deMostrador={deMostrador} soloMesas />
+          </div>
+          {/* Los pedidos sin mesa no entran en un plano: se muestran igual en
+              las dos vistas, y una sola vez. */}
+          <SalonClient mesas={[]} deMostrador={deMostrador} soloMostrador />
+        </>
       )}
     </div>
   );

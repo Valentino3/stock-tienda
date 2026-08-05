@@ -2,9 +2,11 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { requireStoreOwner } from "@/lib/session";
 import { listarMesas } from "@/domain/orders";
+import { getPlano } from "@/domain/floor-plan";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { NuevaMesaForm } from "./mesas-client";
+import { PlanoEditor } from "./plano-editor";
 
 /** Configuración del local: qué mesas hay. Del dueño, como el resto del ABM. */
 export default async function MesasPage() {
@@ -16,7 +18,7 @@ export default async function MesasPage() {
     redirect("/salon");
   }
 
-  const mesas = await listarMesas(db, storeId);
+  const [mesas, plano] = await Promise.all([listarMesas(db, storeId), getPlano(db, storeId)]);
   const sectores = [...new Set(mesas.map((m) => m.mesa.sector))].sort();
 
   return (
@@ -26,6 +28,12 @@ export default async function MesasPage() {
         description="Las mesas del local, agrupadas por sector."
         actions={<NuevaMesaForm />}
       />
+
+      {mesas.length > 0 && (
+        <Section label="Plano">
+          <PlanoEditor plano={plano} />
+        </Section>
+      )}
 
       {mesas.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">

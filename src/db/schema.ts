@@ -133,6 +133,7 @@ export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egre
 // son smallint, porque los define el organismo.)
 export const tableShapeEnum = pgEnum("table_shape", ["rect", "circle"]);
 export const orderStatusEnum = pgEnum("order_status", ["abierta", "a_cobrar", "pagada", "cancelada"]);
+export const floorMarkerTypeEnum = pgEnum("floor_marker_type", ["puerta", "pared", "ventana", "barra"]);
 
 export const products = pgTable("products", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -312,6 +313,28 @@ export const diningTables = pgTable("dining_tables", {
   index("dining_tables_store_idx").on(t.storeId),
   uniqueIndex("dining_tables_store_sector_name_idx").on(t.storeId, t.sector, t.name),
 ]);
+
+/**
+ * Referencias fijas del plano: puertas, paredes, ventanas, la barra.
+ *
+ * No son mesas y nunca tienen una orden. Existen para que el mozo reconozca el
+ * salón: una grilla de cajitas sin la puerta ni la barra es tan abstracta como
+ * la lista, y entonces el plano no aporta nada sobre la vista de tarjetas.
+ *
+ * Misma geometría en porcentaje que las mesas, para que el lienzo sea uno solo.
+ */
+export const floorPlanMarkers = pgTable("floor_plan_markers", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  type: floorMarkerTypeEnum("type").notNull(),
+  label: text("label"),
+  sector: text("sector").notNull().default("Salón"),
+  floorX: numeric("floor_x", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
+  floorY: numeric("floor_y", { precision: 5, scale: 2, mode: "number" }).notNull().default(10),
+  floorWidth: numeric("floor_width", { precision: 5, scale: 2, mode: "number" }).notNull().default(20),
+  floorHeight: numeric("floor_height", { precision: 5, scale: 2, mode: "number" }).notNull().default(4),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [index("floor_plan_markers_store_idx").on(t.storeId)]);
 
 // NOTA: existe además un índice único parcial `orders_una_abierta_por_mesa_idx`
 // que garantiza a nivel de DB como máximo UNA orden viva por mesa:
@@ -740,6 +763,8 @@ export type ArcaAccessTicket = typeof arcaAccessTickets.$inferSelect;
 export type Comprobante = typeof comprobantes.$inferSelect;
 export type NuevoComprobante = typeof comprobantes.$inferInsert;
 export type DiningTable = typeof diningTables.$inferSelect;
+export type FloorPlanMarker = typeof floorPlanMarkers.$inferSelect;
+export type FloorMarkerType = (typeof floorMarkerTypeEnum.enumValues)[number];
 export type Order = typeof orders.$inferSelect;
 export type OrderItem = typeof orderItems.$inferSelect;
 export type OrderStatus = (typeof orderStatusEnum.enumValues)[number];

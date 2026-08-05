@@ -169,6 +169,13 @@
       "when": 1785871500000,
       "tag": "0023_ordenes_una_por_mesa",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785949373765,
+      "tag": "0024_plano_salon",
+      "breakpoints": true
     }
   ]
 }
