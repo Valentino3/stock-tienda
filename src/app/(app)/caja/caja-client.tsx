@@ -136,6 +136,13 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
             tone={matches ? "success" : "destructive"}
             hint={matches ? "La caja cuadra." : "Revisar el conteo."}
           />
+          {/* Sin esto la pantalla de cierre es un callejón: el arqueo queda
+              a la vista y no hay forma de volver a abrir sin navegar afuera y
+              entrar de nuevo. Pasa cuando se cierra por error, o cuando hay
+              dos turnos en el día. */}
+          <Button type="button" variant="outline" className="w-full" onClick={() => setClosedResult(null)}>
+            Abrir otra caja
+          </Button>
         </CardContent>
       </Card>
     );

@@ -271,8 +271,11 @@ function RestockPopover({ variant }: { variant: ActionableVariant }) {
       <PopoverContent align="end" className="w-56">
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs">Cantidad a reponer</Label>
-            <Input className="h-8" type="number" min="1" value={qty} autoFocus onChange={(e) => setQty(e.target.value)} />
+            {/* htmlFor + id: sin eso el Label es texto suelto y el input queda
+                sin nombre accesible. El id lleva el de la variante porque hay
+                un popover por fila y los ids tienen que ser únicos. */}
+            <Label htmlFor={`reponer-${variant.id}`} className="text-xs">Cantidad a reponer</Label>
+            <Input id={`reponer-${variant.id}`} className="h-8" type="number" min="1" value={qty} autoFocus onChange={(e) => setQty(e.target.value)} />
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">
@@ -331,12 +334,12 @@ function AdjustPopover({ variant }: { variant: ActionableVariant }) {
       <PopoverContent align="end" className="w-64">
         <form onSubmit={submit} className="space-y-3">
           <div className="space-y-1">
-            <Label className="text-xs">Nuevo stock</Label>
-            <Input className="h-8" type="number" min="0" value={newStock} autoFocus onChange={(e) => setNewStock(e.target.value)} />
+            <Label htmlFor={`ajuste-stock-${variant.id}`} className="text-xs">Nuevo stock</Label>
+            <Input id={`ajuste-stock-${variant.id}`} className="h-8" type="number" min="0" value={newStock} autoFocus onChange={(e) => setNewStock(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label className="text-xs">Motivo</Label>
-            <Input className="h-8" value={reason} onChange={(e) => setReason(e.target.value)} />
+            <Label htmlFor={`ajuste-motivo-${variant.id}`} className="text-xs">Motivo</Label>
+            <Input id={`ajuste-motivo-${variant.id}`} className="h-8" value={reason} onChange={(e) => setReason(e.target.value)} />
           </div>
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex justify-end gap-2">

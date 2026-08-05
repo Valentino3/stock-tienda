@@ -6,7 +6,10 @@ const nextConfig: NextConfig = {
   // bundler de Next los maneja de forma inconsistente. Externalizarlos es gratis,
   // achica el bundle de la función y adelanta la clase de fallos "anda en dev,
   // rompe en producción". fast-xml-parser bundlea bien y se deja adentro.
-  serverExternalPackages: ["node-forge", "qrcode"],
+  // `pg` hace un require dinámico opcional de `pg-native` que el bundler no
+  // puede resolver; externalizarlo lo evita. Solo se carga con DB_DRIVER=pg
+  // (tests de navegador), pero el bundler igual lo analiza en cada build.
+  serverExternalPackages: ["node-forge", "qrcode", "pg"],
   experimental: {
     // El default de Next para Server Actions es 1 MB. Lo subimos, pero NO más
     // allá de 4 MB: el techo real es de la plataforma, no de Next. Vercel corta

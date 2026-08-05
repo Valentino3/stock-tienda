@@ -36,6 +36,7 @@ export default async function OrdenPage({ params }: { params: Promise<{ ordenId:
         items={detalle.items}
         clientes={listaClientes}
         ventas={ventas}
+        titulo={titulo}
       />
     </div>
   );

@@ -37,7 +37,16 @@ export default async function ProductosPage({
       <PageHeader
         title={vertical.etiquetas.productos}
         description="Inventario por variante, con filtros y orden."
-        actions={isOwner ? <ProductForm categories={facets.categories} vertical={vertical} /> : undefined}
+        actions={isOwner ? (
+          // Datos sueltos y no el objeto entero: VerticalConfig lleva una
+          // función y las funciones no cruzan a un Client Component.
+          <ProductForm
+            categories={facets.categories}
+            atributos={vertical.atributosCatalogo}
+            ejemploCategoria={vertical.etiquetas.ejemploCategoria}
+            tracksStockPorDefecto={vertical.defaultsProducto.tracksStock}
+          />
+        ) : undefined}
       />
 
       <InventoryFilters
