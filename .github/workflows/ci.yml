@@ -72,3 +72,65 @@ jobs:
           DATABASE_URL: postgres://ci:ci@localhost:5432/ci
           BETTER_AUTH_SECRET: ci-secret-no-se-usa-en-runtime
           BETTER_AUTH_URL: http://localhost:3000
+
+  # Los tests de navegador van en un job aparte: tardan más, necesitan una base
+  # y un navegador, y si el typecheck ya falló no tiene sentido levantar nada.
+  # `needs: verificar` los encadena.
+  navegador:
+    needs: verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: stock
+          POSTGRES_PASSWORD: stock
+          POSTGRES_DB: stock_test
+          # UTC como Neon y como Vercel: las columnas de fecha del schema son
+          # `timestamp` sin zona, así que un huso distinto haría fallar los
+          # tests de arqueo por una razón que no es la real.
+          TZ: UTC
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U stock -d stock_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
+    env:
+      DATABASE_URL: postgres://stock:stock@localhost:5433/stock_test
+      DB_DRIVER: pg
+      BETTER_AUTH_SECRET: e2e-secret-solo-para-tests
+      BETTER_AUTH_URL: http://localhost:3100
+      ARCA_MASTER_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      ARCA_MASTER_KEY_ID: e2e
+      ARCA_ALLOW_PRODUCCION: ""
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm i -g npm@11
+      - run: npm ci
+
+      # Solo Chromium: tres navegadores triplican el tiempo y estos tests
+      # prueban lógica de negocio, no compatibilidad entre motores.
+      - run: npx playwright install --with-deps chromium
+
+      # La base la siembra el globalSetup de Playwright, no un paso aparte:
+      # así `playwright test` deja la base en un estado conocido se lo invoque
+      # desde donde se lo invoque. Ver e2e/global-setup.ts.
+      - name: Tests de navegador
+        run: npx playwright test
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -14,15 +14,30 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { saveProduct, saveVariant, toggleProductActive } from "./actions";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
-import type { VerticalConfig } from "@/lib/verticals";
+import type { AtributoCatalogo } from "@/lib/verticals";
 import type { Product } from "@/db/schema";
 
-type Props = { product?: Product; categories?: string[]; vertical: VerticalConfig };
+/**
+ * Recibe los datos sueltos del rubro y NO el `VerticalConfig` entero.
+ *
+ * No es preferencia de estilo: ese objeto tiene una función `nav`, y las
+ * funciones no cruzan la frontera de Server a Client Component. Pasarlo
+ * completo hace que React tire "Functions cannot be passed directly to Client
+ * Components" al renderizar — un error que el build NO detecta y que los tests
+ * de dominio tampoco ven, porque solo aparece cuando la página se dibuja.
+ */
+type Props = {
+  product?: Product;
+  categories?: string[];
+  /** Qué columnas TCG muestra este rubro. Ver src/lib/verticals. */
+  atributos: readonly AtributoCatalogo[];
+  ejemploCategoria: string;
+  tracksStockPorDefecto: boolean;
+};
 
-export function ProductForm({ product, categories = [], vertical }: Props) {
-  // Los atributos de carta existen siempre en la base; acá se decide si el
-  // rubro los muestra. Un restaurante no tiene "Set" ni "Foil".
-  const atributos = vertical.atributosCatalogo;
+export function ProductForm({
+  product, categories = [], atributos, ejemploCategoria, tracksStockPorDefecto,
+}: Props) {
   const isEdit = !!product;
   const [open, setOpen] = useState(false);
   const [addingVariant, setAddingVariant] = useState(false);
@@ -36,7 +51,7 @@ export function ProductForm({ product, categories = [], vertical }: Props) {
   // Al crear, el default sale del rubro: un comercio cuenta unidades, un
   // restaurante no. Al editar, manda lo que ya tenía el producto.
   const [tracksStock, setTracksStock] = useState(
-    product ? product.tracksStock : vertical.defaultsProducto.tracksStock,
+    product ? product.tracksStock : tracksStockPorDefecto,
   );
 
   const [vName, setVName] = useState("");
@@ -124,7 +139,7 @@ export function ProductForm({ product, categories = [], vertical }: Props) {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="product-category">Categoría (opcional)</Label>
-                <Input id="product-category" list="product-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder={vertical.etiquetas.ejemploCategoria} />
+                <Input id="product-category" list="product-categories" value={category} onChange={(e) => setCategory(e.target.value)} placeholder={ejemploCategoria} />
                 <datalist id="product-categories">
                   {categories.map((c) => <option key={c} value={c} />)}
                 </datalist>

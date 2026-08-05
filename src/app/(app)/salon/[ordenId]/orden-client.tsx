@@ -322,7 +322,11 @@ export function OrdenClient({
                   disabled={impagos.length === 0}
                   onClick={() => setMostrarCuenta(true)}
                 >
-                  <Printer className="mr-1 size-3" /> Cuenta
+                  {/* "Imprimir cuenta" y no "Cuenta" a secas: en esta misma
+                      pantalla hay un método de pago que se llama "Cuenta"
+                      (corriente). Dos botones con la misma palabra al lado uno
+                      del otro es una confusión servida. */}
+                  <Printer className="mr-1 size-3" /> Imprimir cuenta
                 </Button>
               </div>
 
