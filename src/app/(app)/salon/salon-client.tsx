@@ -31,7 +31,22 @@ function espera(desde: Date): string {
   return `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
-export function SalonClient({ mesas, deMostrador }: { mesas: MesaConOrden[]; deMostrador: OrdenViva[] }) {
+/**
+ * Grilla de mesas por sector y sección de pedidos sin mesa.
+ *
+ * Van separadas porque la página las ubica distinto: en pantalla grande la
+ * grilla se reemplaza por el plano, pero los pedidos de mostrador no entran en
+ * un plano y se muestran en los dos casos. Con un solo componente, la sección
+ * de mostrador terminaba renderizada dos veces en el DOM.
+ */
+export function SalonClient({
+  mesas, deMostrador, soloMesas = false, soloMostrador = false,
+}: {
+  mesas: MesaConOrden[];
+  deMostrador: OrdenViva[];
+  soloMesas?: boolean;
+  soloMostrador?: boolean;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [abriendo, setAbriendo] = useState<number | null>(null);
@@ -57,7 +72,7 @@ export function SalonClient({ mesas, deMostrador }: { mesas: MesaConOrden[]; deM
 
   return (
     <div className="space-y-8">
-      {sectores.map((sector) => (
+      {!soloMostrador && sectores.map((sector) => (
         <Section key={sector} label={sector}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
             {mesas.filter((m) => m.mesa.sector === sector).map(({ mesa, orden }) => {
@@ -98,6 +113,7 @@ export function SalonClient({ mesas, deMostrador }: { mesas: MesaConOrden[]; deM
         </Section>
       ))}
 
+      {!soloMesas && (
       <Section label="Mostrador y para llevar">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {deMostrador.map((o) => (
@@ -123,6 +139,7 @@ export function SalonClient({ mesas, deMostrador }: { mesas: MesaConOrden[]; deM
           </Button>
         </div>
       </Section>
+      )}
     </div>
   );
 }

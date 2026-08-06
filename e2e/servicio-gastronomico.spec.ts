@@ -103,7 +103,13 @@ async function pedir(page: import("@playwright/test").Page, texto: string, canti
   const lineas = page.getByRole("listitem").filter({ hasText: texto });
   const antes = await lineas.count();
 
-  await page.getByPlaceholder(/buscar plato o producto/i).fill(texto);
+  // El buscador se limpia solo al agregar, y ese borrado llega DESPUÉS de que
+  // la línea aparece. Si se escribe antes de que ocurra, el borrado pisa lo
+  // tipeado y la búsqueda no devuelve nada. Es la causa de que este test
+  // fallara de a ratos.
+  const buscador = page.getByPlaceholder(/buscar plato o producto/i);
+  await expect(buscador).toHaveValue("");
+  await buscador.fill(texto);
   const opcion = page.getByRole("button", { name: new RegExp(texto, "i") }).first();
   await expect(opcion).toBeVisible();
   await opcion.click();

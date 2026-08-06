@@ -6,8 +6,12 @@ import {
   abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   crearMesa, pagarOrden,
 } from "@/domain/orders";
+import {
+  acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
+} from "@/domain/floor-plan";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import type { Discount } from "@/domain/sales";
+import type { FloorMarkerType } from "@/db/schema";
 
 /**
  * Acciones del salón. Finas a propósito: resuelven sesión, llaman al dominio y
@@ -17,6 +21,8 @@ import type { Discount } from "@/domain/sales";
 
 const MENSAJES: Record<string, string> = {
   MESA_YA_OCUPADA: "Esa mesa ya tiene una comanda abierta.",
+  MARCADOR_NO_ENCONTRADO: "Esa referencia del plano no existe.",
+  TIPO_INVALIDO: "Tipo de referencia desconocido.",
   MESA_NO_ENCONTRADA: "La mesa no existe.",
   MESA_INACTIVA: "Esa mesa está desactivada.",
   MESA_DUPLICADA: "Ya hay una mesa con ese nombre en el sector.",
@@ -132,6 +138,76 @@ export async function cobrarComanda(input: {
       parcial: r.parcial,
       avisoDePrecio: r.avisoDePrecio,
     };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+// ---- plano del salón ----
+// Todas con guarda de dueño: acomodar el salón es configuración, no operación.
+// El mozo ve el plano, no lo edita.
+
+export async function moverMesaEnPlano(
+  tableId: number,
+  g: { floorX?: number; floorY?: number; floorWidth?: number; floorHeight?: number },
+) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await moverMesa(db, { storeId, tableId, ...g });
+    // Sin revalidatePath a propósito: el editor ya tiene la posición en su
+    // estado local y esto se llama al soltar CADA mesa. Revalidar acá haría un
+    // refetch completo del RSC por cada arrastre.
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function moverMarcadorEnPlano(
+  markerId: number,
+  g: { floorX?: number; floorY?: number; floorWidth?: number; floorHeight?: number },
+) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await moverMarcador(db, { storeId, markerId, ...g });
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function agregarMarcador(type: FloorMarkerType, sector: string) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await crearMarcador(db, { storeId, type, sector });
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function quitarMarcador(markerId: number) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await borrarMarcador(db, { storeId, markerId });
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Reparte en grilla las mesas que nunca se ubicaron. */
+export async function acomodarPlano() {
+  const { storeId } = await requireStoreOwner();
+  try {
+    const n = await acomodarMesasSinUbicar(db, storeId);
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
+    return { ok: true as const, acomodadas: n };
   } catch (e) {
     return { error: traducir(e) };
   }
