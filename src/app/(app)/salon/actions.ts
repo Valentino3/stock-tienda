@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, pagarOrden,
+  crearMesa, dividirItem, pagarOrden,
 } from "@/domain/orders";
 import {
   acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
@@ -33,6 +33,7 @@ const MENSAJES: Record<string, string> = {
   ORDEN_CON_PAGOS: "Ya se cobró una parte: anulá la venta desde Ventas.",
   ITEM_NO_ENCONTRADO: "Ese ítem no existe en la comanda.",
   ITEM_YA_COBRADO: "Ese ítem ya se cobró.",
+  CANTIDAD_NO_DIVISIBLE: "Elegí una cantidad menor a la de la línea.",
   ITEMS_NO_ENCONTRADOS: "No quedan ítems por cobrar de los que elegiste.",
   VARIANT_NOT_FOUND: "Ese producto no existe.",
   INVALID_QUANTITY: "Cantidad inválida.",
@@ -101,6 +102,18 @@ export async function ponerComensales(orderId: number, guests: number | null) {
   const { storeId } = await requireStore();
   try {
     await cambiarComensales(db, { storeId, orderId, guests });
+    revalidatePath(`/salon/${orderId}`);
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Parte una línea para poder cobrar cada parte por separado. */
+export async function dividirLinea(orderId: number, itemId: number, cantidad: number) {
+  const { storeId } = await requireStore();
+  try {
+    await dividirItem(db, { storeId, orderId, itemId, cantidad });
     revalidatePath(`/salon/${orderId}`);
     return { ok: true as const };
   } catch (e) {

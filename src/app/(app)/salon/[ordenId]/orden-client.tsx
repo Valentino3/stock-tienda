@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChefHat, Minus, Plus, Printer, Search, StickyNote, Trash2 } from "lucide-react";
+import { ChefHat, Minus, Plus, Printer, Scissors, Search, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
   agregarALaComanda, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda, cobrarComanda,
-  mandarComandaACocina, ponerComensales, ponerNota,
+  dividirLinea, mandarComandaACocina, ponerComensales, ponerNota,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
 
@@ -111,6 +111,9 @@ export function OrdenClient({
       }
     });
   }
+
+  const dividir = (itemId: number) =>
+    correr(() => dividirLinea(orden.id, itemId, 1), () => setSeleccion([]));
 
   const guardarNota = (itemId: number) =>
     correr(() => ponerNota(orden.id, itemId, borradorNota), () => {
@@ -268,6 +271,19 @@ export function OrdenClient({
                         >
                           <Plus className="size-3" />
                         </Button>
+                        {i.quantity > 1 && (
+                          // Partir una unidad en su propia línea: es lo que
+                          // permite que cada comensal pague la suya cuando se
+                          // pidieron dos iguales.
+                          <Button
+                            type="button" variant="ghost" size="icon" className="size-7"
+                            disabled={pending} aria-label={`Separar una unidad de ${i.nameSnapshot}`}
+                            title="Separar una unidad para cobrarla aparte"
+                            onClick={() => dividir(i.id)}
+                          >
+                            <Scissors className="size-3" />
+                          </Button>
+                        )}
                         <Button
                           type="button" variant="ghost" size="icon" className="size-7"
                           disabled={pending} aria-label="Quitar"
@@ -315,11 +331,27 @@ export function OrdenClient({
           <CardTitle className="text-base">{cerrada ? "Cerrada" : "Cobrar"}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {pagados.length > 0 && (
-            <p className="text-sm text-muted-foreground">
-              Ya cobrado: {money(pagados.reduce((a, i) => a + i.quantity * i.unitPrice, 0))} en{" "}
-              {ventas.length === 1 ? "una venta" : `${ventas.length} ventas`}.
-            </p>
+          {ventas.length > 0 && (
+            // Con la cuenta dividida, el cajero necesita ver las tandas ya
+            // cobradas: sumarlas de memoria es cómo se cobra dos veces o se
+            // deja ir una mesa a medio pagar.
+            <div className="space-y-1 rounded-lg border border-border bg-muted/30 p-3">
+              <span className="ledger-label">Ya cobrado</span>
+              <ul className="space-y-0.5 text-sm">
+                {ventas.map((v) => (
+                  <li key={v.id} className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">
+                      Venta #{v.id} · {METODOS.find((m) => m.value === v.paymentMethod)?.label ?? v.paymentMethod}
+                    </span>
+                    <span className="figure">{money(v.total)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-between border-t border-border pt-1 text-sm font-medium">
+                <span>Total cobrado</span>
+                <span className="figure">{money(ventas.reduce((a, v) => a + v.total, 0))}</span>
+              </div>
+            </div>
           )}
 
           {!cerrada && (
