@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Minus, Plus, Printer, Search, StickyNote, Trash2 } from "lucide-react";
+import { ChefHat, Minus, Plus, Printer, Search, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
   agregarALaComanda, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda, cobrarComanda,
-  ponerComensales, ponerNota,
+  mandarComandaACocina, ponerComensales, ponerNota,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
 
@@ -53,6 +53,7 @@ export function OrdenClient({
   const [borradorNota, setBorradorNota] = useState("");
 
   const cerrada = orden.status === "pagada" || orden.status === "cancelada";
+  const sinMandar = items.filter((i) => i.sentAt == null && i.saleId == null).length;
   const impagos = items.filter((i) => i.saleId == null);
   const pagados = items.filter((i) => i.saleId != null);
   const totalImpago = impagos.reduce((a, i) => a + i.quantity * i.unitPrice, 0);
@@ -93,6 +94,23 @@ export function OrdenClient({
 
   const cambiar = (itemId: number, cantidad: number) =>
     correr(() => cambiarCantidadDeItem(orden.id, itemId, cantidad));
+
+  function mandarACocina() {
+    setError("");
+    startTransition(async () => {
+      const res = await mandarComandaACocina(orden.id);
+      if ("error" in res && res.error) {
+        setError(res.error);
+        return;
+      }
+      if ("ok" in res) {
+        toast.success(
+          res.mandados === 1 ? "1 ítem a cocina." : `${res.mandados} ítems a cocina.`,
+        );
+        router.refresh();
+      }
+    });
+  }
 
   const guardarNota = (itemId: number) =>
     correr(() => ponerNota(orden.id, itemId, borradorNota), () => {
@@ -182,6 +200,13 @@ export function OrdenClient({
             </div>
           )}
 
+          {!cerrada && sinMandar > 0 && (
+            <Button type="button" variant="outline" className="w-full" disabled={pending} onClick={mandarACocina}>
+              <ChefHat className="mr-1 size-4" />
+              Mandar a cocina ({number(sinMandar)})
+            </Button>
+          )}
+
           {items.length === 0 ? (
             <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-8 text-center text-sm text-muted-foreground">
               La comanda está vacía. Buscá algo arriba para agregarlo.
@@ -211,6 +236,7 @@ export function OrdenClient({
                       <div className="truncate text-sm font-medium">{i.nameSnapshot}</div>
                       <div className="ledger-label text-muted-foreground">
                         {number(i.quantity)} × {money(i.unitPrice)}
+                        {i.sentAt != null && !cobrado && " · en cocina"}
                         {cobrado && " · cobrado"}
                         {i.notes && ` · ${i.notes}`}
                       </div>

@@ -178,15 +178,26 @@
     margin: 8mm;
   }
 
-  /* Ticket no fiscal de una venta sin conexión (vender/ticket-offline.tsx).
-     Se imprime desde un overlay montado ENCIMA de la pantalla de venta, así
-     que hay que sacar del medio todo lo demás — si no, la hoja sale con el
-     carrito y el buscador atrás del ticket. */
-  body.imprimiendo-ticket > *:not(.ticket-overlay) {
-    display: none !important;
+  /* Papeles de 80 mm que se imprimen desde un overlay montado ENCIMA de la
+     pantalla de trabajo: el ticket no fiscal, la cuenta de la mesa y la
+     comanda de cocina. Sin aislar, la hoja saldría con el carrito y el
+     buscador atrás.
+
+     Se oculta por `visibility` y no por `display`, y no por hijo directo del
+     body: el overlay está anidado adentro de <main>, así que una regla como
+     `body > *:not(.ticket-overlay)` lo escondería junto con todo lo demás.
+     Con visibility, un ancestro oculto no arrastra al descendiente que se
+     vuelve a hacer visible. */
+  body.imprimiendo-ticket * {
+    visibility: hidden;
+  }
+  body.imprimiendo-ticket .ticket-overlay,
+  body.imprimiendo-ticket .ticket-overlay * {
+    visibility: visible;
   }
   .ticket-overlay {
-    position: static !important;
+    position: absolute !important;
+    inset: 0 !important;
     display: block !important;
     padding: 0 !important;
     overflow: visible !important;

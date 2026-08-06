@@ -127,6 +127,7 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
         label: "Operación",
         links: [
           { href: "/salon", label: "Salón" },
+          { href: "/cocina", label: "Cocina" },
           { href: "/vender", label: "Mostrador" },
           { href: "/productos", label: "Menú" },
           { href: "/ventas", label: "Ventas" },
