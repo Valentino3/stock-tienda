@@ -10,15 +10,17 @@ import { getComprobantesForSales } from "@/domain/fiscal-emision";
 import { getFiscalConfig } from "@/domain/fiscal-config";
 import { mensajeDeObservaciones } from "@/domain/fiscal-comprobante";
 import { CBTE_LABEL, formatearNumeroComprobante, type CbteTipo } from "@/domain/fiscal-catalogs";
+import { Receipt, SearchX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
+import { Select } from "@/components/ui/select";
+import { Campo, Toolbar } from "@/components/ui/toolbar";
 import { VoidButton } from "./void-button";
 import { InvoiceButton, type ComprobanteResumen } from "./invoice-button";
-
-const SELECT_CLASS =
-  "h-9 w-44 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -40,10 +42,28 @@ const FACTURA_BADGE: Record<EstadoFactura, { variant: "success" | "destructive" 
   nc_pendiente: { variant: "destructive", label: "NC pendiente" },
 };
 
+/**
+ * Columnas del listado, de md para arriba.
+ *
+ * Antes eran anchos fijos en `rem` que sumaban ~42rem de mínimo, dentro de un
+ * contenedor con `overflow-hidden`: abajo de esa medida el contenido se
+ * RECORTABA, no scrolleaba, y la pantalla no tenía un solo prefijo responsive
+ * en 342 líneas. En un teléfono se perdían las últimas columnas —total,
+ * estado, factura— sin ninguna señal de que estaban ahí.
+ *
+ * Ahora la grilla existe solo desde `md`; abajo, las mismas celdas se
+ * reacomodan solas (ver `md:contents` en la fila).
+ *
+ * El sobrante se reparte entre Vendedor y Medio en vez de caer entero en una
+ * sola columna. Seis columnas de contenido corto en una tabla de 1100px
+ * siempre dejan aire; concentrarlo en una deja un tajo en el medio de la fila
+ * y el ojo pierde el renglón. Fecha y Total van fijas porque su contenido no
+ * varía de largo.
+ */
 const GRID_COLS = (conFactura: boolean) =>
   conFactura
-    ? "grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem_7rem]"
-    : "grid-cols-[9rem_4rem_1fr_9rem_7rem_6rem]";
+    ? "md:grid-cols-[11.5rem_4rem_1.4fr_1fr_8rem_6rem_7rem]"
+    : "md:grid-cols-[11.5rem_4rem_1.4fr_1fr_8rem_6rem]";
 
 /**
  * Estado de facturación de una venta.
@@ -169,50 +189,45 @@ export default async function VentasPage({
         }
       />
 
-      <form
-        method="get"
-        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4"
-      >
-        <label className="flex flex-col gap-1.5">
-          <span className="ledger-label">Desde</span>
-          <Input type="date" name="from" defaultValue={params.from ?? ""} className="w-40" />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="ledger-label">Hasta</span>
-          <Input type="date" name="to" defaultValue={params.to ?? ""} className="w-40" />
-        </label>
-        {isOwner && (
-          <label className="flex flex-col gap-1.5">
-            <span className="ledger-label">Vendedor</span>
-            <select name="seller" defaultValue={params.seller ?? ""} className={SELECT_CLASS}>
-              <option value="">Todos</option>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {facturacionActiva && (
-          <label className="flex flex-col gap-1.5">
-            <span className="ledger-label">Facturación</span>
-            <select name="facturacion" defaultValue={params.facturacion ?? ""} className={SELECT_CLASS}>
-              <option value="">Todas</option>
-              <option value="sin">Sin facturar</option>
-              <option value="con">Facturadas</option>
-            </select>
-          </label>
-        )}
-        <Button type="submit" size="sm">
-          Filtrar
-        </Button>
-        {hasFilters && (
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/ventas">Limpiar</Link>
+      <Toolbar asChild>
+        <form method="get">
+          <Campo label="Desde" htmlFor="v-desde">
+            <Input id="v-desde" type="date" name="from" defaultValue={params.from ?? ""} className="w-40" />
+          </Campo>
+          <Campo label="Hasta" htmlFor="v-hasta">
+            <Input id="v-hasta" type="date" name="to" defaultValue={params.to ?? ""} className="w-40" />
+          </Campo>
+          {isOwner && (
+            <Campo label="Vendedor" htmlFor="v-vendedor">
+              <Select id="v-vendedor" name="seller" defaultValue={params.seller ?? ""} className="w-44">
+                <option value="">Todos</option>
+                {sellers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </Select>
+            </Campo>
+          )}
+          {facturacionActiva && (
+            <Campo label="Facturación" htmlFor="v-facturacion">
+              <Select id="v-facturacion" name="facturacion" defaultValue={params.facturacion ?? ""} className="w-44">
+                <option value="">Todas</option>
+                <option value="sin">Sin facturar</option>
+                <option value="con">Facturadas</option>
+              </Select>
+            </Campo>
+          )}
+          <Button type="submit" size="sm">
+            Filtrar
           </Button>
-        )}
-      </form>
+          {hasFilters && (
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/ventas">Limpiar</Link>
+            </Button>
+          )}
+        </form>
+      </Toolbar>
 
       {usingDefaultWindow && (
         <p className="text-xs text-muted-foreground">
@@ -224,12 +239,33 @@ export default async function VentasPage({
       )}
 
       {rows.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
-          No hay ventas para el filtro seleccionado.
-        </p>
+        <EmptyState
+          filtrado={hasFilters}
+          icon={hasFilters ? SearchX : Receipt}
+          titulo={hasFilters ? "Ninguna venta con estos filtros" : "Todavía no se registró ninguna venta"}
+          detalle={
+            hasFilters
+              ? "Probá con otro rango de fechas o sacá el filtro de vendedor."
+              : "Las ventas que cobres en el mostrador aparecen acá."
+          }
+          accion={
+            hasFilters ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/ventas">Limpiar filtros</Link>
+              </Button>
+            ) : (
+              <Button asChild size="sm">
+                <Link href="/vender">Ir a vender</Link>
+              </Button>
+            )
+          }
+        />
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card">
-          <div className={`grid ${GRID_COLS(facturacionActiva)} gap-3 border-b border-border bg-muted/40 px-4 py-2.5`}>
+        <Panel flush>
+          {/* El encabezado solo existe cuando hay grilla. En el teléfono cada
+              venta se lee como bloque y una fila de títulos arriba de celdas
+              que ya no están alineadas confunde más de lo que ayuda. */}
+          <div className={`hidden ${GRID_COLS(facturacionActiva)} gap-3 border-b border-border-strong bg-muted px-4 py-2.5 md:grid`}>
             <span className="ledger-label">Fecha</span>
             <span className="ledger-label">N°</span>
             <span className="ledger-label">Vendedor</span>
@@ -244,30 +280,39 @@ export default async function VentasPage({
               const estadoFactura = resolverEstadoFactura(cbtes, sale.voided);
               return (
               <details key={sale.id} className={`group ${sale.voided ? "opacity-70" : ""}`}>
-                <summary className={`grid cursor-pointer ${GRID_COLS(facturacionActiva)} items-center gap-3 px-4 py-3 text-sm transition-colors marker:content-none hover:bg-accent`}>
-                  <span className={`figure text-muted-foreground ${sale.voided ? "line-through" : ""}`}>
-                    {sale.createdAt.toLocaleString("es-AR")}
-                  </span>
-                  <span className="figure font-medium">#{sale.id}</span>
-                  <span className="truncate">{sellerName}</span>
-                  <span className="text-muted-foreground">{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
-                  <span className={`figure text-right font-medium ${sale.voided ? "line-through" : ""}`}>
-                    {money(sale.total)}
-                  </span>
-                  <span>
-                    {sale.voided ? (
-                      <Badge variant="destructive">Anulada</Badge>
-                    ) : (
-                      <Badge variant="success">Activa</Badge>
-                    )}
-                  </span>
-                  {facturacionActiva && (
-                    <span>
-                      <Badge variant={FACTURA_BADGE[estadoFactura].variant}>
-                        {FACTURA_BADGE[estadoFactura].label}
-                      </Badge>
+                <summary className={`cursor-pointer px-4 py-3 text-sm transition-colors marker:content-none hover:bg-accent md:grid ${GRID_COLS(facturacionActiva)} md:items-center md:gap-3`}>
+                  {/* `md:contents` disuelve este envoltorio en la grilla: de md
+                      para arriba las celdas son hijas directas y caen en su
+                      columna; abajo se acomodan solas en dos renglones. Una
+                      sola copia del marcado para las dos formas. */}
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 md:contents">
+                    <span className={`figure text-muted-foreground ${sale.voided ? "line-through" : ""}`}>
+                      {sale.createdAt.toLocaleString("es-AR")}
                     </span>
-                  )}
+                    <span className="figure font-medium">#{sale.id}</span>
+                    <span className="truncate">{sellerName}</span>
+                    <span className="text-muted-foreground">{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
+                    {/* En el teléfono el importe se va al extremo derecho con
+                        `ml-auto`; en la grilla manda `text-right` y el margen
+                        no tiene efecto porque cada celda es su propia columna. */}
+                    <span className={`figure ml-auto font-medium md:text-right ${sale.voided ? "line-through" : ""}`}>
+                      {money(sale.total)}
+                    </span>
+                    <span>
+                      {sale.voided ? (
+                        <Badge variant="destructive">Anulada</Badge>
+                      ) : (
+                        <Badge variant="success">Activa</Badge>
+                      )}
+                    </span>
+                    {facturacionActiva && (
+                      <span>
+                        <Badge variant={FACTURA_BADGE[estadoFactura].variant}>
+                          {FACTURA_BADGE[estadoFactura].label}
+                        </Badge>
+                      </span>
+                    )}
+                  </div>
                 </summary>
                 <div className="space-y-3 border-t border-border bg-muted/30 px-4 py-3 text-sm">
                   <ul className="space-y-1.5">
@@ -315,7 +360,7 @@ export default async function VentasPage({
               );
             })}
           </div>
-        </div>
+        </Panel>
       )}
 
       {(page > 1 || hasNextPage) && (
