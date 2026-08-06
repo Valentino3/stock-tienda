@@ -8,9 +8,10 @@ import {
 import { closeCashSession, openCashSession } from "@/domain/cash";
 import {
   abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, getOrden,
-  listarMesas, listarOrdenesAbiertas, pagarOrden,
+  crearMesa, dividirItem, getOrden,
+  listarMesas, listarOrdenesAbiertas, pagarOrden, resumenDeCuenta,
 } from "@/domain/orders";
+import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
 
 /**
  * Órdenes del salón.
@@ -454,6 +455,156 @@ describe("descuento al cobrar", () => {
     const r = await cobrar(o.id, { saleDiscount: { kind: "percent", value: 10 } });
     expect(r.sale.total).toBe(14400);
     expect(r.avisoDePrecio).toBeUndefined();
+  });
+});
+
+describe("dividirItem", () => {
+  it("parte una línea en dos sin cambiar el total", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 3 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    const orden = await dividirItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, cantidad: 1,
+    });
+
+    expect(orden.total).toBe(24000); // 3 × 8000, la misma plata
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.quantity).sort()).toEqual([1, 2]);
+  });
+
+  it("la línea nueva hereda precio, nombre y nota", async () => {
+    const o = await abrir();
+    await agregarItem(db, {
+      storeId: store, orderId: o.id, variantId: milanesa, quantity: 2, notes: "sin sal",
+    });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    await dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 1 });
+
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    expect(items.every((i) => i.notes === "sin sal")).toBe(true);
+    expect(items.every((i) => i.unitPrice === 8000)).toBe(true);
+    expect(items.every((i) => i.nameSnapshot === "Milanesa")).toBe(true);
+  });
+
+  it("partir algo que ya está en cocina no lo vuelve a mandar", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    await dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 1 });
+
+    // Si la línea nueva naciera sin sentAt, la cocina recibiría otra milanesa.
+    expect(await sinMandar(db, store, o.id)).toBe(0);
+    const [comanda] = await comandasPendientes(db, store);
+    expect(comanda.lineas.reduce((a, l) => a + l.quantity, 0)).toBe(2);
+  });
+
+  it("no se puede partir por todo ni por más de lo que hay", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    for (const cantidad of [2, 5]) {
+      await expect(
+        dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad }),
+      ).rejects.toThrow("CANTIDAD_NO_DIVISIBLE");
+    }
+    await expect(
+      dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 0 }),
+    ).rejects.toThrow("INVALID_QUANTITY");
+  });
+
+  it("no se puede partir algo ya cobrado", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    await cobrar(o.id, { itemIds: [items[0].id] });
+
+    await expect(
+      dividirItem(db, { storeId: store, orderId: o.id, itemId: items[0].id, cantidad: 1 }),
+    ).rejects.toThrow("ITEM_YA_COBRADO");
+  });
+
+  it("partido, cada mitad se cobra por separado", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    await dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 1 });
+
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    const uno = await cobrar(o.id, { itemIds: [items[0].id] });
+    expect(uno.parcial).toBe(true);
+    expect(uno.sale.total).toBe(8000);
+
+    const dos = await cobrar(o.id, { itemIds: [items[1].id], paymentMethod: "tarjeta" });
+    expect(dos.parcial).toBe(false);
+    expect(dos.sale.total).toBe(8000);
+  });
+
+  it("no cruza tiendas", async () => {
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    await expect(
+      dividirItem(db, { storeId: store2, orderId: o.id, itemId: item.id, cantidad: 1 }),
+    ).rejects.toThrow("ORDEN_NO_ENCONTRADA");
+  });
+});
+
+describe("resumenDeCuenta", () => {
+  it("con la mesa entera impaga, todo es pendiente", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+
+    const r = (await resumenDeCuenta(db, store, o.id))!;
+    expect(r.total).toBe(16000);
+    expect(r.cobrado).toBe(0);
+    expect(r.pendiente).toBe(16000);
+    expect(r.pagos).toEqual([]);
+  });
+
+  it("después de tres tandas con métodos distintos, cierra", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+
+    await cobrar(o.id, { itemIds: [items[0].id] });
+    await cobrar(o.id, { itemIds: [items[1].id], paymentMethod: "tarjeta" });
+    await cobrar(o.id, { itemIds: [items[2].id], paymentMethod: "transferencia" });
+
+    const r = (await resumenDeCuenta(db, store, o.id))!;
+    expect(r.total).toBe(21000); // 8000 + 5000 + 8000
+    expect(r.cobrado).toBe(21000);
+    expect(r.pendiente).toBe(0);
+    expect(r.pagos).toHaveLength(3);
+    expect(r.pagos.map((p) => p.paymentMethod)).toEqual(["efectivo", "tarjeta", "transferencia"]);
+  });
+
+  it("lo cobrado sale de las ventas, así que refleja el descuento", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    await cobrar(o.id, { saleDiscount: { kind: "amount", value: 1000 } });
+
+    const r = (await resumenDeCuenta(db, store, o.id))!;
+    // El consumo fue 16000 pero entraron 15000: la diferencia es el descuento,
+    // y el resumen no puede decir que se cobraron 16000.
+    expect(r.total).toBe(16000);
+    expect(r.cobrado).toBe(15000);
+    expect(r.pendiente).toBe(0);
+  });
+
+  it("una orden de otra tienda no existe", async () => {
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const o = await abrir();
+    expect(await resumenDeCuenta(db, store2, o.id)).toBeNull();
   });
 });
 

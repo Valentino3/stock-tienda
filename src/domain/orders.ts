@@ -20,6 +20,8 @@ import { createSale, type Discount } from "@/domain/sales";
 
 const PG_UNIQUE_VIOLATION = "23505";
 
+const redondear = (n: number) => Math.round(n * 100) / 100;
+
 const codigoDe = (err: unknown) =>
   (err as { code?: string; cause?: { code?: string } })?.code
   ?? (err as { cause?: { code?: string } })?.cause?.code;
@@ -170,6 +172,111 @@ export async function cambiarCantidad(
 
     return recalcularTotales(tx, input.orderId);
   });
+}
+
+/**
+ * Parte una línea en dos para poder cobrarlas por separado.
+ *
+ * Es lo que faltaba para que "división por producto" sea de verdad: hasta acá
+ * una línea de dos milanesas era atómica, así que si cada comensal pagaba la
+ * suya no había forma de expresarlo. Ahora se parte en dos líneas de una y
+ * cada una va en la tanda que corresponda.
+ *
+ * La línea nueva hereda precio, nombre congelado y nota — es la misma comanda
+ * partida, no un pedido nuevo. También hereda `sentAt`: si el original ya
+ * estaba en la cocina, partirlo para cobrar no puede hacer que aparezca otra
+ * vez para preparar.
+ */
+export async function dividirItem(
+  db: any,
+  input: { storeId: number; orderId: number; itemId: number; cantidad: number },
+): Promise<Order> {
+  if (!Number.isInteger(input.cantidad) || input.cantidad <= 0) throw new Error("INVALID_QUANTITY");
+
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+
+    const [item] = await tx.select().from(orderItems)
+      .where(and(
+        eq(orderItems.id, input.itemId),
+        eq(orderItems.orderId, input.orderId),
+        eq(orderItems.storeId, input.storeId),
+      ));
+    if (!item) throw new Error("ITEM_NO_ENCONTRADO");
+    if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+    // Partir "todo" o "más de lo que hay" no parte nada: sería dejar una línea
+    // en cero, que es peor que no hacer nada.
+    if (input.cantidad >= item.quantity) throw new Error("CANTIDAD_NO_DIVISIBLE");
+
+    await tx.update(orderItems)
+      .set({ quantity: item.quantity - input.cantidad })
+      .where(eq(orderItems.id, item.id));
+
+    await tx.insert(orderItems).values({
+      orderId: item.orderId,
+      storeId: item.storeId,
+      variantId: item.variantId,
+      quantity: input.cantidad,
+      unitPrice: item.unitPrice,
+      nameSnapshot: item.nameSnapshot,
+      notes: item.notes,
+      // Hereda el estado de cocina: partir para cobrar no vuelve a mandar a
+      // preparar algo que ya salió.
+      sentAt: item.sentAt,
+      printedAt: item.printedAt,
+    });
+
+    // El total no cambia —es la misma plata en dos renglones— pero se recalcula
+    // igual para no tener dos caminos que escriban totales.
+    return recalcularTotales(tx, input.orderId);
+  });
+}
+
+export type ResumenDeCuenta = {
+  total: number;
+  cobrado: number;
+  pendiente: number;
+  /** Cada tanda ya cobrada, con su método y su comprobante si lo tiene. */
+  pagos: { saleId: number; total: number; paymentMethod: string; items: number }[];
+};
+
+/**
+ * Cómo viene la cuenta: cuánto se cobró, en cuántas tandas y cuánto falta.
+ *
+ * Lo necesita el cajero cuando una mesa se paga de a partes: sin esto tiene
+ * que sumar de memoria para saber si ya está.
+ */
+export async function resumenDeCuenta(
+  db: any,
+  storeId: number,
+  orderId: number,
+): Promise<ResumenDeCuenta | null> {
+  const [orden] = await db.select().from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)));
+  if (!orden) return null;
+
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const importe = (i: { quantity: number; unitPrice: number }) => i.quantity * i.unitPrice;
+
+  const ventas = await db.select().from(sales)
+    .where(and(eq(sales.orderId, orderId), eq(sales.storeId, storeId)))
+    .orderBy(sales.id);
+
+  return {
+    total: redondear(items.reduce((a: number, i: any) => a + importe(i), 0)),
+    // Lo cobrado sale de las VENTAS y no de los ítems: es lo que realmente
+    // entró, ya con descuentos aplicados.
+    cobrado: redondear(ventas.reduce((a: number, v: { total: number }) => a + v.total, 0)),
+    pendiente: redondear(
+      items.filter((i: any) => i.saleId == null).reduce((a: number, i: any) => a + importe(i), 0),
+    ),
+    pagos: ventas.map((v: { id: number; total: number; paymentMethod: string }) => ({
+      saleId: v.id,
+      total: v.total,
+      paymentMethod: v.paymentMethod,
+      items: items.filter((i: any) => i.saleId === v.id).length,
+    })),
+  };
 }
 
 /**
