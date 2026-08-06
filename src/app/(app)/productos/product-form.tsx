@@ -208,7 +208,7 @@ export function ProductForm({
                   />
                 </div>
               )}
-              {error && <p className="text-sm text-destructive">{error}</p>}
+              {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                   Cancelar
@@ -271,7 +271,7 @@ export function ProductForm({
               Foil
             </label>
           )}
-          {vError && <p className="text-xs text-destructive">{vError}</p>}
+          {vError && <p className="text-sm text-destructive" role="alert">{vError}</p>}
           <Button type="submit" size="sm" disabled={pending}>
             Agregar
           </Button>

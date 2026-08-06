@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import type { StoreFiscalConfig } from "@/db/schema";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,8 +11,6 @@ import { Notice } from "@/components/ui/notice";
 import { ALICUOTA_LABEL, formatearCuit, normalizarDoc, validarCuit } from "@/domain/fiscal-catalogs";
 import { saveFiscalConfigAction } from "./actions";
 
-const SELECT_CLASS =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const ALICUOTAS_ELEGIBLES = [5, 4, 3, 6, 8, 9];
 
@@ -122,14 +121,14 @@ export function FiscalConfigForm({ config }: { config: StoreFiscalConfig | null 
 
           <div className="space-y-1.5">
             <Label htmlFor="defaultIvaId">Alícuota de IVA</Label>
-            <select
-              id="defaultIvaId" name="defaultIvaId" className={SELECT_CLASS}
+            <Select
+              id="defaultIvaId" name="defaultIvaId"
               defaultValue={config?.defaultIvaId ?? 5}
             >
               {ALICUOTAS_ELEGIBLES.map((id) => (
                 <option key={id} value={id}>{ALICUOTA_LABEL[id]}</option>
               ))}
-            </select>
+            </Select>
             <p className="text-xs text-muted-foreground">
               Se aplica a todos los productos. Tus precios ya la incluyen.
             </p>

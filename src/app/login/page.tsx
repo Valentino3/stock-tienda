@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { Label } from "@/components/ui/label";
 import { APP_NAME } from "@/lib/config";
 
@@ -67,9 +68,9 @@ export default function LoginPage() {
               />
             </div>
             {error && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              <Notice tone="danger" role="alert">
                 {error}
-              </p>
+              </Notice>
             )}
             <Button type="submit" size="lg" className="w-full" disabled={pending}>
               {pending ? "Ingresando…" : "Entrar"}

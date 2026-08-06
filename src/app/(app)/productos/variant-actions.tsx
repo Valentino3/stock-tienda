@@ -237,7 +237,7 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
           <datalist id="language-suggestions">
             {LANGUAGE_SUGGESTIONS.map((l) => <option key={l} value={l} />)}
           </datalist>
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
             <Button type="submit" disabled={pending}>Guardar</Button>
@@ -277,7 +277,7 @@ function RestockPopover({ variant }: { variant: ActionableVariant }) {
             <Label htmlFor={`reponer-${variant.id}`} className="text-xs">Cantidad a reponer</Label>
             <Input id={`reponer-${variant.id}`} className="h-8" type="number" min="1" value={qty} autoFocus onChange={(e) => setQty(e.target.value)} />
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancelar</Button>
             <Button type="submit" size="sm" disabled={pending}>Reponer</Button>
@@ -341,7 +341,7 @@ function AdjustPopover({ variant }: { variant: ActionableVariant }) {
             <Label htmlFor={`ajuste-motivo-${variant.id}`} className="text-xs">Motivo</Label>
             <Input id={`ajuste-motivo-${variant.id}`} className="h-8" value={reason} onChange={(e) => setReason(e.target.value)} />
           </div>
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
           <div className="flex justify-end gap-2">
             <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>Cancelar</Button>
             <Button type="submit" size="sm" disabled={pending}>Ajustar</Button>

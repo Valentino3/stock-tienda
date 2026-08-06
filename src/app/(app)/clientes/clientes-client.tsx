@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -11,8 +12,6 @@ import {
 import { money } from "@/lib/format";
 import { saveClient, recordClientPayment } from "./actions";
 
-const SELECT_CLASS =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 export function NewClientForm() {
   const router = useRouter();
@@ -95,11 +94,11 @@ export function PaymentButton({ clientId, clientName, balance }: { clientId: num
           </div>
           <div className="space-y-2">
             <Label htmlFor={`pay-method-${clientId}`}>Medio</Label>
-            <select id={`pay-method-${clientId}`} value={method} onChange={(e) => setMethod(e.target.value)} className={SELECT_CLASS}>
+            <Select id={`pay-method-${clientId}`} value={method} onChange={(e) => setMethod(e.target.value)}>
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
               <option value="tarjeta">Tarjeta</option>
-            </select>
+            </Select>
           </div>
           <div className="space-y-2">
             <Label htmlFor={`pay-note-${clientId}`}>Nota (opcional)</Label>
