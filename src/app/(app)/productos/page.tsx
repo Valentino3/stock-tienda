@@ -45,6 +45,7 @@ export default async function ProductosPage({
             atributos={vertical.atributosCatalogo}
             ejemploCategoria={vertical.etiquetas.ejemploCategoria}
             tracksStockPorDefecto={vertical.defaultsProducto.tracksStock}
+            usaEstaciones={vertical.key === "gastronomia"}
           />
         ) : undefined}
       />
