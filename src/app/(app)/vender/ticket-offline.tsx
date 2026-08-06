@@ -64,7 +64,7 @@ export function TicketOffline({ venta, onClose }: { venta: VentaEnCola | null; o
                   {l.desc > 0 && ` − ${money(l.desc)}`}
                 </span>
               </td>
-              <td className="py-0.5 text-right whitespace-nowrap">{money(l.neto)}</td>
+              <td className="figure py-0.5 text-right whitespace-nowrap">{money(l.neto)}</td>
             </tr>
           ))}
         </tbody>
@@ -75,15 +75,15 @@ export function TicketOffline({ venta, onClose }: { venta: VentaEnCola | null; o
       {descGeneral > 0 && (
         <>
           <div className="flex justify-between">
-            <span>Subtotal</span><span>{money(subtotal)}</span>
+            <span>Subtotal</span><span className="figure">{money(subtotal)}</span>
           </div>
           <div className="flex justify-between">
-            <span>Descuento</span><span>− {money(descGeneral)}</span>
+            <span>Descuento</span><span className="figure">− {money(descGeneral)}</span>
           </div>
         </>
       )}
       <div className="flex justify-between text-sm font-semibold">
-        <span>Total</span><span>{money(venta.total)}</span>
+        <span>Total</span><span className="figure">{money(venta.total)}</span>
       </div>
       <p className="mt-1">{METODO[venta.paymentMethod]}</p>
 

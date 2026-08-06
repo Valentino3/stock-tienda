@@ -9,6 +9,7 @@ import { produccionHabilitada } from "@/lib/arca/config";
 import { diasParaVencer } from "@/lib/arca/cert";
 import { CBTE_LABEL, formatearNumeroComprobante, type CbteTipo } from "@/domain/fiscal-catalogs";
 import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/ui/panel";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -133,7 +134,7 @@ export default async function FacturacionPage() {
         {ultimas.length === 0 ? (
           <p className="text-sm text-muted-foreground">Todavía no emitiste ningún comprobante.</p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -167,7 +168,7 @@ export default async function FacturacionPage() {
                 })}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </section>
 

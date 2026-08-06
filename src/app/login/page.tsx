@@ -32,7 +32,7 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <span className="flex size-11 items-center justify-center rounded-lg bg-brand font-mono text-base font-semibold tracking-tight text-brand-foreground">
+          <span className="flex size-11 items-center justify-center rounded-lg bg-brand figure text-base font-semibold tracking-tight text-brand-foreground">
             {initials(APP_NAME)}
           </span>
           <div className="space-y-1">

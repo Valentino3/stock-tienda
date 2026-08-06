@@ -26,7 +26,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         roleLabel={isOwner ? "Dueño" : "Empleado"}
         storeName={storeName}
       />
-      <main className="flex-1 px-4 py-6 lg:px-10 lg:py-8">
+      {/* `min-w-0` no es decorativo: un hijo de flex arranca en
+          `min-width: auto`, o sea que se niega a achicarse por debajo de su
+          contenido. Sin esto, la tabla de /productos —hasta 11 columnas— empuja
+          el <main>, el <main> empuja al documento, y en vez de scrollear
+          adentro de su panel aparece una barra horizontal en TODA la página que
+          también corre la barra lateral. Se veía a 1440px. */}
+      <main className="min-w-0 flex-1 px-4 py-6 lg:px-10 lg:py-8">
         <div className="mx-auto w-full max-w-6xl space-y-8">
           <BarraOffline />
           {children}

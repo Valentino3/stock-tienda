@@ -82,7 +82,7 @@ export async function ComprobanteImprimible({
       <p className="mt-1 text-sm font-bold uppercase">
         {CBTE_LABEL[c.cbteTipo as CbteTipo] ?? "Comprobante"}
       </p>
-      <p className="font-mono text-sm">{formatearNumeroComprobante(c.ptoVta, c.numero)}</p>
+      <p className="figure text-sm">{formatearNumeroComprobante(c.ptoVta, c.numero)}</p>
       <p className="text-xs">
         Fecha: {new Date(`${c.cbteFch}T12:00:00`).toLocaleDateString("es-AR")}
       </p>
@@ -138,17 +138,17 @@ export async function ComprobanteImprimible({
                   <span className="block text-[10px]">Bonificación: −{money(l.descuentoLinea)}</span>
                 )}
               </td>
-              <td className="py-1 text-right">{l.cantidad}</td>
-              <td className="py-1 text-right">
+              <td className="figure py-1 text-right">{l.cantidad}</td>
+              <td className="figure py-1 text-right">
                 {money(esFacturaA ? unitarioSinIva : l.precioUnitario)}
               </td>
               {esFacturaA && (
-                <td className="py-1 text-right">
+                <td className="figure py-1 text-right">
                   {ALICUOTA_LABEL[l.ivaId] ?? ""}
                   <span className="block">{money(l.importeIva)}</span>
                 </td>
               )}
-              <td className="py-1 text-right">{money(esFacturaA ? l.baseImp : l.netoAsignado)}</td>
+              <td className="figure py-1 text-right">{money(esFacturaA ? l.baseImp : l.netoAsignado)}</td>
             </tr>
           );
         })}
@@ -213,7 +213,7 @@ function Fila({ label, valor, destacado }: { label: string; valor: string; desta
   return (
     <div className={`flex justify-between gap-4 ${destacado ? "border-t border-black pt-1 text-sm font-bold" : ""}`}>
       <dt>{label}</dt>
-      <dd className="font-mono">{valor}</dd>
+      <dd className="figure">{valor}</dd>
     </div>
   );
 }

@@ -53,7 +53,7 @@ function initials(name: string) {
 
 function Logomark({ name }: { name: string }) {
   return (
-    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand font-mono text-xs font-semibold tracking-tight text-brand-foreground">
+    <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-brand figure text-xs font-semibold tracking-tight text-brand-foreground">
       {initials(name)}
     </span>
   );

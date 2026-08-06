@@ -226,7 +226,7 @@ function ComandaImpresa({ comanda }: { comanda: Comanda }) {
           {comanda.sector ? ` · ${comanda.sector}` : ""}
         </p>
 
-        <hr className="my-2 border-black/40" />
+        <hr className="my-2 border-black/30" />
 
         <ul className="space-y-2">
           {comanda.lineas.map((l) => (

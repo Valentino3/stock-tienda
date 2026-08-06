@@ -4,6 +4,7 @@ import { stores, user } from "@/db/schema";
 import { requireSuperAdmin } from "@/lib/session";
 import { number } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -33,7 +34,7 @@ export default async function AdminPage() {
             No hay tiendas. Creá la primera arriba.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -48,11 +49,11 @@ export default async function AdminPage() {
                 {storeRows.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="font-medium">{s.name}</TableCell>
-                    <TableCell className="font-mono text-muted-foreground">{s.slug}</TableCell>
+                    <TableCell className="figure text-muted-foreground">{s.slug}</TableCell>
                     <TableCell>
                       {s.active ? <Badge variant="success">Activa</Badge> : <Badge variant="destructive">Inactiva</Badge>}
                     </TableCell>
-                    <TableCell className="text-right font-mono">{number(countByStore.get(s.id) ?? 0)}</TableCell>
+                    <TableCell className="figure text-right">{number(countByStore.get(s.id) ?? 0)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         <NewOwnerButton storeId={s.id} storeName={s.name} />
@@ -63,7 +64,7 @@ export default async function AdminPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
     </div>

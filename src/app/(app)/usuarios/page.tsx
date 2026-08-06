@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { user } from "@/db/schema";
 import { requireStoreOwner } from "@/lib/session";
 import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/ui/page-header";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { UserForm, ToggleActiveButton } from "./user-form";
@@ -37,7 +38,7 @@ export default async function UsuariosPage() {
         actions={<UserForm />}
       />
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <Panel flush>
         <Table>
           <TableHeader>
             <TableRow>
@@ -52,7 +53,7 @@ export default async function UsuariosPage() {
             {users.map((u) => (
               <TableRow key={u.id}>
                 <TableCell className="font-medium">{u.name}</TableCell>
-                <TableCell className="font-mono text-muted-foreground">{u.email}</TableCell>
+                <TableCell className="figure text-muted-foreground">{u.email}</TableCell>
                 <TableCell>
                   <Badge variant={u.role === "owner" ? "default" : "secondary"}>
                     {u.role === "owner" ? "Dueño" : "Empleado"}
@@ -72,7 +73,7 @@ export default async function UsuariosPage() {
             ))}
           </TableBody>
         </Table>
-      </div>
+      </Panel>
     </div>
   );
 }
