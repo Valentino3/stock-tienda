@@ -171,7 +171,7 @@ export function CocinaClient({
       ) : (
         <div className="no-imprimir grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {comandas.map((c) => (
-            <article key={c.orderId} className="rounded-xl border border-border bg-card p-4 shadow-xs">
+            <article key={c.orderId} className="rounded-xl border border-border bg-card p-4">
               <header className="flex items-baseline justify-between gap-2">
                 <h2 className="text-base font-semibold">
                   {c.mesa ? `Mesa ${c.mesa}` : `Pedido #${c.orderId}`}
@@ -189,7 +189,7 @@ export function CocinaClient({
                       {l.notes && (
                         // La nota es lo que más importa de una comanda: si se
                         // pierde, sale un plato que hay que rehacer.
-                        <span className="block font-semibold text-chart-3">{l.notes}</span>
+                        <span className="block font-semibold text-warning">{l.notes}</span>
                       )}
                     </span>
                   </li>
@@ -216,7 +216,7 @@ export function CocinaClient({
 
 function ComandaImpresa({ comanda }: { comanda: Comanda }) {
   return (
-    <div className="ticket-overlay fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+    <div className="ticket-overlay fixed inset-0 z-50 grid place-items-center bg-foreground/45 p-4 supports-backdrop-filter:backdrop-blur-xs">
       <div className="ticket-hoja w-full max-w-[80mm] bg-white p-3 text-black">
         <p className="text-center text-base font-bold">
           {comanda.mesa ? `MESA ${comanda.mesa}` : `PEDIDO #${comanda.orderId}`}

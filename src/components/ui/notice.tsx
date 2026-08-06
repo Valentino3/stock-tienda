@@ -4,7 +4,7 @@ type Tone = "info" | "warn" | "success" | "danger";
 
 const toneClass: Record<Tone, string> = {
   info: "border-brand/30 bg-brand-muted text-brand",
-  warn: "border-chart-3/40 bg-chart-3/10 text-foreground",
+  warn: "border-warning/40 bg-warning/10 text-foreground",
   success: "border-success/30 bg-success/10 text-foreground",
   danger: "border-destructive/30 bg-destructive/10 text-foreground",
 };

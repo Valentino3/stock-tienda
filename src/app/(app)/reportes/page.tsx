@@ -115,7 +115,7 @@ export default async function ReportesPage({
 
       <form
         method="get"
-        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4"
       >
         <label className="flex flex-col gap-1.5">
           <span className="ledger-label">Desde</span>
@@ -143,7 +143,7 @@ export default async function ReportesPage({
         {byDay.length === 0 ? (
           <EmptyRange />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -170,7 +170,7 @@ export default async function ReportesPage({
         {byMethod.length === 0 ? (
           <EmptyRange />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -197,7 +197,7 @@ export default async function ReportesPage({
         {cashMovements.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin gastos ni egresos en el período.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -224,7 +224,7 @@ export default async function ReportesPage({
         {topProducts.length === 0 ? (
           <EmptyRange />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -257,7 +257,7 @@ export default async function ReportesPage({
         {lowStock.length === 0 ? (
           <p className="text-sm text-muted-foreground">No hay productos con stock bajo.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -292,7 +292,7 @@ export default async function ReportesPage({
         {cashHistory.length === 0 ? (
           <p className="text-sm text-muted-foreground">No hay cierres de caja registrados.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

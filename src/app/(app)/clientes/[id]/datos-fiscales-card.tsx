@@ -68,7 +68,7 @@ export function DatosFiscalesCard({
   return (
     <section className="space-y-3">
       <p className="ledger-label">Datos fiscales</p>
-      <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+      <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground">
           Solo hacen falta para facturar. Sin estos datos, las ventas de este cliente salen como{" "}
           <strong>Factura B a Consumidor Final</strong>.

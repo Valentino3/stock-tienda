@@ -33,7 +33,7 @@ export default async function AdminPage() {
             No hay tiendas. Creá la primera arriba.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

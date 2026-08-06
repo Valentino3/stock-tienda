@@ -37,7 +37,7 @@ export default async function UsuariosPage() {
         actions={<UserForm />}
       />
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+      <div className="overflow-hidden rounded-xl border border-border bg-card">
         <Table>
           <TableHeader>
             <TableRow>

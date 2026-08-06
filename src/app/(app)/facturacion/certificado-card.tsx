@@ -89,7 +89,7 @@ export function CertificadoCard({
         Certificado de ARCA — {ambiente === "produccion" ? "producción" : "homologación"}
       </p>
 
-      <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+      <div className="space-y-4 rounded-xl border border-border bg-card p-5">
         {credenciales ? (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">

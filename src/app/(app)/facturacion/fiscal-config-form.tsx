@@ -59,7 +59,7 @@ export function FiscalConfigForm({ config }: { config: StoreFiscalConfig | null 
       <p className="ledger-label">Datos del emisor</p>
       <form
         onSubmit={onSubmit}
-        className="space-y-5 rounded-xl border border-border bg-card p-5 shadow-xs"
+        className="space-y-5 rounded-xl border border-border bg-card p-5"
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">

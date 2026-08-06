@@ -4,14 +4,20 @@ import { Toaster } from "@/components/ui/sonner";
 import { APP_NAME } from "@/lib/config";
 import "./globals.css";
 
+// `display: "swap"` es el default de next/font y acá se nota: la interfaz es
+// una grilla de cifras, así que el intercambio de fuente le cambia el ancho a
+// cada número y la tabla entera salta cuando termina de cargar. Con "optional"
+// el navegador usa la de sistema si la web no llegó a tiempo y no reflowea.
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "optional",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "optional",
 });
 
 export const metadata: Metadata = {

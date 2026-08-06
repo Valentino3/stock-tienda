@@ -13,6 +13,12 @@
   COLOR: Restrained — neutros fríos + cobalto + esmeralda/rojo semánticos. Claro.
 */
 
+/* No hay modo oscuro (decisión de producto, ver DESIGN.md) y por eso tampoco
+   hay bloque de tokens `.dark`. Esta línea SE QUEDA igual: sin ella, `dark:`
+   vuelve al default de Tailwind, que es `@media (prefers-color-scheme: dark)`
+   — o sea que cualquier `dark:` que se cuele se activaría solo en la máquina
+   de quien tenga el sistema en oscuro. Atada a `.dark`, que nunca se aplica,
+   un `dark:` perdido no hace nada. */
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
@@ -29,10 +35,13 @@
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-muted: var(--brand-muted);
@@ -83,47 +92,28 @@
   --destructive-foreground: oklch(0.99 0.01 26);
   --success: oklch(0.55 0.13 156);
   --success-foreground: oklch(0.99 0.02 156);
+  /* Ámbar: "esperando / demorado / atención". Existe porque hasta ahora ese
+     papel lo hacía --chart-3, que es un token de GRÁFICOS: un aviso y una
+     serie de un gráfico terminaban atados al mismo color sin querer. */
+  --warning: oklch(0.62 0.13 72);
+  --warning-foreground: oklch(0.99 0.02 72);
+  /* Dos niveles de borde, y de acá sale la mayor parte de la densidad.
+     --border separa (contenedores, filas de tabla). --border-strong estructura
+     (inputs, encabezado de tabla contra su cuerpo, fila de totales): el ojo
+     saca jerarquía de dos grises sin que aparezca una sola línea gruesa. */
   --border: oklch(0.905 0.006 262);
-  --input: oklch(0.905 0.006 262);
+  --border-strong: oklch(0.845 0.008 262);
+  --input: oklch(0.845 0.008 262);
   --ring: var(--brand);
   --chart-1: oklch(0.55 0.16 260);
   --chart-2: oklch(0.6 0.13 160);
   --chart-3: oklch(0.72 0.15 70);
   --chart-4: oklch(0.55 0.18 300);
   --chart-5: oklch(0.6 0.2 15);
-  --radius: 0.625rem;
-}
-
-.dark {
-  --background: oklch(0.185 0.012 266);
-  --foreground: oklch(0.97 0.004 264);
-  --card: oklch(0.225 0.013 266);
-  --card-foreground: oklch(0.97 0.004 264);
-  --popover: oklch(0.225 0.013 266);
-  --popover-foreground: oklch(0.97 0.004 264);
-  --primary: oklch(0.97 0.004 264);
-  --primary-foreground: oklch(0.2 0.012 266);
-  --secondary: oklch(0.28 0.012 266);
-  --secondary-foreground: oklch(0.97 0.004 264);
-  --muted: oklch(0.28 0.012 266);
-  --muted-foreground: oklch(0.7 0.015 264);
-  --accent: oklch(0.3 0.014 266);
-  --accent-foreground: oklch(0.97 0.004 264);
-  --brand: oklch(0.62 0.16 262);
-  --brand-foreground: oklch(0.15 0.02 262);
-  --brand-muted: oklch(0.3 0.05 262);
-  --destructive: oklch(0.68 0.19 24);
-  --destructive-foreground: oklch(0.15 0.02 24);
-  --success: oklch(0.68 0.13 158);
-  --success-foreground: oklch(0.15 0.02 158);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: var(--brand);
-  --chart-1: oklch(0.62 0.16 262);
-  --chart-2: oklch(0.68 0.13 160);
-  --chart-3: oklch(0.75 0.15 70);
-  --chart-4: oklch(0.62 0.18 300);
-  --chart-5: oklch(0.66 0.2 15);
+  /* 4.5px. Los múltiplos de arriba dan 4.5px en los controles (--radius-lg) y
+     6.3px en las superficies (--radius-xl). Antes era 0.625rem, que daba 14px
+     en cada card: redondez de panel de administración, no de libro mayor. */
+  --radius: 0.28rem;
 }
 
 @layer base {
@@ -202,6 +192,10 @@
     padding: 0 !important;
     overflow: visible !important;
     background: none !important;
+    /* El velo lleva blur en pantalla. Sacarlo también en papel: un
+       backdrop-filter vivo durante la impresión es la clase de cosa que un
+       driver resuelve rasterizando la hoja entera. */
+    backdrop-filter: none !important;
   }
   .ticket-overlay .no-imprimir {
     display: none !important;

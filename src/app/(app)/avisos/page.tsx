@@ -43,7 +43,7 @@ export default async function AvisosPage() {
             No hay avisos pendientes.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -72,7 +72,7 @@ export default async function AvisosPage() {
 
       {resolved.length > 0 && (
         <Section label="Resueltos (últimos)">
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

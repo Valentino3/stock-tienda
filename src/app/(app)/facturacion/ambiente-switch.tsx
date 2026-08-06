@@ -52,7 +52,7 @@ export function AmbienteSwitch({
     return (
       <section className="space-y-3">
         <p className="ledger-label">Ambiente</p>
-        <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+        <div className="space-y-4 rounded-xl border border-border bg-card p-5">
           <p className="text-sm">
             Estás emitiendo <strong>comprobantes fiscales reales</strong> ante ARCA.
           </p>
@@ -72,7 +72,7 @@ export function AmbienteSwitch({
   return (
     <section className="space-y-3">
       <p className="ledger-label">Pasar a producción</p>
-      <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+      <div className="space-y-4 rounded-xl border border-border bg-card p-5">
         <ol className="space-y-2 text-sm">
           <li className="flex gap-2">
             <span className={produccionHabilitadaEnServidor ? "text-success" : "text-destructive"}>

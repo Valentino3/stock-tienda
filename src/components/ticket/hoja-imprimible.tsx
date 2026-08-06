@@ -38,7 +38,10 @@ export function HojaImprimible({
 
   return (
     <div
-      className="ticket-overlay fixed inset-0 z-50 grid place-items-center overflow-auto bg-black/50 p-4"
+      // Mismo velo que los diálogos de Radix (tinta, no negro puro, + blur),
+      // pero más denso: acá el contenido es una hoja BLANCA sobre un fondo
+      // casi blanco, y al 10% no se despegaría del carrito que tiene atrás.
+      className="ticket-overlay fixed inset-0 z-50 grid place-items-center overflow-auto bg-foreground/45 p-4 supports-backdrop-filter:backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
       aria-label={titulo}

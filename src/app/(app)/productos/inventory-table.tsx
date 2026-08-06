@@ -31,7 +31,7 @@ export function InventoryTable({
   atributos: readonly AtributoCatalogo[];
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
       <Table>
         <TableHeader>
           <TableRow>

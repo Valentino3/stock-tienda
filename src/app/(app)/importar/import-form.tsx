@@ -173,7 +173,7 @@ export function ImportForm() {
 
           {batch.mapping && <MappingSummary mapping={batch.mapping} />}
 
-          <div className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-card shadow-xs">
+          <div className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

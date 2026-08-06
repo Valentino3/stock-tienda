@@ -311,7 +311,7 @@ export function PlanoEditor({ plano }: { plano: PlanoDelSector[] }) {
                 width: `${g.floorWidth}%`, height: `${g.floorHeight}%`,
               }}
               className={cn(
-                "absolute flex cursor-grab flex-col items-center justify-center border-2 border-border bg-card text-sm font-semibold shadow-xs select-none",
+                "absolute flex cursor-grab flex-col items-center justify-center border-2 border-border bg-card text-sm font-semibold select-none",
                 m.shape === "circle" ? "rounded-full" : "rounded-lg",
                 guardando === clave("mesa", m.id) && "opacity-60",
               )}

@@ -81,7 +81,7 @@ export function CommissionForm({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+    <form onSubmit={submit} className="space-y-4 rounded-xl border border-border bg-card p-4">
       <div className="inline-flex rounded-lg border border-border p-1">
         {([
           { m: "monto" as const, label: "Monto fijo" },

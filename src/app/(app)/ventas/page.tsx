@@ -171,7 +171,7 @@ export default async function VentasPage({
 
       <form
         method="get"
-        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
+        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4"
       >
         <label className="flex flex-col gap-1.5">
           <span className="ledger-label">Desde</span>
@@ -228,7 +228,7 @@ export default async function VentasPage({
           No hay ventas para el filtro seleccionado.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+        <div className="overflow-hidden rounded-xl border border-border bg-card">
           <div className={`grid ${GRID_COLS(facturacionActiva)} gap-3 border-b border-border bg-muted/40 px-4 py-2.5`}>
             <span className="ledger-label">Fecha</span>
             <span className="ledger-label">N°</span>

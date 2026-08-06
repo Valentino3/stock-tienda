@@ -56,7 +56,7 @@ export function RevisionClient() {
               y después marcarlas como resueltas acá.
             </Notice>
 
-            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+            <div className="overflow-hidden rounded-xl border border-border bg-card">
               <Table>
                 <TableHeader>
                   <TableRow>

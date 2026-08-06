@@ -41,7 +41,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
+        <div className="rounded-xl border border-border bg-card p-6">
           <form onSubmit={onSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>

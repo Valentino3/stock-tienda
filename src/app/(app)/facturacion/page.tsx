@@ -133,7 +133,7 @@ export default async function FacturacionPage() {
         {ultimas.length === 0 ? (
           <p className="text-sm text-muted-foreground">Todavía no emitiste ningún comprobante.</p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <div className="overflow-hidden rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -173,7 +173,7 @@ export default async function FacturacionPage() {
 
       <section className="space-y-3">
         <p className="ledger-label">Cómo obtener el certificado</p>
-        <details className="rounded-xl border border-border bg-card p-4 text-sm shadow-xs">
+        <details className="rounded-xl border border-border bg-card p-4 text-sm">
           <summary className="cursor-pointer font-medium">Pasos en el portal de ARCA</summary>
           <ol className="mt-3 list-decimal space-y-3 pl-5 text-muted-foreground">
             <li>

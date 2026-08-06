@@ -69,7 +69,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         }
       />
 
-      <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+      <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
         <label className="flex flex-col gap-1.5">
           <span className="ledger-label">Desde</span>
           <input type="date" name="from" defaultValue={fromValue} className="h-9 w-40 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" />
@@ -88,7 +88,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         {summary.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin ventas en el período.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -126,7 +126,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         {commissions.length === 0 ? (
           <p className="text-sm text-muted-foreground">No hay comisiones registradas en el período.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <div className="rounded-xl border border-border bg-card">
             <Table>
               <TableHeader>
                 <TableRow>

@@ -48,7 +48,7 @@ export async function ComprobanteImprimible({
       en manos de un cliente. */}
   {esPrueba && (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
-      <span className="-rotate-45 text-center text-lg font-bold tracking-widest text-red-500/25">
+      <span className="-rotate-45 text-center text-lg font-bold tracking-widest text-destructive/25">
         COMPROBANTE DE PRUEBA
         <br />
         SIN VALIDEZ FISCAL
