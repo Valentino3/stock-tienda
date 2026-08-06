@@ -9,6 +9,7 @@ import {
 import {
   acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
 } from "@/domain/floor-plan";
+import { comandasPendientes, mandarACocina, marcarImpresas } from "@/domain/kitchen";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import type { Discount } from "@/domain/sales";
 import type { FloorMarkerType } from "@/db/schema";
@@ -221,6 +222,40 @@ export async function nuevaMesa(name: string, sector?: string, capacity?: number
     revalidatePath("/mesas");
     revalidatePath("/salon");
     return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+// ---- cocina ----
+
+/**
+ * Manda a preparar lo que todavía no salió. Es del mozo, no del dueño.
+ */
+export async function mandarComandaACocina(orderId: number) {
+  const { storeId } = await requireStore();
+  try {
+    const n = await mandarACocina(db, { storeId, orderId });
+    revalidatePath(`/salon/${orderId}`);
+    revalidatePath("/cocina");
+    return { ok: true as const, mandados: n };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Lo que la cocina tiene para preparar. La consulta la pantalla en intervalo. */
+export async function traerComandas(estacion?: string | null) {
+  const { storeId } = await requireStore();
+  return comandasPendientes(db, storeId, { estacion });
+}
+
+/** La pantalla de cocina avisa que ya salió por impresora. */
+export async function confirmarImpresion(itemIds: number[]) {
+  const { storeId } = await requireStore();
+  try {
+    const n = await marcarImpresas(db, { storeId, itemIds });
+    return { ok: true as const, impresas: n };
   } catch (e) {
     return { error: traducir(e) };
   }

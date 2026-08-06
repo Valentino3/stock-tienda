@@ -33,10 +33,13 @@ type Props = {
   atributos: readonly AtributoCatalogo[];
   ejemploCategoria: string;
   tracksStockPorDefecto: boolean;
+  /** Solo gastronomía rutea a estaciones de cocina. */
+  usaEstaciones?: boolean;
 };
 
 export function ProductForm({
   product, categories = [], atributos, ejemploCategoria, tracksStockPorDefecto,
+  usaEstaciones = false,
 }: Props) {
   const isEdit = !!product;
   const [open, setOpen] = useState(false);
@@ -53,6 +56,8 @@ export function ProductForm({
   const [tracksStock, setTracksStock] = useState(
     product ? product.tracksStock : tracksStockPorDefecto,
   );
+
+  const [station, setStation] = useState(product?.station ?? "");
 
   const [vName, setVName] = useState("");
   const [vSku, setVSku] = useState("");
@@ -73,6 +78,7 @@ export function ProductForm({
         basePrice: Number(basePrice),
         lowStockThreshold: Number(lowStockThreshold),
         tracksStock,
+        station: usaEstaciones ? station : undefined,
       });
       if ("error" in res && res.error) setError(res.error);
       else {
@@ -172,6 +178,23 @@ export function ProductForm({
                   </span>
                 </span>
               </label>
+              {usaEstaciones && (
+                <div className="space-y-2">
+                  <Label htmlFor="product-station">Estación (opcional)</Label>
+                  <Input
+                    id="product-station" list="estaciones" value={station}
+                    onChange={(e) => setStation(e.target.value)}
+                    placeholder="cocina, barra, plancha…"
+                  />
+                  <datalist id="estaciones">
+                    {["cocina", "barra", "plancha", "postres"].map((e) => <option key={e} value={e} />)}
+                  </datalist>
+                  <p className="text-xs text-muted-foreground">
+                    Define a qué pantalla de cocina va la comanda. Vacío = no se manda
+                    a preparar.
+                  </p>
+                </div>
+              )}
               {tracksStock && (
                 <div className="space-y-2">
                   <Label htmlFor="product-threshold">Umbral stock bajo</Label>

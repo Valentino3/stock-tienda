@@ -144,6 +144,16 @@ export const products = pgTable("products", {
   storeId: integer("store_id").notNull().references(() => stores.id),
   name: text("name").notNull(),
   category: text("category"), // texto libre, opcional (agrupar/filtrar catálogo)
+  /**
+   * Estación de la cocina que prepara este plato: "cocina", "barra",
+   * "plancha", "postres". Texto libre y no enum: cada local arma sus
+   * estaciones, y agregar una no puede ser una migración.
+   *
+   * null = no se manda a ninguna estación. Es lo correcto para un comercio de
+   * retail, donde nada se "prepara", y también para una gaseosa que el mozo
+   * saca de la heladera.
+   */
+  station: text("station"),
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   /**
    * Si es false, vender este producto NO mueve stock: no descuenta, no lo
@@ -379,6 +389,20 @@ export const orderItems = pgTable("order_items", {
   // decir lo que se pidió aunque después se renombre el plato.
   nameSnapshot: text("name_snapshot").notNull(),
   notes: text("notes"),
+  /**
+   * Cuándo el mozo mandó esta línea a preparar. null = todavía no salió.
+   *
+   * Es una decisión humana y no el momento de cargarla: se anotan cuatro cosas
+   * en la mesa y recién ahí se manda todo junto. Sin esta marca, la cocina
+   * recibiría un plato por cada tecleo.
+   */
+  sentAt: timestamp("sent_at"),
+  /**
+   * Cuándo la pantalla de cocina la sacó por impresora. Separado de `sentAt`
+   * para que recargar esa pantalla no reimprima lo que ya salió en papel, y
+   * para que una cocina pueda trabajar solo con pantalla.
+   */
+  printedAt: timestamp("printed_at"),
   /**
    * Venta que pagó ESTE ítem. null = todavía impago.
    *

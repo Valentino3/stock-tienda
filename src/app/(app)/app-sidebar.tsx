@@ -17,6 +17,7 @@ import {
   ReceiptText,
   UtensilsCrossed,
   LayoutGrid,
+  ChefHat,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,7 @@ export type NavGroup = { label: string; links: NavLink[] };
 
 const ICONS: Record<string, LucideIcon> = {
   "/salon": UtensilsCrossed,
+  "/cocina": ChefHat,
   "/mesas": LayoutGrid,
   "/vender": ShoppingCart,
   "/productos": Package,
