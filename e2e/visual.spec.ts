@@ -55,9 +55,15 @@ const RUTAS_CARTAS = [
   "/facturacion",
 ];
 
-/** Pantallas del restaurante. `/vender` y `/caja` van también porque el rubro
- *  les cambia las etiquetas y la navegación. */
-const RUTAS_RESTO = ["/salon", "/mesas", "/cocina", "/vender", "/caja"];
+/**
+ * Pantallas del restaurante. `/vender` y `/caja` van también porque el rubro
+ * les cambia las etiquetas y la navegación. `/reportes` y `/ventas` van acá
+ * además de en cartas por un motivo distinto: los specs de plata cobran contra
+ * ESTA tienda, así que es la única con tablas llenas. En cartas las mismas
+ * pantallas salen vacías y no dejan ver el tratamiento de fila, totales ni
+ * zebra — que es justo lo que hay que mirar al restilar una tabla.
+ */
+const RUTAS_RESTO = ["/salon", "/mesas", "/cocina", "/vender", "/caja", "/reportes", "/ventas"];
 
 /**
  * Resuelve una ruta con id buscando el primer enlace que matchee en la lista.

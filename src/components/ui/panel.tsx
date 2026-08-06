@@ -1,3 +1,4 @@
+import { Slot } from "radix-ui";
 import { cn } from "@/lib/utils";
 
 /**
@@ -15,6 +16,7 @@ import { cn } from "@/lib/utils";
 export function Panel({
   className,
   flush = false,
+  asChild = false,
   ...props
 }: React.ComponentProps<"div"> & {
   /**
@@ -22,9 +24,12 @@ export function Panel({
    * al radio en vez de poner padding, que es justo lo que se olvidaba a mano.
    */
   flush?: boolean;
+  /** Presta los estilos al hijo. Para cuando la superficie ES un `<form>`. */
+  asChild?: boolean;
 }) {
+  const Comp = asChild ? Slot.Root : "div";
   return (
-    <div
+    <Comp
       data-slot="panel"
       className={cn(
         "rounded-xl border border-border bg-card",

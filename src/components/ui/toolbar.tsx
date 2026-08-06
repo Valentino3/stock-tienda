@@ -12,7 +12,11 @@ import { Panel } from "./panel";
  * se dejan puestos entre visitas, y un placeholder desaparece apenas hay valor
  * — el operador vuelve a la pantalla y no sabe por qué ve lo que ve.
  */
-export function Toolbar({ className, children, ...props }: React.ComponentProps<"div">) {
+export function Toolbar({
+  className,
+  children,
+  ...props
+}: React.ComponentProps<"div"> & { asChild?: boolean }) {
   return (
     <Panel
       className={cn("flex flex-wrap items-end gap-x-3 gap-y-2 p-3", className)}

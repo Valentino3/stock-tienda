@@ -131,6 +131,12 @@
     font-family: var(--font-mono), ui-monospace, monospace;
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
+    /* `Intl` en es-AR mete un espacio duro entre el signo y la cifra ("$ 1.234").
+       En una fuente monoespaciada ese espacio mide lo mismo que un dígito, así
+       que a 30px el importe salía partido en dos. Se aprieta acá y no sacando
+       el carácter: el string que se copia, se exporta y se compara en los tests
+       sigue siendo el mismo. */
+    word-spacing: -0.22em;
   }
   /* Ledger section label: the chosen sectioning grammar, used deliberately. */
   .ledger-label {

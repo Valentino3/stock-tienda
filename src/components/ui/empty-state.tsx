@@ -21,6 +21,7 @@ export function EmptyState({
   detalle,
   accion,
   filtrado = false,
+  size = "md",
   className,
 }: {
   icon?: LucideIcon;
@@ -31,12 +32,22 @@ export function EmptyState({
   accion?: React.ReactNode;
   /** Hay datos, pero el filtro los dejó afuera. */
   filtrado?: boolean;
+  /**
+   * `sm` para el vacío de UNA sección entre varias. Una pantalla como /reportes
+   * tiene seis secciones que comparten un solo filtro: con el tratamiento
+   * grande en cada una, la misma frase y el mismo botón aparecen seis veces y
+   * la página se vuelve una columna de cajas vacías. El remedio se ofrece una
+   * vez, arriba, donde está el filtro.
+   */
+  size?: "sm" | "md";
   className?: string;
 }) {
+  const sm = size === "sm";
   return (
     <div
       className={cn(
-        "flex flex-col items-center gap-2 rounded-xl border bg-card/50 px-4 py-10 text-center",
+        "flex flex-col items-center gap-2 rounded-xl border bg-card/50 px-4 text-center",
+        sm ? "py-6" : "py-10",
         // Vacío de verdad = punteado: el mismo idioma de "acá todavía no hay
         // nada" que usan el plano sin mesas y el chip de agregar filtro.
         // Filtrado = borde sólido: los datos existen, lo que falta es
@@ -45,7 +56,7 @@ export function EmptyState({
         className,
       )}
     >
-      {Icon && (
+      {Icon && !sm && (
         <span
           className={cn(
             "flex size-9 items-center justify-center rounded-lg text-muted-foreground/70",
@@ -55,9 +66,9 @@ export function EmptyState({
           <Icon className="size-4.5" aria-hidden />
         </span>
       )}
-      <p className="text-sm font-medium">{titulo}</p>
-      {detalle && <p className="max-w-prose text-sm text-muted-foreground">{detalle}</p>}
-      {accion && <div className="mt-1">{accion}</div>}
+      <p className={cn("text-sm", sm ? "text-muted-foreground" : "font-medium")}>{titulo}</p>
+      {detalle && !sm && <p className="max-w-prose text-sm text-muted-foreground">{detalle}</p>}
+      {accion && !sm && <div className="mt-1">{accion}</div>}
     </div>
   );
 }
