@@ -54,6 +54,6 @@ next-env.d.ts
 # docs
 /docs/
 
-# capturas del arnés visual (e2e/capturas.spec.ts): son para comparar a ojo
+# capturas del arnés visual (e2e/visual.spec.ts): son para comparar a ojo
 # entre fases, no para versionar. Pesan y cambian en cada corrida.
 /capturas/
