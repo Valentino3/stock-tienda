@@ -24,7 +24,9 @@ export async function GET(req: Request) {
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Ventas");
-  ws.addRow(["N°", "Fecha", "Vendedor", "Medio", "Descuento", "Total", "Estado"]);
+  // El motivo va en el Excel y no solo en pantalla: es donde el dueno revisa
+  // el mes, y una anulacion sin explicacion es justo la que hay que mirar.
+  ws.addRow(["N°", "Fecha", "Vendedor", "Medio", "Descuento", "Total", "Estado", "Motivo de anulación"]);
   for (const { sale, sellerName } of rows as { sale: typeof sales.$inferSelect; sellerName: string }[]) {
     ws.addRow([
       sale.id,
@@ -34,6 +36,7 @@ export async function GET(req: Request) {
       sale.discountAmount,
       sale.total,
       sale.voided ? "Anulada" : "Activa",
+      sale.voidedReason ?? "",
     ]);
   }
 

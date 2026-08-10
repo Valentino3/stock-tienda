@@ -14,6 +14,7 @@ import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
+import type { PriceList } from "@/domain/sales";
 import { buscarEnCatalogo } from "@/lib/offline/busqueda";
 import {
   descargarSnapshot, encolar, altaClienteOffline, altaProductoOffline, restaurarRespaldo,
@@ -42,7 +43,11 @@ type CartItem = {
   condition: string | null;
   foil: boolean;
   language: string | null;
+  /** Precio de la lista "venta". Se guardan las tres y el precio mostrado se deriva. */
   price: number;
+  priceCash: number | null;
+  priceWholesale: number | null;
+  priceList: PriceList;
   stock: number;
   /** false = no se cuenta por unidades (un plato, un servicio): no tiene tope. */
   llevaStock: boolean;
@@ -50,6 +55,29 @@ type CartItem = {
   discountKind: DiscountKind;
   discountValue: number;
 };
+
+const LISTAS: { value: PriceList; label: string; corto: string }[] = [
+  { value: "venta", label: "Precio de venta", corto: "Venta" },
+  { value: "efectivo", label: "Efectivo menor", corto: "Efvo." },
+  { value: "mayorista", label: "Mayorista", corto: "Mayor" },
+];
+
+/**
+ * Precio de la línea según la lista elegida.
+ *
+ * `!= null` y nunca `||`: un artículo en promo a $0 es un precio válido, y con
+ * `||` se cobraría al precio de lista. Espeja `resolverPrecio` del dominio,
+ * que es quien manda — acá solo se muestra.
+ */
+function precioDe(i: CartItem): number {
+  if (i.priceList === "efectivo" && i.priceCash != null) return i.priceCash;
+  if (i.priceList === "mayorista" && i.priceWholesale != null) return i.priceWholesale;
+  return i.price;
+}
+
+/** Solo se ofrecen las listas que la variante tiene cargadas. */
+const listaDisponible = (i: CartItem, l: PriceList) =>
+  l === "venta" || (l === "efectivo" ? i.priceCash != null : i.priceWholesale != null);
 
 /** Tope de cantidad de una línea. Sin stock trackeado no hay techo. */
 const topeDe = (i: CartItem) => (i.llevaStock ? i.stock : Number.POSITIVE_INFINITY);
@@ -73,7 +101,11 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * regenerara al recargar, un reintento después de un corte de red cobraría dos
  * veces (ver sales.uid en schema.ts).
  */
-const CARRITO_VERSION = 1;
+// v2: las líneas guardan las tres listas de precio y cuál se eligió. El guard
+// `snap?.v === CARRITO_VERSION` descarta solo el carrito viejo; sin el bump, un
+// cajero con el carrito armado en el momento del deploy rehidrataría líneas sin
+// esos campos y `precioDe` devolvería undefined.
+const CARRITO_VERSION = 2;
 const carritoKey = (storeId: number) => `stock-tienda:carrito:${storeId}`;
 
 type CarritoGuardado = {
@@ -430,6 +462,9 @@ export function SaleForm({
           foil: r.foil,
           language: r.language,
           price: r.price ?? r.basePrice,
+          priceCash: r.priceCash ?? null,
+          priceWholesale: r.priceWholesale ?? null,
+          priceList: "venta" as PriceList,
           stock: r.stock,
           llevaStock,
           quantity: 1,
@@ -461,7 +496,7 @@ export function SaleForm({
   }
 
   const lines = cart.map((i) => {
-    const gross = round2(i.price * i.quantity);
+    const gross = round2(precioDe(i) * i.quantity);
     const discount = resolveDiscount(i.discountKind, i.discountValue, gross);
     return { item: i, gross, discount, net: round2(gross - discount) };
   });
@@ -507,6 +542,8 @@ export function SaleForm({
           variantId: i.variantId,
           quantity: i.quantity,
           discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
+          // Se manda la LISTA, no el importe: el precio lo resuelve el servidor.
+          priceList: i.priceList,
         })),
         saleDiscount: saleDiscountValue > 0 ? { kind: saleDiscountKind, value: saleDiscountValue } : undefined,
         uid,
@@ -555,8 +592,9 @@ export function SaleForm({
       items: cart.map((i) => ({
         variantId: i.variantId,
         quantity: i.quantity,
-        unitPrice: i.price,
+        unitPrice: precioDe(i),
         discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
+        priceList: i.priceList,
         productName: i.productName,
         variantName: i.variantName,
       })),
@@ -651,11 +689,22 @@ export function SaleForm({
               placeholder="Buscar producto o SKU…"
               value={term}
               onChange={(e) => setTerm(e.target.value)}
+              // Enter agrega el primer resultado. Es lo que hace usable un
+              // lector de código de barras: el lector tipea el SKU y manda
+              // Enter, y hasta ahora ese Enter no hacía nada porque el input no
+              // está dentro de un <form>. La búsqueda ya rankea el SKU exacto
+              // primero (ver buscarEnCatalogo), así que ese orden estaba
+              // desperdiciado.
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || results.length === 0) return;
+                e.preventDefault();
+                addToCart(results[0]);
+              }}
               className="pl-9"
               autoFocus
             />
             {results.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-[40dvh] w-full overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover shadow-lg">
                 {results.map((r) => (
                   <li key={r.variantId} className="border-b border-border last:border-0">
                     <button
@@ -693,7 +742,14 @@ export function SaleForm({
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm">{label(item)}</p>
-                      <p className="figure text-xs text-muted-foreground">{money(item.price)} c/u</p>
+                      <p className="figure text-xs text-muted-foreground">
+                        {money(precioDe(item))} c/u
+                        {item.priceList !== "venta" && (
+                          <span className="ml-1 text-brand">
+                            {LISTAS.find((l) => l.value === item.priceList)?.corto.toLowerCase()}
+                          </span>
+                        )}
+                      </p>
                     </div>
                     <Button
                       type="button"
@@ -734,6 +790,32 @@ export function SaleForm({
                         <span className="ledger-label ml-1 text-muted-foreground">máx {number(item.stock)}</span>
                       )}
                     </div>
+                    {(item.priceCash != null || item.priceWholesale != null) && (
+                      <div className="flex overflow-hidden rounded-md border border-border">
+                        {LISTAS.map((l) => (
+                          <button
+                            key={l.value}
+                            type="button"
+                            disabled={!listaDisponible(item, l.value)}
+                            onClick={() => patchItem(item.variantId, { priceList: l.value })}
+                            title={
+                              listaDisponible(item, l.value)
+                                ? l.label
+                                : `${l.label}: esta variante no lo tiene cargado`
+                            }
+                            aria-pressed={item.priceList === l.value}
+                            className={cn(
+                              "px-2 py-1 text-xs transition-colors disabled:opacity-40",
+                              item.priceList === l.value
+                                ? "bg-brand text-brand-foreground"
+                                : "hover:bg-accent disabled:hover:bg-transparent",
+                            )}
+                          >
+                            {l.corto}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <DiscountControl
                       kind={item.discountKind}
                       value={item.discountValue}

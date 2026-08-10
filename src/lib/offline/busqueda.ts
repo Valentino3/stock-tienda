@@ -21,6 +21,14 @@ export type VarianteCatalogo = {
    */
   tracksStock?: boolean;
   price: number | null;
+  /**
+   * Listas alternativas. Opcionales por el mismo motivo que `tracksStock`: un
+   * dispositivo que venía de la v4 tiene filas sin estos campos. Se leen
+   * SIEMPRE con `!= null` y nunca con `||`: un artículo en promo a $0 es un
+   * precio válido, y con `||` se cobraría al precio de lista.
+   */
+  priceCash?: number | null;
+  priceWholesale?: number | null;
   basePrice: number;
   setName: string | null;
   condition: string | null;

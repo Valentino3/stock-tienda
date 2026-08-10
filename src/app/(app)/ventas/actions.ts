@@ -7,12 +7,19 @@ import { getFiscalConfig } from "@/domain/fiscal-config";
 import { emitirNotaCredito, getFacturaAutorizada } from "@/domain/fiscal-emision";
 import { createArcaClientForStore } from "@/lib/arca/client";
 
-export async function voidSaleAction(saleId: number) {
+const ERRORES_ANULAR: Record<string, string> = {
+  ALREADY_VOIDED: "La venta ya está anulada",
+  VOID_REASON_REQUIRED: "Escribí por qué se anula.",
+  SALE_NOT_FOUND: "La venta no existe.",
+};
+
+export async function voidSaleAction(saleId: number, reason: string) {
   const { id, storeId } = await requireStoreOwner();
   try {
-    await voidSale(db, { saleId, storeId, userId: id });
+    await voidSale(db, { saleId, storeId, userId: id, reason });
   } catch (e) {
-    return { error: e instanceof Error && e.message === "ALREADY_VOIDED" ? "La venta ya está anulada" : "No se pudo anular" };
+    const codigo = e instanceof Error ? e.message : "";
+    return { error: ERRORES_ANULAR[codigo] ?? "No se pudo anular" };
   }
 
   // La anulación ya está commiteada: stock restaurado y cuenta corriente

@@ -109,7 +109,12 @@ function InventoryTableRow({
   return (
     <TableRow className={cn(inactive && "opacity-55")}>
       <TableCell className="max-w-[22rem]">
-        <div className="truncate font-medium" title={row.productName}>{row.productName}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="truncate font-medium" title={row.productName}>{row.productName}</span>
+          {/* Se marca en la fila y no solo en el formulario: si no, no hay
+              forma de ver de un vistazo qué está en promo este mes. */}
+          {row.isPromo && <Badge variant="brand" className="h-4 shrink-0 px-1 text-[10px]">Promo</Badge>}
+        </div>
         {(row.variantName || row.category || inactive) && (
           <div className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
             {row.variantName && <span className="truncate">{row.variantName}</span>}

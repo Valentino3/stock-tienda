@@ -307,3 +307,65 @@ describe("uidsYaSincronizados", () => {
     expect(await uidsYaSincronizados(db, store, [])).toEqual([]);
   });
 });
+
+describe("replaySale con listas de precio", () => {
+  it("guarda la lista y respeta el precio capturado, sin recotizar", async () => {
+    await db.update(productVariants).set({ priceWholesale: 700 })
+      .where(eq(productVariants.id, vId));
+
+    const r = await replay(ventaOffline({
+      items: [{ variantId: vId, quantity: 2, unitPrice: 700, priceList: "mayorista" }],
+    }));
+
+    expect(r.estado).toBe("aplicada");
+    expect(r.total).toBe(1400); // el capturado, no 2×1000
+    const [item] = await db.select().from(saleItems).where(eq(saleItems.saleId, r.saleId!));
+    expect(item.priceList).toBe("mayorista");
+    expect(item.unitPrice).toBe(700);
+  });
+
+  it("NO avisa deriva cuando el capturado coincide con su lista", async () => {
+    // Es la trampa: comparando contra el precio de venta (1000) este caso
+    // avisaría, y una feria entera de ventas mayoristas llenaría la bandeja
+    // de avisos falsos, que es como se deja de mirarla.
+    await db.update(productVariants).set({ priceWholesale: 700 })
+      .where(eq(productVariants.id, vId));
+
+    const r = await replay(ventaOffline({
+      items: [{ variantId: vId, quantity: 1, unitPrice: 700, priceList: "mayorista" }],
+    }));
+    expect(r.avisos).toEqual([]);
+  });
+
+  it("sí avisa cuando la lista cambió de precio mientras tanto", async () => {
+    await db.update(productVariants).set({ priceWholesale: 800 })
+      .where(eq(productVariants.id, vId));
+
+    const r = await replay(ventaOffline({
+      items: [{ variantId: vId, quantity: 1, unitPrice: 700, priceList: "mayorista" }],
+    }));
+    expect(r.avisos.some((a) => /Precio distinto/.test(a))).toBe(true);
+  });
+
+  it("avisa distinto si la lista ya no está cargada", async () => {
+    const r = await replay(ventaOffline({
+      items: [{ variantId: vId, quantity: 1, unitPrice: 700, priceList: "mayorista" }],
+    }));
+    expect(r.estado).toBe("aplicada"); // la venta entra igual: ya se cobró
+    expect(r.avisos.some((a) => /ya no está cargada/.test(a))).toBe(true);
+  });
+
+  it("una venta de la cola vieja, sin lista, entra como venta", async () => {
+    const r = await replay(ventaOffline());
+    const [item] = await db.select().from(saleItems).where(eq(saleItems.saleId, r.saleId!));
+    expect(item.priceList).toBe("venta");
+  });
+
+  it("rechaza una lista inventada sin abortar el lote con un error de Postgres", async () => {
+    const r = await replay(ventaOffline({
+      items: [{ variantId: vId, quantity: 1, unitPrice: 700, priceList: "regalada" as any }],
+    }));
+    expect(r.estado).toBe("error");
+    expect(r.error).toBe("INVALID_PRICE_LIST");
+  });
+});

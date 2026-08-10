@@ -42,11 +42,54 @@ export function calcularTotales<T extends { quantity: number; discount?: Discoun
   return { lines, subtotal, saleDiscount, total: round2(subtotal - saleDiscount) };
 }
 
+/** Lista de precios elegida por línea. Ver `priceListEnum` en schema.ts. */
+export type PriceList = "venta" | "efectivo" | "mayorista";
+
+const LISTAS: readonly PriceList[] = ["venta", "efectivo", "mayorista"];
+export const esListaValida = (x: unknown): x is PriceList =>
+  typeof x === "string" && (LISTAS as readonly string[]).includes(x);
+
+/**
+ * Precio unitario de una variante según la lista elegida.
+ *
+ * ⚠️ Las comparaciones son `!= null` y NUNCA `||`. Un artículo en promo a $0 es
+ * un precio válido: con `v.priceCash || v.price` se cobraría al precio de
+ * lista, o sea MÁS de lo que el cajero le acaba de decir al cliente.
+ *
+ * Si la lista pedida no está cargada, tira. No cae al precio de venta: las
+ * listas alternativas son siempre menores, así que un fallback silencioso
+ * cobra de más. La UI solo ofrece las listas que la variante tiene; este error
+ * es el backstop de la carrera "alguien borró priceCash con el carrito
+ * abierto".
+ *
+ * `venta` no puede faltar nunca: `price` es nullable pero `products.basePrice`
+ * es NOT NULL. Eso acota el error a las dos listas nuevas.
+ */
+export function resolverPrecio(
+  v: { price: number | null; basePrice: number; priceCash?: number | null; priceWholesale?: number | null },
+  lista: PriceList = "venta",
+): number {
+  if (lista === "efectivo") {
+    if (v.priceCash == null) throw new Error("PRICE_LIST_NOT_SET");
+    return v.priceCash;
+  }
+  if (lista === "mayorista") {
+    if (v.priceWholesale == null) throw new Error("PRICE_LIST_NOT_SET");
+    return v.priceWholesale;
+  }
+  return v.price ?? v.basePrice;
+}
+
 export type SaleInput = {
   storeId: number;
   sellerId: string;
   paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
-  items: { variantId: number; quantity: number; discount?: Discount }[];
+  // `priceList` ausente = "venta", que resuelve exactamente lo que la app
+  // cobró siempre. Esa es la propiedad de no-regresión: una venta que no
+  // menciona listas da el mismo resultado que antes de esta feature, y es lo
+  // que hace que gastronomía (que entra por pagarOrden sin mandar lista) no
+  // se vea afectada.
+  items: { variantId: number; quantity: number; discount?: Discount; priceList?: PriceList }[];
   // Descuento general aplicado sobre el subtotal ya neto de descuentos por línea.
   saleDiscount?: Discount;
   // Cliente de cuenta corriente — obligatorio cuando paymentMethod = "cuenta".
@@ -98,8 +141,11 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         .select({
           id: productVariants.id,
           price: productVariants.price,
+          priceCash: productVariants.priceCash,
+          priceWholesale: productVariants.priceWholesale,
           basePrice: products.basePrice,
           tracksStock: products.tracksStock,
+          isPromo: products.isPromo,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -108,17 +154,24 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           inArray(productVariants.id, input.items.map((i) => i.variantId)),
         ));
 
-      const priceOf = new Map(variantRows.map((v: any) => [v.id, v.price ?? v.basePrice]));
+      const porId = new Map(variantRows.map((v: any) => [v.id, v]));
       // `!== false` y no `=== true`: una fila anterior a la columna, o un
       // driver que devuelva undefined, tiene que comportarse como el default
       // (sí descuenta). Un producto deja de mover stock solo si alguien lo
       // pidió explícitamente.
       const mueveStock = new Map(variantRows.map((v: any) => [v.id, v.tracksStock !== false]));
-      if (priceOf.size !== new Set(input.items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
+      if (porId.size !== new Set(input.items.map((i) => i.variantId)).size) throw new Error("VARIANT_NOT_FOUND");
+
+      // La lista se valida acá y no se deja llegar al enum: una lista basura
+      // daría un 22P02 de Postgres adentro de la transacción, abortando la
+      // venta entera con un mensaje ilegible.
+      if (input.items.some((i) => i.priceList !== undefined && !esListaValida(i.priceList))) {
+        throw new Error("INVALID_PRICE_LIST");
+      }
 
       const { lines, saleDiscount, total } = calcularTotales(
         input.items,
-        (i) => priceOf.get(i.variantId) as number,
+        (i) => resolverPrecio(porId.get(i.variantId) as any, i.priceList ?? "venta"),
         input.saleDiscount,
       );
 
@@ -160,6 +213,10 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           discountAmount: line.lineDiscount,
+          priceList: line.priceList ?? "venta",
+          // Snapshot: la comisión de un período cerrado no puede cambiar
+          // porque la promo terminó y alguien limpió el flag del producto.
+          isPromo: Boolean((porId.get(line.variantId) as any)?.isPromo),
         });
         // Un producto que no lleva stock no genera movimiento. Sin esta
         // guarda, un plato con existencias en 0 rebota con INSUFFICIENT_STOCK
@@ -196,11 +253,26 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
   }
 }
 
-export async function voidSale(db: any, input: { saleId: number; storeId: number; userId: string }): Promise<void> {
+/** Mínimo de un motivo de anulación, ya recortado. Evita el "." y el "asd". */
+const MOTIVO_MIN = 3;
+
+export async function voidSale(
+  db: any,
+  input: { saleId: number; storeId: number; userId: string; reason: string },
+): Promise<void> {
+  // Se valida acá y no solo en el diálogo: si la guarda viviera únicamente en
+  // la UI, la server action sería un bypass. La anulación es el vector de
+  // faltante del sistema, así que es justo la operación donde el motivo tiene
+  // que ser innegociable.
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < MOTIVO_MIN) throw new Error("VOID_REASON_REQUIRED");
+
   await db.transaction(async (tx: any) => {
     // Scopeado por tienda: no se puede anular una venta de otra tienda por id.
+    // El motivo entra en el MISMO update que el resto de la anulación: nunca
+    // un segundo write que pueda quedar a medias.
     const [voided] = await tx.update(sales)
-      .set({ voided: true, voidedAt: new Date(), voidedBy: input.userId })
+      .set({ voided: true, voidedAt: new Date(), voidedBy: input.userId, voidedReason: reason })
       .where(and(eq(sales.id, input.saleId), eq(sales.storeId, input.storeId), eq(sales.voided, false)))
       .returning();
     if (!voided) {

@@ -180,7 +180,7 @@ export function OrdenClient({
                 autoFocus
               />
               {resultados.length > 0 && (
-                <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
+                <ul className="absolute z-20 mt-1 max-h-[40dvh] w-full overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover shadow-lg">
                   {resultados.map((r) => (
                     <li key={r.variantId} className="border-b border-border last:border-0">
                       <button

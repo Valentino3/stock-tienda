@@ -3,7 +3,7 @@ import {
   products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements,
 } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
-import { calcularTotales, type Discount } from "@/domain/sales";
+import { calcularTotales, esListaValida, resolverPrecio, type Discount, type PriceList } from "@/domain/sales";
 import { createSyncNotification } from "@/domain/notifications";
 
 /**
@@ -89,6 +89,14 @@ export type VentaOffline = {
     quantity: number;
     unitPrice: number;
     discount?: Discount;
+    /**
+     * Con qué lista se cobró en el dispositivo. Es METADATO: acá NO se
+     * recalcula el precio con ella — el importe que vale es `unitPrice`, el
+     * que el cliente pagó. Sirve para dos cosas: escribir
+     * `sale_items.priceList`, y comparar la deriva de precio contra la lista
+     * correcta en vez de contra el precio de venta.
+     */
+    priceList?: PriceList;
   }[];
   saleDiscount?: Discount;
   clientId?: number | null;
@@ -314,7 +322,10 @@ export async function replaySale(
   // Se resuelven los uid de variantes creadas sin conexión ANTES de abrir la
   // transacción: si el producto no se pudo crear, la venta no entra en vez de
   // entrar colgada de una variante equivocada.
-  const items: { variantId: number; quantity: number; unitPrice: number; discount?: Discount }[] = [];
+  const items: {
+    variantId: number; quantity: number; unitPrice: number;
+    discount?: Discount; priceList?: PriceList;
+  }[] = [];
   for (const i of venta.items) {
     const resuelto = i.variantUid != null
       ? input.variantePorUid?.get(i.variantUid)
@@ -322,11 +333,17 @@ export async function replaySale(
     if (!Number.isInteger(resuelto)) {
       return { uid, estado: "error", error: "VARIANT_NOT_FOUND", avisos };
     }
+    // Una lista basura no puede llegar al enum: sería un 22P02 de Postgres
+    // adentro de la transacción, abortando el lote con un mensaje ilegible.
+    if (i.priceList !== undefined && !esListaValida(i.priceList)) {
+      return { uid, estado: "error", error: "INVALID_PRICE_LIST", avisos };
+    }
     items.push({
       variantId: resuelto as number,
       quantity: i.quantity,
       unitPrice: i.unitPrice,
       discount: i.discount,
+      priceList: i.priceList,
     });
   }
 
@@ -362,9 +379,12 @@ export async function replaySale(
           id: productVariants.id,
           name: productVariants.name,
           price: productVariants.price,
+          priceCash: productVariants.priceCash,
+          priceWholesale: productVariants.priceWholesale,
           basePrice: products.basePrice,
           productName: products.name,
           tracksStock: products.tracksStock,
+          isPromo: products.isPromo,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -378,9 +398,26 @@ export async function replaySale(
 
       // Precio capturado, no el actual: es el que el cliente pagó. Si el
       // catálogo cambió mientras tanto se avisa, no se corrige.
+      //
+      // ⚠️ La comparación es contra LA LISTA CON LA QUE SE COBRÓ, no contra el
+      // precio de venta. Sin esto, cada venta mayorista sincronizada de una
+      // feria genera un aviso falso ("se cobró 9000 y hoy figura 12000"): 200
+      // ventas serían 200 avisos basura en la misma bandeja donde viven los
+      // avisos reales de stock negativo, que es como se deja de mirarla.
       for (const i of items) {
         const v: any = porId.get(i.variantId);
-        const actual = v.price ?? v.basePrice;
+        const lista = i.priceList ?? "venta";
+        let actual: number;
+        try {
+          actual = resolverPrecio(v, lista);
+        } catch {
+          // La lista existía en el dispositivo y hoy ya no está cargada. Es
+          // otra cosa que un precio distinto, y se dice distinto.
+          avisos.push(
+            `${v.productName} se cobró con la lista "${lista}", que ya no está cargada. Revisá el precio.`,
+          );
+          continue;
+        }
         if (actual !== i.unitPrice) {
           avisos.push(`Precio distinto en ${v.productName}: se cobró ${i.unitPrice} y hoy figura ${actual}.`);
         }
@@ -426,6 +463,15 @@ export async function replaySale(
           quantity: line.quantity,
           unitPrice: line.unitPrice,
           discountAmount: line.lineDiscount,
+          // Metadato de la cola. Una venta guardada por un build anterior no
+          // lo trae y entra como "venta", que es correcto: ese build no sabía
+          // cobrar de otra forma.
+          priceList: line.priceList ?? "venta",
+          // A diferencia de createSale, acá el flag se lee al SINCRONIZAR y no
+          // al vender. Es un desfase de horas o días en una feria; el catálogo
+          // offline no guarda si estaba en promo, y agregarlo obligaría a otro
+          // bump de DB_VERSION para un dato que casi nunca cambia en el medio.
+          isPromo: Boolean((porId.get(line.variantId) as any)?.isPromo),
         });
         // Simétrico con createSale: lo que no lleva stock no lo mueve ni acá.
         // Sin esta guarda, cada plato vendido sin conexión dejaría el stock en

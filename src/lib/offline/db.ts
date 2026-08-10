@@ -14,7 +14,7 @@ import type { VarianteCatalogo } from "./busqueda";
  */
 
 const DB_NOMBRE = "stock-tienda-offline";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export const TIENDA_META = "meta";
 export const TIENDA_CATALOGO = "catalogo";
@@ -81,6 +81,13 @@ export type VentaEnCola = {
     quantity: number;
     unitPrice: number;
     discount?: { kind: "amount" | "percent"; value: number };
+    /**
+     * Lista con la que se cobró. Opcional: la cola NO se vacía en el upgrade
+     * —ahí hay plata cobrada— así que las ventas guardadas por un build
+     * anterior llegan sin este campo. El servidor las toma como "venta", que
+     * es correcto: ese build no sabía cobrar de otra forma.
+     */
+    priceList?: "venta" | "efectivo" | "mayorista";
     // Solo para mostrar la cola y el ticket sin volver a mirar el catálogo.
     productName: string;
     variantName: string | null;
@@ -109,20 +116,26 @@ function abrir(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(TIENDA_PRODUCTOS_NUEVOS)) db.createObjectStore(TIENDA_PRODUCTOS_NUEVOS, { keyPath: "uid" });
 
       /**
-       * v4 sumó `tracksStock` a las filas del catálogo. Este handler solo crea
-       * stores que faltan: NO migra la forma de las filas que ya están. Un
-       * dispositivo que viene de v3 conservaría un catálogo sin ese campo.
+       * v4 sumó `tracksStock` a las filas del catálogo; v5 sumó `priceCash` y
+       * `priceWholesale`. Este handler solo crea stores que faltan: NO migra la
+       * forma de las filas que ya están, así que un dispositivo que viene de
+       * una versión anterior conservaría un catálogo sin esos campos.
        *
        * Se vacían las tres tiendas que se pueden volver a bajar del servidor,
        * para forzar un snapshot nuevo. NUNCA se tocan la cola, los clientes o
        * productos creados sin conexión, ni las rechazadas: ahí hay plata
        * cobrada y no está en ningún otro lado.
        *
-       * Igual, el código que lee `tracksStock` usa `!== false`, así que un
-       * catálogo viejo se comporta como antes en vez de dejar de descontar
-       * stock. Esto es el cinturón; aquello es los tirantes.
+       * ⚠️ La condición se ACTUALIZA a `< 5`, no se agrega un `if` al lado: con
+       * dos condiciones, un salto de v3 a v5 correría las dos y vaciaría lo
+       * mismo dos veces.
+       *
+       * Igual, el código que lee estos campos usa `!== false` y `!= null`, así
+       * que un catálogo viejo se comporta como antes —descuenta stock, no
+       * ofrece las listas— en vez de romperse. Esto es el cinturón; aquello es
+       * los tirantes.
        */
-      if (evento.oldVersion > 0 && evento.oldVersion < 4) {
+      if (evento.oldVersion > 0 && evento.oldVersion < 5) {
         const tx = req.transaction;
         for (const tienda of [TIENDA_CATALOGO, TIENDA_CLIENTES, TIENDA_META]) {
           if (db.objectStoreNames.contains(tienda)) tx?.objectStore(tienda).clear();

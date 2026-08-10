@@ -23,7 +23,7 @@ const MOVEMENT_LABEL: Record<string, string> = { gasto: "Gasto", egreso: "Egreso
 type SessionInfo = { id: number; openedAt: Date; openingCash: number };
 type MethodTotal = { method: string; count: number; total: number };
 type MovementInfo = { id: number; kind: "gasto" | "egreso"; amount: number; description: string; createdAt: Date };
-type ClosedResult = { expectedCash: number; countedCash: number; difference: number };
+type ClosedResult = { sessionId: number; expectedCash: number; countedCash: number; difference: number };
 
 type Props = {
   session: SessionInfo | null;
@@ -103,6 +103,7 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
       if ("ok" in res && res.ok) {
         setCloseError("");
         setClosedResult({
+          sessionId: res.sessionId,
           expectedCash: res.expectedCash ?? 0,
           countedCash: Number(countedCash),
           difference: res.difference ?? 0,
@@ -136,6 +137,11 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
             tone={matches ? "success" : "destructive"}
             hint={matches ? "La caja cuadra." : "Revisar el conteo."}
           />
+          {/* El momento en que se quiere el papel del turno es este, no tres
+              pantallas más adelante. */}
+          <Button asChild className="w-full">
+            <a href={`/caja/${closedResult.sessionId}/cierre`}>Descargar cierre con los remitos</a>
+          </Button>
           {/* Sin esto la pantalla de cierre es un callejón: el arqueo queda
               a la vista y no hay forma de volver a abrir sin navegar afuera y
               entrar de nuevo. Pasa cuando se cierra por error, o cuando hay

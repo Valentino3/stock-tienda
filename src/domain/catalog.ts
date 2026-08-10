@@ -31,6 +31,10 @@ export async function snapshotCatalogo(db: any, storeId: number) {
       // src/lib/offline/db.ts: el default de una fila vieja es "sí descuenta".
       tracksStock: products.tracksStock,
       price: productVariants.price,
+      // Las dos listas alternativas viajan al dispositivo para poder cobrar
+      // por ellas sin conexión. Nullable: la mayoría del catálogo no las tiene.
+      priceCash: productVariants.priceCash,
+      priceWholesale: productVariants.priceWholesale,
       basePrice: products.basePrice,
       setName: productVariants.setName,
       condition: productVariants.condition,
@@ -85,6 +89,10 @@ export async function searchVariants(db: any, storeId: number, term: string) {
       // src/lib/offline/db.ts: el default de una fila vieja es "sí descuenta".
       tracksStock: products.tracksStock,
       price: productVariants.price,
+      // Las dos listas alternativas viajan al dispositivo para poder cobrar
+      // por ellas sin conexión. Nullable: la mayoría del catálogo no las tiene.
+      priceCash: productVariants.priceCash,
+      priceWholesale: productVariants.priceWholesale,
       basePrice: products.basePrice,
       setName: productVariants.setName,
       condition: productVariants.condition,

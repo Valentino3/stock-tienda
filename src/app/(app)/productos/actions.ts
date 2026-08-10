@@ -28,6 +28,7 @@ const PG_UNIQUE_VIOLATION = "23505";
 export async function saveProduct(input: {
   id?: number; name: string; category?: string; basePrice: number;
   lowStockThreshold: number; tracksStock?: boolean; station?: string | null;
+  isPromo?: boolean;
 }) {
   const { storeId } = await requireStoreOwner();
   if (
@@ -40,16 +41,17 @@ export async function saveProduct(input: {
   // `!== false` para que un cliente viejo que no manda el campo conserve el
   // comportamiento de siempre.
   const tracksStock = input.tracksStock !== false;
+  const isPromo = input.isPromo === true;
   const station = input.station?.trim() || null;
   if (input.id) {
     await db.update(products).set({
       name: input.name.trim(), category, basePrice: input.basePrice,
-      lowStockThreshold: input.lowStockThreshold, tracksStock, station,
+      lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
     }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
     const [p] = await db.insert(products).values({
       storeId, name: input.name.trim(), category, basePrice: input.basePrice,
-      lowStockThreshold: input.lowStockThreshold, tracksStock, station,
+      lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
     }).returning();
     // variante default para producto sin variantes reales
     await db.insert(productVariants).values({ storeId, productId: p.id, name: "" });

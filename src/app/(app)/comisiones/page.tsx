@@ -6,7 +6,7 @@ import { user } from "@/db/schema";
 import { requireStoreOwner } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money, number } from "@/lib/format";
-import { getSellerSalesSummary } from "@/domain/reports";
+import { getSellerSalesSummary, type ResumenVendedor } from "@/domain/reports";
 import { listCommissions } from "@/domain/commissions";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
@@ -95,15 +95,27 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
                 <TableRow>
                   <TableHead>Empleado</TableHead>
                   <TableHead className="text-right">Ventas</TableHead>
+                  <TableHead className="text-right">Normal</TableHead>
+                  <TableHead className="text-right">En promo</TableHead>
                   <TableHead className="text-right">Total vendido</TableHead>
+                  <TableHead className="text-right">A cuenta</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {summary.map((row: { sellerId: string; name: string; count: number; total: number }) => (
+                {summary.map((row: ResumenVendedor) => (
                   <TableRow key={row.sellerId}>
                     <TableCell className="font-medium">{row.name}</TableCell>
                     <TableCell className="figure text-right">{number(row.count)}</TableCell>
+                    <TableCell className="figure text-right">{money(row.normal)}</TableCell>
+                    <TableCell className="figure text-right">
+                      {row.promo > 0 ? money(row.promo) : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="figure text-right font-medium">{money(row.total)}</TableCell>
+                    {/* Se informa, no se resta: quien comisiona por un fiado
+                        que todavia no se cobro lo decide el comercio. */}
+                    <TableCell className="figure text-right text-muted-foreground">
+                      {row.aCuenta > 0 ? money(row.aCuenta) : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -116,7 +128,10 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         <CommissionForm
           employees={activeEmployees}
           salesByEmployee={Object.fromEntries(
-            summary.map((r: { sellerId: string; total: number }) => [r.sellerId, r.total])
+            summary.map((r: ResumenVendedor) => [
+              r.sellerId,
+              { normal: r.normal, promo: r.promo, aCuenta: r.aCuenta },
+            ])
           )}
           defaultFrom={fromValue}
           defaultTo={toValue}

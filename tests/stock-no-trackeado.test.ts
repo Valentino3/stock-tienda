@@ -93,7 +93,7 @@ describe("voidSale — la guarda simétrica", () => {
   it("anular una venta sin stock trackeado NO crea stock fantasma", async () => {
     // Es el bug peligroso: si vender no descontó, anular no puede devolver.
     const venta = await vender(sinStock, 3);
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const [v] = await db.select().from(productVariants).where(eq(productVariants.id, sinStock));
     expect(v.stock).toBe(0);
@@ -102,7 +102,7 @@ describe("voidSale — la guarda simétrica", () => {
 
   it("anular una venta con stock trackeado sí devuelve las unidades", async () => {
     const venta = await vender(conStock, 2);
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const [v] = await db.select().from(productVariants).where(eq(productVariants.id, conStock));
     expect(v.stock).toBe(5);
@@ -113,7 +113,7 @@ describe("voidSale — la guarda simétrica", () => {
       storeId: store, sellerId: "u1", paymentMethod: "efectivo",
       items: [{ variantId: conStock, quantity: 2 }, { variantId: sinStock, quantity: 1 }],
     });
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const [conS] = await db.select().from(productVariants).where(eq(productVariants.id, conStock));
     const [sinS] = await db.select().from(productVariants).where(eq(productVariants.id, sinStock));
