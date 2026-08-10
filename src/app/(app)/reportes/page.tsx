@@ -341,6 +341,7 @@ export default async function ReportesPage({
                   <TableHead className="text-right">Esperado</TableHead>
                   <TableHead className="text-right">Contado</TableHead>
                   <TableHead className="text-right">Diferencia</TableHead>
+                  <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -365,6 +366,12 @@ export default async function ReportesPage({
                           className={`figure text-right ${off ? "font-semibold text-destructive" : "text-muted-foreground"}`}
                         >
                           {moneyDiff(session.difference)}
+                        </TableCell>
+                        {/* Reimprimir un cierre viejo con sus remitos. */}
+                        <TableCell className="text-right">
+                          <Button asChild variant="ghost" size="sm">
+                            <Link href={`/caja/${session.id}/cierre`}>Ver cierre</Link>
+                          </Button>
                         </TableCell>
                       </TableRow>
                     );

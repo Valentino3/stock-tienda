@@ -58,5 +58,6 @@ export async function closeSession(countedCash: number, notes: string) {
     return { error: e instanceof Error && e.message === "SESSION_NOT_OPEN" ? "La caja ya fue cerrada" : "No se pudo cerrar la caja" };
   }
   revalidatePath("/caja"); revalidatePath("/vender");
-  return { ok: true as const, expectedCash: closed.expectedCash, difference: closed.difference };
+  // El id vuelve para poder ofrecer la descarga del cierre sin otra consulta.
+  return { ok: true as const, sessionId: closed.id, expectedCash: closed.expectedCash, difference: closed.difference };
 }
