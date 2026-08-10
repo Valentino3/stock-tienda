@@ -171,9 +171,10 @@ async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
     categoria: string;
     precio: number;
     umbral?: number;
+    promo?: boolean;
     variantes: {
       nombre: string; sku: string; stock: number;
-      precio?: number; costo?: number;
+      precio?: number; costo?: number; efectivo?: number; mayorista?: number;
       set?: string; cond?: string; idioma?: string; foil?: boolean;
       proveedor?: string;
     }[];
@@ -203,7 +204,7 @@ async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
     {
       nombre: "Lightning Bolt", categoria: "Magic", precio: 4500,
       variantes: [
-        { nombre: "Revised · NM · Inglés", sku: "MTG-LBO-RE-NM-EN", stock: 32, costo: 2400, set: "Revised", cond: "Near Mint", idioma: "Inglés", proveedor: "Cardhaus" },
+        { nombre: "Revised · NM · Inglés", sku: "MTG-LBO-RE-NM-EN", stock: 32, costo: 2400, efectivo: 4200, mayorista: 3400, set: "Revised", cond: "Near Mint", idioma: "Inglés", proveedor: "Cardhaus" },
         { nombre: "Revised · NM · Italiano", sku: "MTG-LBO-RE-NM-IT", stock: 0, precio: 5200, costo: 2900, set: "Revised", cond: "Near Mint", idioma: "Italiano" },
       ],
     },
@@ -220,8 +221,10 @@ async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
       variantes: [{ nombre: "LOB · NM · Español", sku: "YGO-BEW-LOB-NM-ES", stock: 2, costo: 25000, set: "Legend of Blue Eyes", cond: "Near Mint", idioma: "Español" }],
     },
     {
-      nombre: "Caja de sobres Scarlet & Violet", categoria: "Pokémon", precio: 145000,
-      variantes: [{ nombre: "", sku: "PKM-BOX-SV", stock: 7, costo: 98000, proveedor: "Distribuidora Norte" }],
+      // En promo y con las tres listas: es el producto que deja ver el
+      // selector del carrito y el badge de la tabla sin cargar nada a mano.
+      nombre: "Caja de sobres Scarlet & Violet", categoria: "Pokémon", precio: 145000, promo: true,
+      variantes: [{ nombre: "", sku: "PKM-BOX-SV", stock: 7, costo: 98000, efectivo: 138000, mayorista: 125000, proveedor: "Distribuidora Norte" }],
     },
     {
       nombre: "Fundas Dragon Shield (100u)", categoria: "Accesorios", precio: 18500,
@@ -247,6 +250,7 @@ async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
       .values({
         storeId, name: c.nombre, category: c.categoria, basePrice: c.precio,
         lowStockThreshold: c.umbral ?? 3,
+        isPromo: c.promo === true,
         tracksStock: c.nombre !== "Torneo — inscripción",
       })
       .returning();
@@ -256,6 +260,7 @@ async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
         storeId, productId: prod.id,
         name: v.nombre, sku: v.sku, stock: v.stock,
         price: v.precio ?? null, costArs: v.costo ?? null,
+        priceCash: v.efectivo ?? null, priceWholesale: v.mayorista ?? null,
         setName: v.set ?? null, condition: v.cond ?? null,
         language: v.idioma ?? null, foil: v.foil ?? false,
         supplier: v.proveedor ?? null,
