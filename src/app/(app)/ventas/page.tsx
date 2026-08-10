@@ -338,6 +338,12 @@ export default async function VentasPage({
                       Descuento general: −{money(sale.discountAmount)}
                     </p>
                   )}
+                  {sale.voided && sale.voidedReason && (
+                    <p className="text-xs">
+                      <span className="ledger-label">Motivo de la anulación</span>{" "}
+                      <span className="text-foreground">{sale.voidedReason}</span>
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-start gap-3">
                     {isOwner && !sale.voided && (
                       <VoidButton
