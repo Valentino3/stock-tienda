@@ -53,6 +53,7 @@ export function ProductForm({
   const [lowStockThreshold, setLowStockThreshold] = useState(product ? String(product.lowStockThreshold) : "3");
   // Al crear, el default sale del rubro: un comercio cuenta unidades, un
   // restaurante no. Al editar, manda lo que ya tenía el producto.
+  const [isPromo, setIsPromo] = useState(product ? Boolean(product.isPromo) : false);
   const [tracksStock, setTracksStock] = useState(
     product ? product.tracksStock : tracksStockPorDefecto,
   );
@@ -78,6 +79,7 @@ export function ProductForm({
         basePrice: Number(basePrice),
         lowStockThreshold: Number(lowStockThreshold),
         tracksStock,
+        isPromo,
         station: usaEstaciones ? station : undefined,
       });
       if ("error" in res && res.error) setError(res.error);
@@ -175,6 +177,23 @@ export function ProductForm({
                     Destildalo para algo que no se cuenta por unidades: un plato, un
                     servicio, un recargo. Se puede vender siempre y no aparece en los
                     avisos de stock bajo.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={isPromo}
+                  onChange={(e) => setIsPromo(e.target.checked)}
+                />
+                <span>
+                  En promoción
+                  <span className="block text-xs text-muted-foreground">
+                    No cambia el precio: lo único que hace es que sus ventas
+                    comisionen aparte, al porcentaje de promo. Se guarda en cada
+                    venta, así que apagarlo después no reescribe las comisiones
+                    de un período ya cerrado.
                   </span>
                 </span>
               </label>

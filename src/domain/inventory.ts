@@ -58,6 +58,7 @@ export type InventoryRow = {
   lowStockThreshold: number;
   /** false = no se cuenta por unidades. La UI oculta stock y sus acciones. */
   tracksStock: boolean;
+  isPromo: boolean;
   /** Precio de venta ya resuelto: el propio de la variante o el base del producto. */
   price: number;
   /** El precio propio de la variante, null si hereda. Lo necesita el form de edición. */
@@ -206,6 +207,7 @@ export async function listInventory(
         stock: productVariants.stock,
         lowStockThreshold: products.lowStockThreshold,
         tracksStock: products.tracksStock,
+        isPromo: products.isPromo,
         price: effectivePrice.mapWith(Number),
         ownPrice: productVariants.price,
         priceCash: productVariants.priceCash,
