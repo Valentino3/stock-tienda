@@ -651,11 +651,22 @@ export function SaleForm({
               placeholder="Buscar producto o SKU…"
               value={term}
               onChange={(e) => setTerm(e.target.value)}
+              // Enter agrega el primer resultado. Es lo que hace usable un
+              // lector de código de barras: el lector tipea el SKU y manda
+              // Enter, y hasta ahora ese Enter no hacía nada porque el input no
+              // está dentro de un <form>. La búsqueda ya rankea el SKU exacto
+              // primero (ver buscarEnCatalogo), así que ese orden estaba
+              // desperdiciado.
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || results.length === 0) return;
+                e.preventDefault();
+                addToCart(results[0]);
+              }}
               className="pl-9"
               autoFocus
             />
             {results.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full overflow-hidden rounded-lg border border-border bg-popover shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-[40dvh] w-full overflow-y-auto overscroll-contain rounded-lg border border-border bg-popover shadow-lg">
                 {results.map((r) => (
                   <li key={r.variantId} className="border-b border-border last:border-0">
                     <button
