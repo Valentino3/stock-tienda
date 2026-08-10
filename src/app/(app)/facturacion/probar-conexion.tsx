@@ -37,7 +37,7 @@ export function ProbarConexion({ listo }: { listo: boolean }) {
   return (
     <section className="space-y-3">
       <p className="ledger-label">Probar conexión</p>
-      <div className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+      <div className="space-y-4 rounded-xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm text-muted-foreground">
             Verifica contra ARCA que el certificado, la delegación del servicio y el punto de venta

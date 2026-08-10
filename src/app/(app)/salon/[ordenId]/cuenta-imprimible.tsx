@@ -46,12 +46,12 @@ export function CuentaImprimible({
               <td className="py-0.5">
                 {i.nameSnapshot}
                 <br />
-                <span className="text-[10px]">
+                <span className="figure text-[10px]">
                   {number(i.quantity)} × {money(i.unitPrice)}
                   {i.notes && ` · ${i.notes}`}
                 </span>
               </td>
-              <td className="py-0.5 text-right whitespace-nowrap">
+              <td className="figure py-0.5 text-right whitespace-nowrap">
                 {money(i.quantity * i.unitPrice)}
               </td>
             </tr>
@@ -62,12 +62,12 @@ export function CuentaImprimible({
       <hr className="my-2 border-black/30" />
 
       <div className="flex justify-between text-sm font-semibold">
-        <span>Total</span><span>{money(total)}</span>
+        <span>Total</span><span className="figure">{money(total)}</span>
       </div>
       {porComensal != null && (
         // La pregunta más frecuente de la mesa. Sale gratis calcularla acá.
         <div className="mt-1 flex justify-between text-[10px]">
-          <span>Por comensal</span><span>{money(Math.ceil(porComensal))}</span>
+          <span>Por comensal</span><span className="figure">{money(Math.ceil(porComensal))}</span>
         </div>
       )}
 

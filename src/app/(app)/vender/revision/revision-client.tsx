@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 import { Notice } from "@/components/ui/notice";
 import { Section } from "@/components/ui/section";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -56,7 +57,7 @@ export function RevisionClient() {
               y después marcarlas como resueltas acá.
             </Notice>
 
-            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+            <Panel flush>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -70,7 +71,7 @@ export function RevisionClient() {
                 <TableBody>
                   {rechazadas.map((r) => (
                     <TableRow key={r.uid}>
-                      <TableCell className="whitespace-nowrap font-mono text-muted-foreground">
+                      <TableCell className="whitespace-nowrap figure text-muted-foreground">
                         {new Date(r.capturadoEn).toLocaleString("es-AR")}
                       </TableCell>
                       <TableCell>
@@ -95,7 +96,7 @@ export function RevisionClient() {
                   ))}
                 </TableBody>
               </Table>
-            </div>
+            </Panel>
           </div>
         )}
       </Section>

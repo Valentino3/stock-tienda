@@ -31,7 +31,7 @@ export function NewStoreForm() {
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+    <form onSubmit={submit} className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
       <label className="flex min-w-56 flex-1 flex-col gap-1.5">
         <span className="ledger-label">Nueva tienda</span>
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre del comercio" required />

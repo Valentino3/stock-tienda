@@ -46,7 +46,7 @@ export default async function MesasPage() {
               {mesas
                 .filter((m) => m.mesa.sector === sector)
                 .map(({ mesa, orden }) => (
-                  <div key={mesa.id} className="rounded-xl border border-border bg-card px-4 py-3 shadow-xs">
+                  <div key={mesa.id} className="rounded-xl border border-border bg-card px-4 py-3">
                     <div className="font-semibold">{mesa.name}</div>
                     <div className="ledger-label text-muted-foreground">
                       {mesa.capacity ? `${mesa.capacity} lugares` : "Sin capacidad"}

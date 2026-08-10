@@ -135,11 +135,133 @@ async function main() {
   await db.insert(schema.productVariants)
     .values({ storeId: cartas.id, productId: remera.id, name: "", sku: "SOBRE-1", stock: 10 });
 
+  await sembrarCatalogoDeCartas(db, schema, cartas.id);
+
   console.log("\nListo. Tiendas de prueba:");
   console.table([
     { rubro: "gastronomía", ...CREDENCIALES.gastro },
     { rubro: "retail", ...CREDENCIALES.retail },
   ]);
+}
+
+/**
+ * Catálogo de cartas para que las pantallas se vean como en un local de verdad.
+ *
+ * Existe para las capturas del manual de usuario: con un solo producto,
+ * /productos sale con una fila y no deja ver ni las columnas de atributos ni
+ * los filtros ni la franja alterna, y /reportes no muestra nada.
+ *
+ * ⚠️ SOLO PRODUCTOS. Ni una venta, ni un movimiento de caja, ni un cliente con
+ * saldo. Los specs de plata afirman montos exactos de arqueo —por ejemplo
+ * `expect(arqueo.esperado).toBe(14500)` en cuenta-dividida.spec.ts— así que
+ * una venta de más acá rompe tres tests, y el fallo aparece como "la caja no
+ * cuadra": exactamente el síntoma que esos tests existen para detectar.
+ *
+ * Tampoco se toca "Sobre Pokémon": venta-mostrador.spec.ts lo busca por
+ * `/sobre pok/i` y le pone el stock en cero. Ningún nombre de acá matchea eso.
+ */
+// `db` y `schema` entran por parámetro y no por import: los imports de este
+// archivo son dinámicos a propósito, para que dotenv cargue antes de que
+// src/db/index.ts lea process.env (ver el comentario en main).
+async function sembrarCatalogoDeCartas(db: any, schema: any, storeId: number) {
+  // stock 0 y 2 a propósito: dan las tres columnas de estado (sin stock,
+  // stock bajo, con stock) y hacen que /reportes tenga algo que mostrar.
+  const CARTAS: {
+    nombre: string;
+    categoria: string;
+    precio: number;
+    umbral?: number;
+    variantes: {
+      nombre: string; sku: string; stock: number;
+      precio?: number; costo?: number;
+      set?: string; cond?: string; idioma?: string; foil?: boolean;
+      proveedor?: string;
+    }[];
+  }[] = [
+    {
+      nombre: "Charizard", categoria: "Pokémon", precio: 185000, umbral: 2,
+      variantes: [
+        { nombre: "Base Set · NM · Inglés", sku: "PKM-CHA-BS-NM-EN", stock: 1, precio: 240000, costo: 150000, set: "Base Set", cond: "Near Mint", idioma: "Inglés", foil: true, proveedor: "Distribuidora Norte" },
+        { nombre: "Base Set · Played · Español", sku: "PKM-CHA-BS-PL-ES", stock: 3, precio: 96000, costo: 60000, set: "Base Set", cond: "Played", idioma: "Español", proveedor: "Distribuidora Norte" },
+      ],
+    },
+    {
+      nombre: "Pikachu", categoria: "Pokémon", precio: 12000,
+      variantes: [
+        { nombre: "Jungle · NM · Inglés", sku: "PKM-PIK-JU-NM-EN", stock: 14, costo: 7000, set: "Jungle", cond: "Near Mint", idioma: "Inglés", proveedor: "Distribuidora Norte" },
+        { nombre: "Jungle · LP · Japonés", sku: "PKM-PIK-JU-LP-JP", stock: 2, precio: 9500, costo: 5200, set: "Jungle", cond: "Lightly Played", idioma: "Japonés" },
+      ],
+    },
+    {
+      nombre: "Blastoise", categoria: "Pokémon", precio: 74000,
+      variantes: [{ nombre: "Base Set · NM · Inglés", sku: "PKM-BLA-BS-NM-EN", stock: 4, costo: 46000, set: "Base Set", cond: "Near Mint", idioma: "Inglés", foil: true }],
+    },
+    {
+      nombre: "Black Lotus", categoria: "Magic", precio: 980000, umbral: 1,
+      variantes: [{ nombre: "Unlimited · MP · Inglés", sku: "MTG-BLO-UN-MP-EN", stock: 1, costo: 720000, set: "Unlimited", cond: "Moderately Played", idioma: "Inglés", proveedor: "Cardhaus" }],
+    },
+    {
+      nombre: "Lightning Bolt", categoria: "Magic", precio: 4500,
+      variantes: [
+        { nombre: "Revised · NM · Inglés", sku: "MTG-LBO-RE-NM-EN", stock: 32, costo: 2400, set: "Revised", cond: "Near Mint", idioma: "Inglés", proveedor: "Cardhaus" },
+        { nombre: "Revised · NM · Italiano", sku: "MTG-LBO-RE-NM-IT", stock: 0, precio: 5200, costo: 2900, set: "Revised", cond: "Near Mint", idioma: "Italiano" },
+      ],
+    },
+    {
+      nombre: "Counterspell", categoria: "Magic", precio: 3200,
+      variantes: [{ nombre: "Ice Age · LP · Inglés", sku: "MTG-CSP-IA-LP-EN", stock: 18, costo: 1500, set: "Ice Age", cond: "Lightly Played", idioma: "Inglés", proveedor: "Cardhaus" }],
+    },
+    {
+      nombre: "Dark Magician", categoria: "Yu-Gi-Oh!", precio: 28000,
+      variantes: [{ nombre: "LOB · NM · Inglés", sku: "YGO-DMA-LOB-NM-EN", stock: 6, costo: 16000, set: "Legend of Blue Eyes", cond: "Near Mint", idioma: "Inglés", foil: true }],
+    },
+    {
+      nombre: "Blue-Eyes White Dragon", categoria: "Yu-Gi-Oh!", precio: 42000, umbral: 2,
+      variantes: [{ nombre: "LOB · NM · Español", sku: "YGO-BEW-LOB-NM-ES", stock: 2, costo: 25000, set: "Legend of Blue Eyes", cond: "Near Mint", idioma: "Español" }],
+    },
+    {
+      nombre: "Caja de sobres Scarlet & Violet", categoria: "Pokémon", precio: 145000,
+      variantes: [{ nombre: "", sku: "PKM-BOX-SV", stock: 7, costo: 98000, proveedor: "Distribuidora Norte" }],
+    },
+    {
+      nombre: "Fundas Dragon Shield (100u)", categoria: "Accesorios", precio: 18500,
+      variantes: [
+        { nombre: "Negro mate", sku: "ACC-DS-NEG", stock: 24, costo: 11000, proveedor: "Mundo Cartas" },
+        { nombre: "Rojo mate", sku: "ACC-DS-ROJ", stock: 3, costo: 11000, proveedor: "Mundo Cartas" },
+      ],
+    },
+    {
+      nombre: "Carpeta 9 bolsillos", categoria: "Accesorios", precio: 32000,
+      variantes: [{ nombre: "", sku: "ACC-CAR-9B", stock: 11, costo: 19000, proveedor: "Mundo Cartas" }],
+    },
+    {
+      // Sin control de stock: es lo que muestra el guion en la columna Stock y
+      // deja explicar en el manual para qué sirve destildar esa casilla.
+      nombre: "Torneo — inscripción", categoria: "Servicios", precio: 8000,
+      variantes: [{ nombre: "", sku: "SRV-TORNEO", stock: 0 }],
+    },
+  ];
+
+  for (const c of CARTAS) {
+    const [prod] = await db.insert(schema.products)
+      .values({
+        storeId, name: c.nombre, category: c.categoria, basePrice: c.precio,
+        lowStockThreshold: c.umbral ?? 3,
+        tracksStock: c.nombre !== "Torneo — inscripción",
+      })
+      .returning();
+
+    await db.insert(schema.productVariants).values(
+      c.variantes.map((v) => ({
+        storeId, productId: prod.id,
+        name: v.nombre, sku: v.sku, stock: v.stock,
+        price: v.precio ?? null, costArs: v.costo ?? null,
+        setName: v.set ?? null, condition: v.cond ?? null,
+        language: v.idioma ?? null, foil: v.foil ?? false,
+        supplier: v.proveedor ?? null,
+      })),
+    );
+  }
 }
 
 main().then(

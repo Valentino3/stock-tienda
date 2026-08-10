@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Minus, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,7 +27,7 @@ type SearchResult = Awaited<ReturnType<typeof searchVariants>>[number];
 type PaymentMethod = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
 /**
  * Un cliente creado sin conexión todavía no tiene id: el servidor lo asigna al
- * sincronizar. Hasta entonces se lo referencia por `uid`, y el `<select>` usa
+ * sincronizar. Hasta entonces se lo referencia por `uid`, y el `<Select>` usa
  * un valor con prefijo para no confundir los dos espacios de identidad.
  */
 type ClientOption = { id: number | null; uid?: string; name: string };
@@ -60,8 +61,6 @@ const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "cuenta", label: "Cuenta" },
 ];
 
-const CLIENT_SELECT_CLASS =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -802,17 +801,16 @@ export function SaleForm({
             </div>
             {paymentMethod === "cuenta" && (
               <div className="flex gap-2">
-                <select
+                <Select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
-                  className={CLIENT_SELECT_CLASS}
                   aria-label="Cliente"
                 >
                   <option value="">Elegí cliente…</option>
                   {clientesDisponibles.map((c) => (
                     <option key={valorCliente(c)} value={valorCliente(c)}>{c.name}</option>
                   ))}
-                </select>
+                </Select>
                 <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setNewClientOpen(true)}>
                   + Nuevo
                 </Button>

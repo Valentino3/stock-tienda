@@ -3,15 +3,18 @@ import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { requireStoreOwner } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
-import { money, number } from "@/lib/format";
+import { money, moneyDiff, number } from "@/lib/format";
 import { getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport } from "@/domain/reports";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { Section } from "@/components/ui/section";
 import { StatTile } from "@/components/ui/stat-tile";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Campo, Toolbar } from "@/components/ui/toolbar";
 
 const PAYMENT_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -76,6 +79,10 @@ export default async function ReportesPage({
   weekAgo.setDate(weekAgo.getDate() - 7);
 
   const rangeLabel = `${fromValue} → ${toValue}`;
+  const hayFiltro = Boolean(params.from || params.to || params.set);
+  const totalUnidades = topProducts.reduce((a: number, r: { unitsSold: number }) => a + r.unitsSold, 0);
+  const totalIngresosTop = topProducts.reduce((a: number, r: { revenue: number }) => a + r.revenue, 0);
+  const totalVentas = byDay.reduce((a: number, r: { count: number }) => a + r.count, 0);
 
   return (
     <div className="space-y-8">
@@ -97,53 +104,52 @@ export default async function ReportesPage({
         }
       />
 
+      {/* Las dos tarjetas de alarma solo se pintan cuando hay algo que mirar.
+          Un cero en verde grande hace levantar la vista para leer que no pasa
+          nada: el color se gasta en el caso bueno y deja de gritar en el malo. */}
       <div className="grid gap-x-8 gap-y-6 sm:grid-cols-3">
-        <StatTile label="Total del período" value={money(totalPeriodo)} hint={`${number(byDay.reduce((a: number, r: { count: number }) => a + r.count, 0))} ventas`} />
+        <StatTile label="Total del período" value={money(totalPeriodo)} hint={`${number(totalVentas)} ventas`} />
         <StatTile
           label="Productos con stock bajo"
           value={number(lowStock.length)}
-          tone={lowStock.length > 0 ? "destructive" : "success"}
+          tone={lowStock.length > 0 ? "destructive" : "default"}
           hint={lowStock.length > 0 ? "Requieren reposición" : "Todo en orden"}
         />
         <StatTile
           label="Cierres con diferencia"
           value={number(cierresConDiferencia)}
-          tone={cierresConDiferencia > 0 ? "destructive" : "success"}
+          tone={cierresConDiferencia > 0 ? "destructive" : "default"}
           hint={cierresConDiferencia > 0 ? "Revisar caja" : "Caja cuadrada"}
         />
       </div>
 
-      <form
-        method="get"
-        className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs"
-      >
-        <label className="flex flex-col gap-1.5">
-          <span className="ledger-label">Desde</span>
-          <Input type="date" name="from" defaultValue={fromValue} className="w-40" />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="ledger-label">Hasta</span>
-          <Input type="date" name="to" defaultValue={toValue} className="w-40" />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="ledger-label">Set</span>
-          <Input type="text" name="set" defaultValue={params.set ?? ""} placeholder="Ej: Base Set" className="w-44" />
-        </label>
-        <Button type="submit" size="sm">
-          Filtrar
-        </Button>
-        {(params.from || params.to || params.set) && (
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/reportes">Limpiar</Link>
+      <Toolbar asChild>
+        <form method="get">
+          <Campo label="Desde" htmlFor="f-desde">
+            <Input id="f-desde" type="date" name="from" defaultValue={fromValue} className="w-40" />
+          </Campo>
+          <Campo label="Hasta" htmlFor="f-hasta">
+            <Input id="f-hasta" type="date" name="to" defaultValue={toValue} className="w-40" />
+          </Campo>
+          <Campo label="Set" htmlFor="f-set">
+            <Input id="f-set" type="text" name="set" defaultValue={params.set ?? ""} placeholder="Ej: Base Set" className="w-44" />
+          </Campo>
+          <Button type="submit" size="sm">
+            Filtrar
           </Button>
-        )}
-      </form>
+          {hayFiltro && (
+            <Button asChild variant="ghost" size="sm">
+              <Link href="/reportes">Limpiar</Link>
+            </Button>
+          )}
+        </form>
+      </Toolbar>
 
       <Section label="Ventas por día">
         {byDay.length === 0 ? (
-          <EmptyRange />
+          <SinDatos que="ventas" />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -155,22 +161,29 @@ export default async function ReportesPage({
               <TableBody>
                 {byDay.map((row: { day: string; count: number; total: number }) => (
                   <TableRow key={row.day}>
-                    <TableCell className="font-mono">{row.day}</TableCell>
-                    <TableCell className="text-right font-mono">{number(row.count)}</TableCell>
-                    <TableCell className="text-right font-mono font-medium">{money(row.total)}</TableCell>
+                    <TableCell className="figure">{row.day}</TableCell>
+                    <TableCell className="figure text-right">{number(row.count)}</TableCell>
+                    <TableCell className="figure text-right font-medium">{money(row.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">Total</TableCell>
+                  <TableCell className="figure text-right">{number(totalVentas)}</TableCell>
+                  <TableCell className="figure text-right">{money(totalPeriodo)}</TableCell>
+                </TableRow>
+              </TableFooter>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
       <Section label="Totales por medio de pago">
         {byMethod.length === 0 ? (
-          <EmptyRange />
+          <SinDatos que="ventas" />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -183,21 +196,42 @@ export default async function ReportesPage({
                 {byMethod.map((row: { method: string; count: number; total: number }) => (
                   <TableRow key={row.method}>
                     <TableCell>{PAYMENT_LABELS[row.method] ?? row.method}</TableCell>
-                    <TableCell className="text-right font-mono">{number(row.count)}</TableCell>
-                    <TableCell className="text-right font-mono font-medium">{money(row.total)}</TableCell>
+                    <TableCell className="figure text-right">{number(row.count)}</TableCell>
+                    <TableCell className="figure text-right font-medium">{money(row.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell className="text-muted-foreground">Total</TableCell>
+                  <TableCell className="figure text-right">
+                    {number(byMethod.reduce((a: number, r: { count: number }) => a + r.count, 0))}
+                  </TableCell>
+                  <TableCell className="figure text-right">
+                    {money(byMethod.reduce((a: number, r: { total: number }) => a + r.total, 0))}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
-      <Section label="Gastos y egresos" aside={<span className="figure text-sm font-medium text-destructive">−{money(movementsTotal)}</span>}>
+      {/* El total solo se pinta si salió plata. En cero no hay nada malo que
+          señalar, y un "−$ 0,00" rojo arriba de la sección hacía parecer que
+          sí. */}
+      <Section
+        label="Gastos y egresos"
+        aside={
+          movementsTotal > 0 ? (
+            <span className="figure text-sm font-medium text-destructive">−{money(movementsTotal)}</span>
+          ) : undefined
+        }
+      >
         {cashMovements.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sin gastos ni egresos en el período.</p>
+          <SinDatos que="gastos ni egresos" />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -210,21 +244,21 @@ export default async function ReportesPage({
                 {cashMovements.map((row: { kind: string; count: number; total: number }) => (
                   <TableRow key={row.kind}>
                     <TableCell>{MOVEMENT_LABELS[row.kind] ?? row.kind}</TableCell>
-                    <TableCell className="text-right font-mono">{number(row.count)}</TableCell>
-                    <TableCell className="text-right font-mono font-medium text-destructive">−{money(row.total)}</TableCell>
+                    <TableCell className="figure text-right">{number(row.count)}</TableCell>
+                    <TableCell className="figure text-right font-medium text-destructive">−{money(row.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
       <Section label="Top 10 productos">
         {topProducts.length === 0 ? (
-          <EmptyRange />
+          <SinDatos que="ventas" />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -242,22 +276,29 @@ export default async function ReportesPage({
                       <TableCell className="font-medium">{row.productName}</TableCell>
                       <TableCell className="text-muted-foreground">{row.variantName || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">{row.setName || "—"}</TableCell>
-                      <TableCell className="text-right font-mono">{number(row.unitsSold)}</TableCell>
-                      <TableCell className="text-right font-mono font-medium">{money(row.revenue)}</TableCell>
+                      <TableCell className="figure text-right">{number(row.unitsSold)}</TableCell>
+                      <TableCell className="figure text-right font-medium">{money(row.revenue)}</TableCell>
                     </TableRow>
                   )
                 )}
               </TableBody>
+              <TableFooter>
+                <TableRow>
+                  <TableCell colSpan={3} className="text-muted-foreground">Total del top 10</TableCell>
+                  <TableCell className="figure text-right">{number(totalUnidades)}</TableCell>
+                  <TableCell className="figure text-right">{money(totalIngresosTop)}</TableCell>
+                </TableRow>
+              </TableFooter>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
       <Section label="Stock bajo">
         {lowStock.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay productos con stock bajo.</p>
+          <EmptyState size="sm" titulo="Nada por reponer: ningún producto quedó por debajo de su umbral." />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -276,23 +317,23 @@ export default async function ReportesPage({
                       <TableCell className="text-muted-foreground">{row.variantName || "—"}</TableCell>
                       <TableCell className="text-muted-foreground">{row.setName || "—"}</TableCell>
                       <TableCell className="text-right">
-                        <Badge variant="destructive" className="font-mono">{number(row.stock)}</Badge>
+                        <Badge variant="destructive" className="figure">{number(row.stock)}</Badge>
                       </TableCell>
-                      <TableCell className="text-right font-mono text-muted-foreground">{number(row.threshold)}</TableCell>
+                      <TableCell className="figure text-right text-muted-foreground">{number(row.threshold)}</TableCell>
                     </TableRow>
                   )
                 )}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
       <Section label="Cierres de caja">
         {cashHistory.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay cierres de caja registrados.</p>
+          <EmptyState size="sm" titulo="Todavía no se cerró ninguna caja: el primer cierre aparece acá al terminar el turno." />
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -314,13 +355,16 @@ export default async function ReportesPage({
                     const off = session.difference != null && session.difference !== 0;
                     return (
                       <TableRow key={session.id}>
-                        <TableCell className="font-mono">{session.closedAt?.toLocaleString("es-AR") ?? "—"}</TableCell>
-                        <TableCell className="text-right font-mono">{money(session.expectedCash)}</TableCell>
-                        <TableCell className="text-right font-mono">{money(session.countedCash)}</TableCell>
+                        <TableCell className="figure">{session.closedAt?.toLocaleString("es-AR") ?? "—"}</TableCell>
+                        <TableCell className="figure text-right">{money(session.expectedCash)}</TableCell>
+                        <TableCell className="figure text-right">{money(session.countedCash)}</TableCell>
+                        {/* Paréntesis y no guion: en una columna de importes un
+                            "−" se confunde con un separador, y este número es
+                            el que decide si hay que ir a contar el cajón. */}
                         <TableCell
-                          className={`text-right font-mono ${off ? "font-semibold text-destructive" : "text-success"}`}
+                          className={`figure text-right ${off ? "font-semibold text-destructive" : "text-muted-foreground"}`}
                         >
-                          {money(session.difference)}
+                          {moneyDiff(session.difference)}
                         </TableCell>
                       </TableRow>
                     );
@@ -328,17 +372,19 @@ export default async function ReportesPage({
                 )}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
     </div>
   );
 }
 
-function EmptyRange() {
-  return (
-    <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-6 text-center text-sm text-muted-foreground">
-      Sin ventas en el rango seleccionado.
-    </p>
-  );
+/**
+ * Vacío de esta pantalla. Siempre es "por filtro": Reportes se mira sobre un
+ * rango, así que no hay nada que dar de alta — lo que hay que hacer es correr
+ * las fechas. Antes esta página mezclaba dos tratamientos, panel punteado en
+ * tres secciones y renglón gris pelado en las otras tres, con el mismo peso.
+ */
+function SinDatos({ que }: { que: string }) {
+  return <EmptyState size="sm" filtrado titulo={`Sin ${que} en el rango seleccionado.`} />;
 }

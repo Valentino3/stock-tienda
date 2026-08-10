@@ -45,7 +45,7 @@ export function CompartirComprobante({
   }
 
   return (
-    <div className="space-y-3 rounded-xl border border-border bg-card p-4 shadow-xs print:hidden">
+    <div className="space-y-3 rounded-xl border border-border bg-card p-4 print:hidden">
       <p className="ledger-label">Enviar al cliente</p>
 
       <div className="flex flex-wrap gap-2">

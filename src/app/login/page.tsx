@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Notice } from "@/components/ui/notice";
 import { Label } from "@/components/ui/label";
 import { APP_NAME } from "@/lib/config";
 
@@ -32,7 +33,7 @@ export default function LoginPage() {
     <main className="grid min-h-screen place-items-center bg-background p-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <span className="flex size-11 items-center justify-center rounded-lg bg-brand font-mono text-base font-semibold tracking-tight text-brand-foreground">
+          <span className="flex size-11 items-center justify-center rounded-lg bg-brand figure text-base font-semibold tracking-tight text-brand-foreground">
             {initials(APP_NAME)}
           </span>
           <div className="space-y-1">
@@ -41,7 +42,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
+        <div className="rounded-xl border border-border bg-card p-6">
           <form onSubmit={onSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
@@ -67,9 +68,9 @@ export default function LoginPage() {
               />
             </div>
             {error && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              <Notice tone="danger" role="alert">
                 {error}
-              </p>
+              </Notice>
             )}
             <Button type="submit" size="lg" className="w-full" disabled={pending}>
               {pending ? "Ingresando…" : "Entrar"}

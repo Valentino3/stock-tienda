@@ -16,7 +16,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="min-h-screen">
       <header className="flex items-center justify-between border-b bg-card px-6 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="flex size-8 items-center justify-center rounded-md bg-brand font-mono text-xs font-semibold text-brand-foreground">
+          <span className="flex size-8 items-center justify-center rounded-md bg-brand figure text-xs font-semibold text-brand-foreground">
             {APP_NAME.slice(0, 2).toUpperCase()}
           </span>
           <div>

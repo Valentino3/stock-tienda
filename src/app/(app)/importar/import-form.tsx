@@ -3,6 +3,7 @@ import { useRef, useState, useTransition } from "react";
 import { Upload, FileSpreadsheet, Sparkles } from "lucide-react";
 import type { ValidatedRow } from "@/domain/import";
 import type { BatchSummary } from "@/domain/import-batches";
+import { Panel } from "@/components/ui/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -160,9 +161,9 @@ export function ImportForm() {
       {batch && batch.total > 0 && (
         <div className="space-y-4 pb-20">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="success" className="font-mono">{number(batch.valid)} válidas</Badge>
+            <Badge variant="success" className="figure">{number(batch.valid)} válidas</Badge>
             {batch.errors > 0 && (
-              <Badge variant="destructive" className="font-mono">{number(batch.errors)} con error</Badge>
+              <Badge variant="destructive" className="figure">{number(batch.errors)} con error</Badge>
             )}
             <span className="text-xs text-muted-foreground">
               {mode === "ai"
@@ -173,7 +174,10 @@ export function ImportForm() {
 
           {batch.mapping && <MappingSummary mapping={batch.mapping} />}
 
-          <div className="max-h-[60vh] overflow-auto rounded-xl border border-border bg-card shadow-xs">
+          {/* `overflow-auto` pisa al `overflow-hidden` de `flush`: acá la
+              vista previa scrollea, pero el recorte al radio lo sigue
+              necesitando el encabezado de la tabla. */}
+          <Panel flush className="max-h-[60vh] overflow-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -201,15 +205,15 @@ export function ImportForm() {
                     <TableCell className="font-medium">{r.product}</TableCell>
                     <TableCell>{r.variant}</TableCell>
                     <TableCell className="figure text-muted-foreground">{r.sku ?? ""}</TableCell>
-                    <TableCell className="text-right font-mono">{r.price != null ? money(r.price) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">{r.priceCash != null ? money(r.priceCash) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">{r.priceWholesale != null ? money(r.priceWholesale) : ""}</TableCell>
-                    <TableCell className="text-right font-mono text-muted-foreground">
+                    <TableCell className="figure text-right">{r.price != null ? money(r.price) : ""}</TableCell>
+                    <TableCell className="text-right figure text-muted-foreground">{r.priceCash != null ? money(r.priceCash) : ""}</TableCell>
+                    <TableCell className="text-right figure text-muted-foreground">{r.priceWholesale != null ? money(r.priceWholesale) : ""}</TableCell>
+                    <TableCell className="text-right figure text-muted-foreground">
                       {r.costArs != null ? money(r.costArs) : ""}
                       {r.costUsd != null && <span className="block text-xs">US$ {number(r.costUsd)}</span>}
                     </TableCell>
                     <TableCell className="text-muted-foreground">{r.supplier ?? ""}</TableCell>
-                    <TableCell className="text-right font-mono">
+                    <TableCell className="figure text-right">
                       {r.stock === null
                         ? <span className="text-xs text-muted-foreground">sin cambio</span>
                         : number(r.stock)}
@@ -231,7 +235,7 @@ export function ImportForm() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
 
           {hidden > 0 && (
             <p className="text-xs text-muted-foreground">

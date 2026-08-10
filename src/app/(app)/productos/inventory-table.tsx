@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/ui/panel";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -31,8 +32,11 @@ export function InventoryTable({
   atributos: readonly AtributoCatalogo[];
 }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
-      <Table>
+    <Panel flush>
+      {/* La única tabla del producto que se gana la franja: llega a 11
+          columnas y sin ella el ojo se cambia de fila a mitad de camino,
+          justo cuando está comparando stock contra costo. */}
+      <Table zebra>
         <TableHeader>
           <TableRow>
             <SortableHead field="product" filters={filters}>Producto</SortableHead>
@@ -56,7 +60,7 @@ export function InventoryTable({
           ))}
         </TableBody>
       </Table>
-    </div>
+    </Panel>
   );
 }
 
@@ -123,7 +127,7 @@ function InventoryTableRow({
           // nada. Mostrar "0" en rojo sería mentirle al dueño.
           <span className="text-muted-foreground" title="Este producto no lleva control de stock">—</span>
         ) : lowStock ? (
-          <Badge variant="destructive" className="font-mono">{number(row.stock)}</Badge>
+          <Badge variant="destructive" className="figure">{number(row.stock)}</Badge>
         ) : (
           <span className="figure">{number(row.stock)}</span>
         )}

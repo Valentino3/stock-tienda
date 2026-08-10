@@ -4,7 +4,18 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-function Table({ className, ...props }: React.ComponentProps<"table">) {
+function Table({
+  className,
+  zebra = false,
+  ...props
+}: React.ComponentProps<"table"> & {
+  /**
+   * Franjas alternas. Solo para tablas anchas: /productos llega a 11 columnas
+   * y sin franja el ojo se cambia de fila a mitad de camino. DESIGN.md prohíbe
+   * "zebra pesada", no la zebra — de ahí que sea `muted/40` y no `muted`.
+   */
+  zebra?: boolean
+}) {
   return (
     <div
       data-slot="table-container"
@@ -12,7 +23,11 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm tabular-nums", className)}
+        className={cn(
+          "w-full caption-bottom text-sm tabular-nums",
+          zebra && "[&_tbody_tr:nth-child(even)]:bg-muted/40",
+          className
+        )}
         {...props}
       />
     </div>
@@ -23,7 +38,10 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      // Fondo tenue + borde FUERTE contra el cuerpo. Ese borde es el que
+      // separa "los títulos" de "los datos"; las filas de adentro se separan
+      // con el borde normal. Dos grises, una jerarquía.
+      className={cn("bg-muted [&_tr]:border-b [&_tr]:border-border-strong", className)}
       {...props}
     />
   )
@@ -43,8 +61,11 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
   return (
     <tfoot
       data-slot="table-footer"
+      // Misma gramática que el encabezado, del otro lado: borde fuerte arriba
+      // y fondo tenue. Cierra la tabla y hace que el total se lea como total
+      // y no como una fila más que casualmente dice "Total".
       className={cn(
-        "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
+        "border-t border-border-strong bg-muted font-semibold [&>tr]:last:border-b-0",
         className
       )}
       {...props}
@@ -56,8 +77,11 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
       data-slot="table-row"
+      // El hover va a `accent`, que es un paso MÁS oscuro que el `muted` del
+      // encabezado. Con el hover más claro que el encabezado, pasar el mouse
+      // parecía apagar la fila en vez de señalarla.
       className={cn(
-        "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+        "border-b transition-colors hover:bg-accent has-aria-expanded:bg-accent data-[state=selected]:bg-brand-muted",
         className
       )}
       {...props}

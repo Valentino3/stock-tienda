@@ -4,6 +4,7 @@ import { requireStore } from "@/lib/session";
 import { money, number } from "@/lib/format";
 import { listClientsWithBalance } from "@/domain/clients";
 import { Badge } from "@/components/ui/badge";
+import { Panel } from "@/components/ui/panel";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
@@ -48,7 +49,7 @@ export default async function ClientesPage() {
             No hay clientes todavía.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -67,13 +68,13 @@ export default async function ClientesPage() {
                         {c.name}
                       </Link>
                     </TableCell>
-                    <TableCell className="font-mono text-muted-foreground">{c.phone ?? "—"}</TableCell>
+                    <TableCell className="figure text-muted-foreground">{c.phone ?? "—"}</TableCell>
                     <TableCell>
                       {c.balance > 0
                         ? <Badge variant="destructive">Debe</Badge>
                         : <Badge variant="success">Al día</Badge>}
                     </TableCell>
-                    <TableCell className={`text-right font-mono font-medium ${c.balance > 0 ? "text-destructive" : ""}`}>
+                    <TableCell className={`text-right figure font-medium ${c.balance > 0 ? "text-destructive" : ""}`}>
                       {money(c.balance)}
                     </TableCell>
                     <TableCell className="text-right">
@@ -83,7 +84,7 @@ export default async function ClientesPage() {
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
     </div>

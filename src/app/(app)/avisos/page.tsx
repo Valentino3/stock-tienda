@@ -4,6 +4,7 @@ import { requireStoreOwner } from "@/lib/session";
 import { number } from "@/lib/format";
 import { listNotifications } from "@/domain/notifications";
 import { PageHeader } from "@/components/ui/page-header";
+import { Panel } from "@/components/ui/panel";
 import { Section } from "@/components/ui/section";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ResolveButton } from "./avisos-client";
@@ -43,7 +44,7 @@ export default async function AvisosPage() {
             No hay avisos pendientes.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -60,19 +61,19 @@ export default async function AvisosPage() {
                     <TableCell className="font-medium">{r.notification.message}</TableCell>
                     <TableCell className="text-muted-foreground">{r.notification.note ?? "—"}</TableCell>
                     <TableCell>{r.createdByName}</TableCell>
-                    <TableCell className="font-mono text-muted-foreground">{r.notification.createdAt.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className="figure text-muted-foreground">{r.notification.createdAt.toLocaleString("es-AR")}</TableCell>
                     <TableCell className="text-right"><ResolveButton id={r.notification.id} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
       {resolved.length > 0 && (
         <Section label="Resueltos (últimos)">
-          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -86,12 +87,12 @@ export default async function AvisosPage() {
                   <TableRow key={r.notification.id} className="text-muted-foreground">
                     <TableCell className="line-through">{r.notification.message}</TableCell>
                     <TableCell>{r.createdByName}</TableCell>
-                    <TableCell className="font-mono">{r.notification.createdAt.toLocaleString("es-AR")}</TableCell>
+                    <TableCell className="figure">{r.notification.createdAt.toLocaleString("es-AR")}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         </Section>
       )}
     </div>

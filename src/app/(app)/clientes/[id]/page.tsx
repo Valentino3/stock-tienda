@@ -130,7 +130,7 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
   const sale = entry.sale;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-xs">
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-border/60 px-4 py-3">
         <span className="text-sm text-muted-foreground">{dateTime(entry.createdAt)}</span>
 

@@ -130,7 +130,7 @@ export function InvoiceButton({
       )}
 
       {factura?.estado === "rechazado" && factura.errorMsg && (
-        <p className="text-xs text-destructive">{factura.errorMsg}</p>
+        <p className="text-sm text-destructive" role="alert">{factura.errorMsg}</p>
       )}
 
       {error && <Notice tone="danger" className="text-xs">{error}</Notice>}

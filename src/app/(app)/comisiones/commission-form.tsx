@@ -3,6 +3,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { money } from "@/lib/format";
@@ -12,8 +13,6 @@ import { saveCommission, removeCommission } from "./actions";
 type Employee = { id: string; name: string };
 type Mode = "monto" | "percent";
 
-const SELECT_CLASS =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 export function CommissionForm({
   employees,
@@ -81,7 +80,7 @@ export function CommissionForm({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4 rounded-xl border border-border bg-card p-4 shadow-xs">
+    <form onSubmit={submit} className="space-y-4 rounded-xl border border-border bg-card p-4">
       <div className="inline-flex rounded-lg border border-border p-1">
         {([
           { m: "monto" as const, label: "Monto fijo" },
@@ -104,12 +103,12 @@ export function CommissionForm({
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1.5">
           <span className="ledger-label">Empleado</span>
-          <select value={employeeId} onChange={(e) => onEmployee(e.target.value)} className={`${SELECT_CLASS} w-48`} required>
+          <Select value={employeeId} onChange={(e) => onEmployee(e.target.value)} className="w-48" required>
             <option value="">Elegí…</option>
             {employees.map((e) => (
               <option key={e.id} value={e.id}>{e.name}</option>
             ))}
-          </select>
+          </Select>
         </label>
 
         {mode === "monto" ? (

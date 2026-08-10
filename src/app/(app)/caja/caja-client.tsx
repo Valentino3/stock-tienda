@@ -170,9 +170,9 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
               />
             </div>
             {openError && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              <Notice tone="danger" role="alert">
                 {openError}
-              </p>
+              </Notice>
             )}
             <Button type="submit" size="lg" disabled={pending} className="w-full">
               {pending ? "Abriendo…" : "Abrir caja"}
@@ -300,9 +300,9 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
                 </Button>
               </div>
               {movError && (
-                <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+                <Notice tone="danger" role="alert">
                   {movError}
-                </p>
+                </Notice>
               )}
             </form>
           </CardContent>
@@ -333,9 +333,9 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
               <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
             {closeError && (
-              <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
+              <Notice tone="danger" role="alert">
                 {closeError}
-              </p>
+              </Notice>
             )}
             <Button type="submit" size="lg" disabled={pending} className="w-full">
               {pending ? "Cerrando…" : "Cerrar caja"}

@@ -9,6 +9,7 @@ import { money, number } from "@/lib/format";
 import { getSellerSalesSummary } from "@/domain/reports";
 import { listCommissions } from "@/domain/commissions";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -69,7 +70,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         }
       />
 
-      <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4 shadow-xs">
+      <form method="get" className="flex flex-wrap items-end gap-3 rounded-xl border border-border bg-card p-4">
         <label className="flex flex-col gap-1.5">
           <span className="ledger-label">Desde</span>
           <input type="date" name="from" defaultValue={fromValue} className="h-9 w-40 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" />
@@ -88,7 +89,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         {summary.length === 0 ? (
           <p className="text-sm text-muted-foreground">Sin ventas en el período.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -101,13 +102,13 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
                 {summary.map((row: { sellerId: string; name: string; count: number; total: number }) => (
                   <TableRow key={row.sellerId}>
                     <TableCell className="font-medium">{row.name}</TableCell>
-                    <TableCell className="text-right font-mono">{number(row.count)}</TableCell>
-                    <TableCell className="text-right font-mono font-medium">{money(row.total)}</TableCell>
+                    <TableCell className="figure text-right">{number(row.count)}</TableCell>
+                    <TableCell className="figure text-right font-medium">{money(row.total)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
 
@@ -126,7 +127,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         {commissions.length === 0 ? (
           <p className="text-sm text-muted-foreground">No hay comisiones registradas en el período.</p>
         ) : (
-          <div className="rounded-xl border border-border bg-card shadow-xs">
+          <Panel flush>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -141,10 +142,10 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
                 {commissions.map(
                   (row: { commission: { id: number; amount: number; note: string | null; createdAt: Date }; employeeName: string }) => (
                     <TableRow key={row.commission.id}>
-                      <TableCell className="font-mono">{row.commission.createdAt.toLocaleDateString("es-AR")}</TableCell>
+                      <TableCell className="figure">{row.commission.createdAt.toLocaleDateString("es-AR")}</TableCell>
                       <TableCell className="font-medium">{row.employeeName}</TableCell>
                       <TableCell className="text-muted-foreground">{row.commission.note ?? "—"}</TableCell>
-                      <TableCell className="text-right font-mono font-medium">{money(row.commission.amount)}</TableCell>
+                      <TableCell className="figure text-right font-medium">{money(row.commission.amount)}</TableCell>
                       <TableCell className="text-right">
                         <DeleteCommissionButton id={row.commission.id} />
                       </TableCell>
@@ -153,7 +154,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
                 )}
               </TableBody>
             </Table>
-          </div>
+          </Panel>
         )}
       </Section>
     </div>

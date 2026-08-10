@@ -57,6 +57,15 @@ export default defineConfig({
     timeout: 180_000,
     reuseExistingServer: !process.env.CI,
     env: {
+      // El server de test corre en UTC como Vercel, y como el Postgres de
+      // docker-compose. No es cosmético: `sales.created_at` es `timestamp` SIN
+      // zona, lo escribe la base en UTC, y el filtro por defecto de
+      // getSalesHistory compara contra `new Date()`, que node-postgres
+      // serializa en la hora local del server. En una máquina en GMT-3 eso
+      // da `17:52 < 14:53` y la venta recién cobrada no aparece en /ventas
+      // hasta tres horas después. En producción coincide porque Vercel es UTC;
+      // sin esta línea, el mismo suite pasa en CI y falla en la notebook.
+      TZ: "UTC",
       DATABASE_URL: process.env.DATABASE_URL!,
       DB_DRIVER: "pg",
       BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET!,

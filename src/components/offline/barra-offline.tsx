@@ -78,7 +78,7 @@ export function BarraOffline() {
           role="status"
           className={cn(
             "flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm",
-            conectado ? "border-chart-3/40 bg-chart-3/10" : "border-destructive/30 bg-destructive/10",
+            conectado ? "border-warning/40 bg-warning/10" : "border-destructive/30 bg-destructive/10",
           )}
         >
           <span>
@@ -126,7 +126,7 @@ export function BarraOffline() {
       )}
 
       {avisos.length > 0 && (
-        <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm shadow-xs">
+        <div className="rounded-xl border border-border bg-card px-4 py-3 text-sm">
           <div className="flex items-center justify-between gap-3">
             <strong>Avisos de la última sincronización</strong>
             <Button size="sm" variant="ghost" onClick={limpiarAvisos}>Entendido</Button>

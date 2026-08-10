@@ -2,6 +2,7 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
@@ -12,8 +13,6 @@ import {
 } from "@/domain/fiscal-catalogs";
 import { saveDatosFiscalesAction } from "../actions";
 
-const SELECT_CLASS =
-  "h-9 w-full rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50";
 
 const DOCS_ELEGIBLES: DocTipo[] = [DOC_CUIT, DOC_DNI];
 
@@ -68,7 +67,7 @@ export function DatosFiscalesCard({
   return (
     <section className="space-y-3">
       <p className="ledger-label">Datos fiscales</p>
-      <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-border bg-card p-5 shadow-xs">
+      <form onSubmit={onSubmit} className="space-y-4 rounded-xl border border-border bg-card p-5">
         <p className="text-sm text-muted-foreground">
           Solo hacen falta para facturar. Sin estos datos, las ventas de este cliente salen como{" "}
           <strong>Factura B a Consumidor Final</strong>.
@@ -77,14 +76,14 @@ export function DatosFiscalesCard({
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="docTipo">Tipo de documento</Label>
-            <select
-              id="docTipo" className={SELECT_CLASS}
+            <Select
+              id="docTipo"
               value={docTipo} onChange={(e) => setDocTipo(Number(e.target.value))}
             >
               {DOCS_ELEGIBLES.map((t) => (
                 <option key={t} value={t}>{DOC_LABEL[t]}</option>
               ))}
-            </select>
+            </Select>
           </div>
 
           <div className="space-y-1.5">
@@ -96,7 +95,7 @@ export function DatosFiscalesCard({
               placeholder={docTipo === DOC_CUIT ? "30-70742953-0" : "30111222"}
             />
             {cuitInvalido && (
-              <p className="text-xs text-destructive">El dígito verificador no cierra.</p>
+              <p className="text-sm text-destructive" role="alert">El dígito verificador no cierra.</p>
             )}
             {!cuitInvalido && docTipo === DOC_CUIT && doc && (
               <p className="text-xs text-muted-foreground">{formatearCuit(doc)}</p>
@@ -105,8 +104,8 @@ export function DatosFiscalesCard({
 
           <div className="space-y-1.5">
             <Label htmlFor="condicionIva">Condición frente al IVA</Label>
-            <select
-              id="condicionIva" className={SELECT_CLASS}
+            <Select
+              id="condicionIva"
               value={condicionIva}
               onChange={(e) => setCondicionIva(e.target.value === "" ? "" : Number(e.target.value))}
             >
@@ -114,7 +113,7 @@ export function DatosFiscalesCard({
               {CONDICIONES_IVA_RECEPTOR.map((c) => (
                 <option key={c} value={c}>{CONDICION_IVA_LABEL[c as CondicionIva]}</option>
               ))}
-            </select>
+            </Select>
             <p className="text-xs text-muted-foreground">
               {daFacturaA
                 ? "Este cliente recibe Factura A. Necesita CUIT válido."
