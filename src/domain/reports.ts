@@ -3,20 +3,84 @@ import { cashMovements, cashSessions, products, productVariants, sales, saleItem
 
 // Todos los reportes están scopeados por tienda (storeId).
 
-// Ventas por vendedor en un rango (para decidir comisiones). Solo no anuladas.
-export async function getSellerSalesSummary(db: any, storeId: number, range: { from: Date; to: Date }) {
-  return db
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export type ResumenVendedor = {
+  sellerId: string;
+  name: string;
+  count: number;
+  /** Todo lo vendido, anuladas afuera. `normal + promo` da exactamente esto. */
+  total: number;
+  normal: number;
+  promo: number;
+  /**
+   * De `total`, cuánto se vendió a cuenta corriente y todavía no se cobró.
+   * Va aparte y NO se resta: quién comisiona por una venta fiado es una
+   * decisión del comercio, no del sistema. La pantalla la muestra para que el
+   * dueño la reste si así lo arregló con el empleado.
+   */
+  aCuenta: number;
+};
+
+/**
+ * Ventas por vendedor en un rango, partidas entre promo y no promo.
+ *
+ * La partición se hace por LÍNEA (`sale_items.isPromo`, que es el snapshot del
+ * momento de vender) y no por el flag actual del producto: las promos rotan, y
+ * calcular julio en agosto con el flag ya limpio movería esas ventas al
+ * porcentaje alto. Un informe de comisiones que da distinto cada vez que se
+ * abre, para un período cerrado, no es un informe.
+ *
+ * ⚠️ Sobre el descuento general: `sales.total` ya viene neto de él, pero el
+ * descuento vive en la cabecera y no se puede atribuir a una línea. Se reparte
+ * proporcional al peso de cada mitad, y —esto es lo importante— `normal` se
+ * define como el RESTO: `total − promo`. Así `normal + promo === total` sale
+ * exacto por construcción, sin depender de que dos redondeos coincidan. La
+ * tabla "Ventas por empleado" está justo arriba en la misma pantalla, y una
+ * diferencia de un centavo ahí se reporta como bug.
+ *
+ * No se reusa `repartirDescuento` de fiscal-importes: eso reparte un descuento
+ * entre N líneas en enteros para que un comprobante cierre ante ARCA. Acá el
+ * problema es partir cada venta en dos, y definir una mitad como el resto lo
+ * resuelve exacto y sin importar aritmética fiscal a un reporte.
+ */
+export async function getSellerSalesSummary(
+  db: any, storeId: number, range: { from: Date; to: Date },
+): Promise<ResumenVendedor[]> {
+  const filas = await db
     .select({
       sellerId: sales.sellerId,
       name: user.name,
-      count: sql<number>`count(*)`.mapWith(Number),
-      total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
+      saleId: sales.id,
+      total: sales.total,
+      paymentMethod: sales.paymentMethod,
+      // Bruto neto de descuento de línea, partido por el snapshot de promo.
+      subtotal: sql<number>`coalesce(sum(${saleItems.quantity} * ${saleItems.unitPrice} - ${saleItems.discountAmount}), 0)`.mapWith(Number),
+      subtotalPromo: sql<number>`coalesce(sum(case when ${saleItems.isPromo} then ${saleItems.quantity} * ${saleItems.unitPrice} - ${saleItems.discountAmount} else 0 end), 0)`.mapWith(Number),
     })
     .from(sales)
     .innerJoin(user, eq(sales.sellerId, user.id))
+    // leftJoin y no inner: una venta sin líneas (no debería existir, pero si
+    // existiera) no puede desaparecer del total del vendedor en silencio.
+    .leftJoin(saleItems, eq(saleItems.saleId, sales.id))
     .where(and(eq(sales.storeId, storeId), eq(sales.voided, false), between(sales.createdAt, range.from, range.to)))
-    .groupBy(sales.sellerId, user.name)
-    .orderBy(desc(sql`coalesce(sum(${sales.total}), 0)`));
+    .groupBy(sales.id, sales.sellerId, user.name, sales.total, sales.paymentMethod);
+
+  const porVendedor = new Map<string, ResumenVendedor>();
+  for (const f of filas as any[]) {
+    const acc = porVendedor.get(f.sellerId) ?? {
+      sellerId: f.sellerId, name: f.name, count: 0, total: 0, normal: 0, promo: 0, aCuenta: 0,
+    };
+    const promo = f.subtotal > 0 ? round2((f.total * f.subtotalPromo) / f.subtotal) : 0;
+    acc.count += 1;
+    acc.total = round2(acc.total + f.total);
+    acc.promo = round2(acc.promo + promo);
+    acc.normal = round2(acc.normal + (f.total - promo));
+    if (f.paymentMethod === "cuenta") acc.aCuenta = round2(acc.aCuenta + f.total);
+    porVendedor.set(f.sellerId, acc);
+  }
+
+  return [...porVendedor.values()].sort((a, b) => b.total - a.total);
 }
 
 export async function getSalesReport(db: any, storeId: number, range: { from: Date; to: Date }) {

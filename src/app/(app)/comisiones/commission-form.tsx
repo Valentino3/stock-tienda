@@ -21,7 +21,8 @@ export function CommissionForm({
   defaultTo,
 }: {
   employees: Employee[];
-  salesByEmployee: Record<string, number>;
+  /** Por empleado: lo vendido partido en normal / promo, y lo fiado aparte. */
+  salesByEmployee: Record<string, { normal: number; promo: number; aCuenta: number }>;
   defaultFrom: string;
   defaultTo: string;
 }) {
@@ -32,6 +33,8 @@ export function CommissionForm({
   const [amount, setAmount] = useState("");
   const [base, setBase] = useState("");
   const [percent, setPercent] = useState("");
+  const [basePromo, setBasePromo] = useState("");
+  const [percentPromo, setPercentPromo] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
@@ -39,22 +42,37 @@ export function CommissionForm({
   // período (editable). El monto final se calcula base × % / 100.
   function onEmployee(id: string) {
     setEmployeeId(id);
-    if (mode === "percent" && !base) {
-      const total = salesByEmployee[id];
-      if (total) setBase(String(total));
+    if (mode === "percent" && !base && !basePromo) {
+      const v = salesByEmployee[id];
+      if (v?.normal) setBase(String(v.normal));
+      if (v?.promo) setBasePromo(String(v.promo));
     }
   }
 
   const baseNum = Number(base) || 0;
   const percentNum = Number(percent) || 0;
-  const computed = commissionFromPercent(baseNum, percentNum);
+  const basePromoNum = Number(basePromo) || 0;
+  const percentPromoNum = Number(percentPromo) || 0;
+
+  const computadoNormal = commissionFromPercent(baseNum, percentNum);
+  const computadoPromo = commissionFromPercent(basePromoNum, percentPromoNum);
+  const computed = Math.round((computadoNormal + computadoPromo) * 100) / 100;
   const finalAmount = mode === "percent" ? computed : Number(amount) || 0;
+
+  // Lo fiado del periodo. Se informa, no se descuenta: si el comercio no
+  // comisiona lo que todavia no cobro, el dueno baja la base a mano.
+  const aCuenta = salesByEmployee[employeeId]?.aCuenta ?? 0;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const composedNote =
       mode === "percent" && !note.trim()
-        ? `${percentNum}% de ${money(baseNum)}`
+        // La nota ES el registro de auditoria: sobrevive a que los porcentajes
+        // cambien el mes que viene y es legible por un humano dentro de un ano.
+        ? [
+            baseNum > 0 ? `${percentNum}% de ${money(baseNum)} normal` : null,
+            basePromoNum > 0 ? `${percentPromoNum}% de ${money(basePromoNum)} promo` : null,
+          ].filter(Boolean).join(" + ")
         : note;
     startTransition(async () => {
       const res = await saveCommission({
@@ -73,6 +91,8 @@ export function CommissionForm({
       setAmount("");
       setBase("");
       setPercent("");
+      setBasePromo("");
+      setPercentPromo("");
       setNote("");
       toast.success("Comisión registrada");
       router.refresh();
@@ -119,12 +139,20 @@ export function CommissionForm({
         ) : (
           <>
             <label className="flex flex-col gap-1.5">
-              <span className="ledger-label">Base</span>
-              <Input type="number" step="0.01" min="0" required placeholder="0,00" value={base} onChange={(e) => setBase(e.target.value)} className="w-36" />
+              <span className="ledger-label">Base normal</span>
+              <Input type="number" step="0.01" min="0" placeholder="0,00" value={base} onChange={(e) => setBase(e.target.value)} className="w-36" />
             </label>
             <label className="flex flex-col gap-1.5">
               <span className="ledger-label">%</span>
-              <Input type="number" step="0.01" min="0" max="100" required placeholder="0" value={percent} onChange={(e) => setPercent(e.target.value)} className="w-24" />
+              <Input type="number" step="0.01" min="0" max="100" placeholder="0" value={percent} onChange={(e) => setPercent(e.target.value)} className="w-20" />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="ledger-label">Base promo</span>
+              <Input type="number" step="0.01" min="0" placeholder="0,00" value={basePromo} onChange={(e) => setBasePromo(e.target.value)} className="w-36" />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="ledger-label">% promo</span>
+              <Input type="number" step="0.01" min="0" max="100" placeholder="0" value={percentPromo} onChange={(e) => setPercentPromo(e.target.value)} className="w-20" />
             </label>
             <div className="flex flex-col gap-1.5">
               <span className="ledger-label">Comisión</span>
