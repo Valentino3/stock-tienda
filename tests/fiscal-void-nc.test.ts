@@ -75,7 +75,7 @@ async function ventaFacturada() {
 describe("anulación con nota de crédito", () => {
   it("anular una venta facturada permite emitir la NC, con el tipo y el vínculo correctos", async () => {
     const { venta, factura } = await ventaFacturada();
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const { port } = fakeArca();
     const nc = await emitirNotaCredito(db, port, { storeId: store, saleId: venta.id, userId: "u1" });
@@ -90,7 +90,7 @@ describe("anulación con nota de crédito", () => {
   it("REGRESIÓN: con ARCA caído, la anulación igual se completa", async () => {
     const { venta } = await ventaFacturada();
 
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     // La venta quedó anulada y el stock volvió, sin depender de ARCA.
     const [despues] = await db.select().from(sales).where(eq(sales.id, venta.id));
@@ -112,7 +112,7 @@ describe("anulación con nota de crédito", () => {
       storeId: store, sellerId: "u1", paymentMethod: "efectivo",
       items: [{ variantId, quantity: 1 }],
     });
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     expect(await getFacturaAutorizada(db, store, venta.id)).toBeNull();
     const { port, llamadas } = fakeArca();
@@ -123,8 +123,8 @@ describe("anulación con nota de crédito", () => {
 
   it("la doble anulación sigue fallando y no emite dos notas de crédito", async () => {
     const { venta } = await ventaFacturada();
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
-    await expect(voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" }))
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
+    await expect(voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" }))
       .rejects.toThrow("ALREADY_VOIDED");
 
     const { port } = fakeArca();
@@ -147,7 +147,7 @@ describe("anulación con nota de crédito", () => {
     const { port } = fakeArca();
     await emitirFactura(db, port, { storeId: store, saleId: venta.id, userId: "u1" });
 
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const movimientos = await db.select().from(clientAccountMovements)
       .where(eq(clientAccountMovements.saleId, venta.id));
@@ -159,7 +159,7 @@ describe("anulación con nota de crédito", () => {
 
   it("el detalle de la NC se congela desde la factura, no desde la venta", async () => {
     const { venta, factura } = await ventaFacturada();
-    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     // Después de anular se toca el producto: la NC no tiene que enterarse.
     await db.update(products).set({ name: "Nombre cambiado" }).where(eq(products.storeId, store));

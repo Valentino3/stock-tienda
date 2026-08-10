@@ -142,7 +142,7 @@ describe("getClientLedger / getClientSummary", () => {
     });
     expect(await getClientBalance(db, store, clientId)).toBe(2000);
 
-    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     // El cargo NO se borra: se compensa con un movimiento de anulación, para
     // que el historial muestre qué pasó.
@@ -168,7 +168,7 @@ describe("getClientLedger / getClientSummary", () => {
       storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
       items: [{ variantId, quantity: 3 }], // 3000, queda viva
     });
-    await voidSale(db, { saleId: anulada.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: anulada.id, storeId: store, userId: "u1" , reason: "prueba" });
 
     const s = await getClientSummary(db, store, clientId);
     expect(s.charged).toBe(3000); // neto: 5000 cargados − 2000 anulados
@@ -184,7 +184,7 @@ describe("getClientLedger / getClientSummary", () => {
       storeId: store, sellerId: "u1", paymentMethod: "efectivo",
       items: [{ variantId, quantity: 2 }],
     });
-    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" });
     expect(await getClientLedger(db, store, clientId)).toEqual([]);
     expect(await getClientBalance(db, store, clientId)).toBe(0);
   });

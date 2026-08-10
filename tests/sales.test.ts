@@ -111,7 +111,7 @@ describe("voidSale", () => {
   it("restores stock and marks voided", async () => {
     await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
     const sale = await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "tarjeta", items: [{ variantId: vId, quantity: 2 }] });
-    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" });
     const [v1] = await db.select().from(productVariants).where(eq(productVariants.id, vId));
     expect(v1.stock).toBe(5);
     const [s] = await db.select().from(sales).where(eq(sales.id, sale.id));
@@ -121,11 +121,31 @@ describe("voidSale", () => {
     expect(movs[0].quantity).toBe(2);
   });
 
+  it("guarda el motivo y exige uno de verdad", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const sale = await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 1 }] });
+
+    // Vacío, espacios y una sola letra no son un motivo. La guarda vive en el
+    // dominio y no solo en el diálogo: si no, la server action sería un bypass.
+    for (const reason of ["", "   ", "x"]) {
+      await expect(
+        voidSale(db, { saleId: sale.id, storeId: store, userId: "u1", reason }),
+      ).rejects.toThrow("VOID_REASON_REQUIRED");
+    }
+    // Y no anuló nada en el intento.
+    const [antes] = await db.select().from(sales).where(eq(sales.id, sale.id));
+    expect(antes.voided).toBe(false);
+
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1", reason: "  Devolución del cliente  " });
+    const [s] = await db.select().from(sales).where(eq(sales.id, sale.id));
+    expect(s.voidedReason).toBe("Devolución del cliente"); // recortado
+  });
+
   it("rejects double void", async () => {
     await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
     const sale = await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 1 }] });
-    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" });
-    await expect(voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" })).rejects.toThrow("ALREADY_VOIDED");
+    await voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" });
+    await expect(voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" })).rejects.toThrow("ALREADY_VOIDED");
   });
 
   // NOTE: PGlite serializes db.transaction() calls on its single connection,
@@ -137,8 +157,8 @@ describe("voidSale", () => {
     await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
     const sale = await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId: vId, quantity: 2 }] });
     const results = await Promise.allSettled([
-      voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" }),
-      voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" }),
+      voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" }),
+      voidSale(db, { saleId: sale.id, storeId: store, userId: "u1" , reason: "prueba" }),
     ]);
     const fulfilled = results.filter((r) => r.status === "fulfilled");
     const rejected = results.filter((r) => r.status === "rejected");

@@ -183,6 +183,13 @@
       "when": 1785979312604,
       "tag": "0025_cocina",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1786387281214,
+      "tag": "0026_listas_precio_y_promo",
+      "breakpoints": true
     }
   ]
 }

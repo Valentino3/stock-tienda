@@ -127,6 +127,20 @@ export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", 
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
 export const cashMovementKindEnum = pgEnum("cash_movement_kind", ["gasto", "egreso"]);
 
+/**
+ * Lista de precios con la que se cobró una línea.
+ *
+ * `venta` resuelve `price ?? basePrice`, que es lo que la app cobró siempre;
+ * las otras dos leen `priceCash` y `priceWholesale`, que hasta ahora eran
+ * informativas.
+ *
+ * pgEnum y no `text` porque es un conjunto cerrado nuestro, igual que
+ * `paymentMethodEnum`. Agregar una cuarta lista exige de todas formas una
+ * columna nueva en `product_variants`, o sea una migración: el `ALTER TYPE`
+ * viaja gratis con ella.
+ */
+export const priceListEnum = pgEnum("price_list", ["venta", "efectivo", "mayorista"]);
+
 // ---- gastronomía ----
 // Conjuntos cerrados nuestros, no códigos de un tercero: van como pgEnum y en
 // castellano, igual que paymentMethod y movementType. (Los códigos de ARCA sí
@@ -171,6 +185,17 @@ export const products = pgTable("products", {
    */
   tracksStock: boolean("tracks_stock").notNull().default(true),
   lowStockThreshold: integer("low_stock_threshold").notNull().default(3),
+  /**
+   * En promoción. Lo único que hace es que sus ventas comisionen a un
+   * porcentaje distinto: se copia a `sale_items.isPromo` al vender y NUNCA se
+   * lee para calcular un período pasado. No toca el precio — para eso están
+   * las listas y el descuento.
+   *
+   * Sin vigencia (`desde`/`hasta`) a propósito: eso es un modelo temporal
+   * entero, con su tabla y sus períodos superpuestos, y el snapshot en la línea
+   * ya resuelve el problema real de que la promo termine.
+   */
+  isPromo: boolean("is_promo").notNull().default(false),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
@@ -268,6 +293,15 @@ export const sales = pgTable("sales", {
   voided: boolean("voided").notNull().default(false),
   voidedAt: timestamp("voided_at"),
   voidedBy: text("voided_by").references(() => user.id),
+  /**
+   * Por qué se anuló. Obligatorio en el dominio (`voidSale` lo exige) pero
+   * nullable acá: las anulaciones anteriores a esta migración no tienen motivo,
+   * y un `NOT NULL DEFAULT ''` sería indistinguible de "contestó vacío".
+   *
+   * La anulación es el vector de faltante del sistema: es exactamente la
+   * operación sobre la que después se quiere preguntar.
+   */
+  voidedReason: text("voided_reason"),
   /**
    * Orden (mesa) que originó esta venta, si vino del salón.
    *
@@ -422,6 +456,27 @@ export const saleItems = pgTable("sale_items", {
   unitPrice: numeric("unit_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   // Descuento resuelto ($) de esta línea; total de línea = quantity*unitPrice − discountAmount.
   discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  /**
+   * Con qué lista se cobró. NO se deriva de `unitPrice`: si `priceCash` es
+   * igual a `price` —común, el comercio no cargó el diferencial— el importe no
+   * dice cuál eligió el cajero, y reconstruirlo a posteriori exigiría joinear
+   * contra un catálogo que muta.
+   *
+   * `NOT NULL DEFAULT 'venta'` no miente sobre el pasado: hasta esta migración
+   * la venta siempre usaba `price ?? basePrice`.
+   */
+  priceList: priceListEnum("price_list").notNull().default("venta"),
+  /**
+   * Si el producto estaba en promoción AL MOMENTO DE VENDER.
+   *
+   * Snapshot y no un join contra `products.isPromo`, por la misma razón que
+   * `order_items.nameSnapshot` y `comprobantes.lineas`: las promos rotan. Con
+   * el flag vivo, calcular la comisión de julio en agosto —con la promo ya
+   * terminada— movería esas ventas al porcentaje alto, y el número daría
+   * distinto cada vez que se abre la pantalla. Eso es plata que se le paga a
+   * una persona.
+   */
+  isPromo: boolean("is_promo").notNull().default(false),
 });
 
 export const stockMovements = pgTable("stock_movements", {
