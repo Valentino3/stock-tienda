@@ -22,6 +22,7 @@ export async function saveFiscalConfigAction(input: {
   domicilio: string;
   nombreFantasia?: string;
   ingresosBrutos?: string;
+  logoUrl?: string;
   inicioActividades?: string;
   puntoVenta: number;
   defaultIvaId: number;
@@ -55,6 +56,7 @@ export async function saveFiscalConfigAction(input: {
       domicilio: input.domicilio.trim(),
       nombreFantasia: input.nombreFantasia?.trim() || null,
       ingresosBrutos: input.ingresosBrutos?.trim() || null,
+      logoUrl: input.logoUrl?.trim() || null,
       inicioActividades: input.inicioActividades?.trim() || null,
       puntoVenta: input.puntoVenta,
       ambiente: actual?.ambiente ?? "homologacion",

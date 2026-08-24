@@ -147,6 +147,23 @@ test.describe("capturas", () => {
     });
 
     /**
+     * El remito de la primera venta del turno.
+     *
+     * Hay que ABRIR la fila antes de buscar el boton: vive adentro de un
+     * `<details>` colapsado, y el contenido de un details cerrado no esta en el
+     * arbol de accesibilidad — `getByRole` lo cuenta como inexistente.
+     */
+    test("resto remito", async ({ page }) => {
+      await page.goto("/ventas", { waitUntil: "networkidle" });
+      const fila = page.locator("details").first();
+      test.skip(!(await fila.count()), "No hay ventas para sacarle remito.");
+      await fila.locator("summary").click();
+
+      const href = await fila.getByRole("link", { name: /^remito$/i }).getAttribute("href");
+      await capturar(page, "resto", href!);
+    });
+
+    /**
      * Esta pantalla no existe hasta que alguien abre una mesa, así que el arnés
      * la abre. Es la única excepción a la regla de solo lectura: sin fixture no
      * hay captura, y la pantalla de comanda es de las que más se restilan.

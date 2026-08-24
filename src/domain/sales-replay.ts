@@ -1,6 +1,6 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
-  products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements,
+  products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores,
 } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 import { calcularTotales, esListaValida, resolverPrecio, type Discount, type PriceList } from "@/domain/sales";
@@ -34,6 +34,21 @@ import { createSyncNotification } from "@/domain/notifications";
 // que sea y rompería todos los reportes sin fallar nunca.
 const MAX_ANTIGUEDAD_MS = 30 * 24 * 60 * 60 * 1000;
 const TOLERANCIA_FUTURO_MS = 5 * 60 * 1000;
+
+/**
+ * Igual que en createSale: `UPDATE ... RETURNING` sobre el contador de la
+ * tienda, que es lo que serializa dos reservas simultaneas. Se duplica la
+ * funcion en vez de exportarla porque los dos caminos de venta son
+ * deliberadamente independientes (ver la tabla de asimetrias del encabezado);
+ * lo que NO puede divergir es la forma del UPDATE, y por eso este comentario.
+ */
+async function reservarNumeroDeRemito(tx: any, storeId: number): Promise<number> {
+  const [row] = await tx.update(stores)
+    .set({ remitoUltimoNumero: sql`${stores.remitoUltimoNumero} + 1` })
+    .where(eq(stores.id, storeId))
+    .returning({ n: stores.remitoUltimoNumero });
+  return row.n as number;
+}
 
 const PG_UNIQUE_VIOLATION = "23505";
 
@@ -443,6 +458,13 @@ export async function replaySale(
         discountAmount: saleDiscount,
         paymentMethod: venta.paymentMethod,
         clientId: venta.paymentMethod === "cuenta" ? clientId : null,
+        // El numero se reserva al SINCRONIZAR, no al cobrar en la feria: el
+        // dispositivo offline no puede conocer el contador de la tienda sin
+        // inventar numeros que despues choquen. La consecuencia es que el orden
+        // de los remitos sigue al de sincronizacion y no al del reloj del
+        // dispositivo — visible solo si se vendio sin conexion, y preferible a
+        // dos remitos con el mismo numero.
+        remitoNumero: await reservarNumeroDeRemito(tx, storeId),
       }).returning();
 
       if (venta.paymentMethod === "cuenta") {

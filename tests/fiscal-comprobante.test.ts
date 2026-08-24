@@ -23,7 +23,7 @@ const config = (over: Partial<StoreFiscalConfig> = {}): StoreFiscalConfig => ({
   domicilio: "Av. Siempreviva 742", condicionIva: IVA_RESPONSABLE_INSCRIPTO,
   ingresosBrutos: "901-123456-7", inicioActividades: "2020-01-01", puntoVenta: 1,
   ambiente: "homologacion", defaultIvaId: 5, umbralConsumidorFinal: null,
-  empleadosPuedenEmitir: false, enabled: true,
+  empleadosPuedenEmitir: false, enabled: true, logoUrl: null,
   createdAt: AHORA, updatedAt: AHORA, ...over,
 });
 

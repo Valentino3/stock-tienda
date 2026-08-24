@@ -345,6 +345,11 @@ export default async function VentasPage({
                     </p>
                   )}
                   <div className="flex flex-wrap items-start gap-3">
+                    {/* El remito existe para toda venta, facturada o no: es el
+                        respaldo interno del comercio, no un comprobante. */}
+                    <Button asChild variant="outline" size="sm">
+                      <Link href={`/ventas/${sale.id}/remito`}>Remito</Link>
+                    </Button>
                     {isOwner && !sale.voided && (
                       <VoidButton
                         saleId={sale.id}

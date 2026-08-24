@@ -557,10 +557,22 @@ export function SaleForm({
         // `duplicada` = este uid ya tenía venta: el reintento devolvió la
         // original en vez de cobrar de nuevo. Se dice explícitamente, porque
         // el vendedor necesita saber que no duplicó el cobro.
+        // El remito va como accion del aviso y no como boton fijo: el POS se
+        // usa con cola enfrente y la mayoria de las ventas no necesitan papel.
+        // Queda a un toque para las que si, y se va solo cuando no se usa.
+        const verRemito = {
+          label: "Remito",
+          onClick: () => window.open(`/ventas/${res.saleId}/remito`, "_blank"),
+        };
         if (res.duplicada) {
-          toast.info(`La venta #${res.saleId} ya estaba registrada — ${money(res.total)}. No se cobró de nuevo.`);
+          toast.info(`La venta #${res.saleId} ya estaba registrada — ${money(res.total)}. No se cobró de nuevo.`, {
+            action: verRemito,
+          });
         } else {
-          toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`);
+          toast.success(`Venta #${res.saleId} registrada — ${money(res.total)}`, {
+            action: verRemito,
+            duration: 8000,
+          });
         }
         setCart([]);
         setSaleUid("");

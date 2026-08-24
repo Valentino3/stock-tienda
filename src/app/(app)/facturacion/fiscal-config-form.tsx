@@ -38,6 +38,7 @@ export function FiscalConfigForm({ config }: { config: StoreFiscalConfig | null 
         domicilio: String(form.get("domicilio") ?? ""),
         nombreFantasia: String(form.get("nombreFantasia") ?? ""),
         ingresosBrutos: String(form.get("ingresosBrutos") ?? ""),
+        logoUrl: String(form.get("logoUrl") ?? ""),
         inicioActividades: String(form.get("inicioActividades") ?? ""),
         puntoVenta: Number(form.get("puntoVenta")),
         defaultIvaId: Number(form.get("defaultIvaId")),
@@ -142,6 +143,19 @@ export function FiscalConfigForm({ config }: { config: StoreFiscalConfig | null 
             />
             <p className="text-xs text-muted-foreground">
               Vacío = nunca se exige. El monto lo fija ARCA y cambia con el tiempo: consultalo con tu contador.
+            </p>
+          </div>
+
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="logoUrl">Logo para el remito (opcional)</Label>
+            <Input
+              id="logoUrl" name="logoUrl" type="url" placeholder="https://…/logo.png"
+              defaultValue={config?.logoUrl ?? ""}
+            />
+            <p className="text-xs text-muted-foreground">
+              La dirección de una imagen ya publicada. Sale centrada en el remito. Si el
+              enlace deja de funcionar, el remito sale sin logo — nunca se traba la
+              impresión.
             </p>
           </div>
         </div>

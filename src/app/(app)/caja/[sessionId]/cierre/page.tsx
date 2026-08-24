@@ -6,7 +6,7 @@ import { stores } from "@/db/schema";
 import { requireStoreOwner } from "@/lib/session";
 import { APP_NAME } from "@/lib/config";
 import { money, moneyDiff, number } from "@/lib/format";
-import { getCashSessionClose } from "@/domain/cash-close";
+import { getCashSessionClose, getEmisorRemito } from "@/domain/cash-close";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { RemitoImprimible } from "@/components/remito/remito-imprimible";
@@ -60,6 +60,7 @@ export default async function CierrePage({ params }: { params: Promise<{ session
 
   const [store] = await db.select({ name: stores.name }).from(stores).where(eq(stores.id, storeId));
   const nombreTienda = store?.name ?? APP_NAME;
+  const emisor = await getEmisorRemito(db, storeId);
 
   const s = cierre.session;
   const abierta = s.closedAt == null;
@@ -203,9 +204,12 @@ export default async function CierrePage({ params }: { params: Promise<{ session
               imprimir de una. Usá <strong>Exportar Excel</strong>, que las trae todas.
             </Notice>
           ) : (
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            // Uno por pagina: es el mismo formato A4 del remito suelto, con el
+            // total anclado al pie. Un turno grande son muchas hojas, y esa fue
+            // la decision — un solo diseno de remito en todos lados.
+            <div className="mt-2 divide-y divide-border">
               {cierre.remitos.map((r) => (
-                <RemitoImprimible key={r.saleId} remito={r} nombreTienda={nombreTienda} />
+                <RemitoImprimible key={r.saleId} remito={r} emisor={emisor} />
               ))}
             </div>
           )}
