@@ -46,6 +46,9 @@ export type SaveFiscalConfigInput = {
   nombreFantasia?: string | null;
   condicionIva?: number;
   ingresosBrutos?: string | null;
+  /** URL del logo para el remito. No es dato fiscal, pero vive con el resto
+   *  del emisor porque el remito muestra los mismos datos que una factura. */
+  logoUrl?: string | null;
   inicioActividades?: string | null;
   puntoVenta: number;
   ambiente?: ArcaAmbiente;
@@ -63,6 +66,7 @@ export async function saveFiscalConfig(db: any, input: SaveFiscalConfigInput): P
     nombreFantasia: input.nombreFantasia ?? null,
     condicionIva: input.condicionIva ?? 1,
     ingresosBrutos: input.ingresosBrutos ?? null,
+    logoUrl: input.logoUrl ?? null,
     inicioActividades: input.inicioActividades ?? null,
     puntoVenta: input.puntoVenta,
     ambiente: input.ambiente ?? ("homologacion" as const),

@@ -29,6 +29,18 @@ export const stores = pgTable("stores", {
   // migración con ALTER TYPE. El conjunto válido lo valida el registro, que
   // ante un valor desconocido cae a 'retail' en vez de romper la pantalla.
   businessType: text("business_type").notNull().default("retail"),
+  /**
+   * Ultimo numero de remito entregado. El proximo es este mas uno.
+   *
+   * Vive en `stores` y no en `store_fiscal_config` porque el remito NO es
+   * fiscal: un comercio que nunca facturo igual entrega remitos.
+   *
+   * Se incrementa con `UPDATE ... RETURNING` adentro de la transaccion de la
+   * venta. Esa forma toma un lock de fila sobre la tienda, que es lo que
+   * serializa dos ventas simultaneas sin depender de ningun otro lock — y sin
+   * el cual dos cajeros podrian entregar el mismo numero.
+   */
+  remitoUltimoNumero: integer("remito_ultimo_numero").notNull().default(0),
 });
 
 // ---- better-auth ----
@@ -303,6 +315,17 @@ export const sales = pgTable("sales", {
    */
   voidedReason: text("voided_reason"),
   /**
+   * Numero de remito de esta venta, dentro de la serie de la tienda.
+   *
+   * Nullable: las ventas anteriores a esta migracion no tienen remito, y
+   * fabricarles uno inventaria documentos que nunca se entregaron.
+   *
+   * Se asigna al vender, no al imprimir: asignarlo en el primer print haria
+   * que un GET escriba, y dos pestañas abiertas sobre la misma venta compitieran
+   * por el numero.
+   */
+  remitoNumero: integer("remito_numero"),
+  /**
    * Orden (mesa) que originó esta venta, si vino del salón.
    *
    * El FK vive acá y no en `orders.saleId` a propósito: cuesta lo mismo y
@@ -317,6 +340,12 @@ export const sales = pgTable("sales", {
   // WHERE porque Postgres trata cada NULL como distinto, así que las ventas
   // sin uid conviven sin chocar (mismo criterio que product_variants.sku).
   uniqueIndex("sales_store_uid_idx").on(t.storeId, t.uid),
+  // Dos remitos con el mismo numero circulando es el peor resultado posible de
+  // esta feature. El contador con UPDATE ... RETURNING ya lo impide; este
+  // indice es el que hace que, si alguna vez se rompiera, falle ruidoso en vez
+  // de imprimir el duplicado. Los NULL no chocan, asi que las ventas viejas
+  // sin remito no se ven afectadas.
+  uniqueIndex("sales_store_remito_idx").on(t.storeId, t.remitoNumero),
 ]);
 
 // ---- gastronomía: mesas y órdenes ----
@@ -661,6 +690,17 @@ export const storeFiscalConfig = pgTable("store_fiscal_config", {
   // que una constante vieja bloquee facturación legítima. Lo fija el contador.
   umbralConsumidorFinal: numeric("umbral_consumidor_final", { precision: 12, scale: 2, mode: "number" }),
   empleadosPuedenEmitir: boolean("empleados_pueden_emitir").notNull().default(false),
+  /**
+   * Logo del comercio para el remito, como URL de una imagen ya publicada.
+   *
+   * URL y no el archivo: esta app no tiene almacenamiento de archivos —es la
+   * misma razon por la que el comprobante fiscal es HTML y no un PDF guardado—
+   * y meter imagenes en una base pensada para plata se paga en cada backup.
+   *
+   * Si la URL se cae, el remito sale sin logo y con los datos en texto. Nunca
+   * bloquea la impresion.
+   */
+  logoUrl: text("logo_url"),
   enabled: boolean("enabled").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

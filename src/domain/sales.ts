@@ -1,5 +1,5 @@
-import { eq, inArray, and, isNull } from "drizzle-orm";
-import { products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, type Sale } from "@/db/schema";
+import { eq, inArray, and, isNull, sql } from "drizzle-orm";
+import { products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores, type Sale } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -101,6 +101,26 @@ export type SaleInput = {
   orderId?: number | null;
 };
 
+/**
+ * Reserva el proximo numero de remito de la tienda.
+ *
+ * `UPDATE ... RETURNING` y no `SELECT max()+1`: la forma con UPDATE toma un
+ * lock de fila sobre la tienda, asi que dos ventas simultaneas se serializan
+ * ahi y no pueden llevarse el mismo numero. Un select-then-insert si podria,
+ * y el resultado serian dos remitos con el mismo numero circulando — que es el
+ * peor resultado posible de esta feature.
+ *
+ * Se llama SIEMPRE despues del lock de la caja, para que el orden de locks sea
+ * el mismo en los dos caminos de venta y no haya deadlock entre ellos.
+ */
+async function reservarNumeroDeRemito(tx: any, storeId: number): Promise<number> {
+  const [row] = await tx.update(stores)
+    .set({ remitoUltimoNumero: sql`${stores.remitoUltimoNumero} + 1` })
+    .where(eq(stores.id, storeId))
+    .returning({ n: stores.remitoUltimoNumero });
+  return row.n as number;
+}
+
 const PG_UNIQUE_VIOLATION = "23505";
 
 /**
@@ -192,6 +212,7 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         paymentMethod: input.paymentMethod,
         clientId: input.paymentMethod === "cuenta" ? input.clientId : null,
         orderId: input.orderId ?? null,
+        remitoNumero: await reservarNumeroDeRemito(tx, input.storeId),
       }).returning();
 
       // Cargo en la cuenta corriente del cliente (queda como deuda).
