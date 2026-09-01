@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { products, productVariants } from "@/db/schema";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import { applyStockMovement } from "@/domain/stock";
+import { crearProducto, crearVariante } from "@/domain/products";
 import { createLowStockNotification } from "@/domain/notifications";
 
 // Aviso de stock bajo al dueño. Cualquier usuario de la tienda (empleado o dueño).
@@ -25,17 +26,36 @@ export async function notifyLowStock(variantId: number, note?: string) {
 // src/domain/cash.ts openCashSession.
 const PG_UNIQUE_VIOLATION = "23505";
 
+/**
+ * Traduce el error del driver a un mensaje que se pueda leer en el diálogo.
+ * Drizzle envuelve el error real en `err.cause`, así que hay que mirar los
+ * dos niveles. Lo único que puede chocar acá es el SKU: es el único índice
+ * único de `product_variants` que la UI puede llegar a violar.
+ */
+function errorDeGuardado(err: unknown, fallback: string) {
+  const e = err as { code?: string; message?: string; cause?: { code?: string; message?: string } };
+  const code = e?.code ?? e?.cause?.code;
+  const message = String(e?.message ?? e?.cause?.message ?? err ?? "");
+  if (code === PG_UNIQUE_VIOLATION || /sku/i.test(message)) return { error: "SKU ya existe" };
+  return { error: fallback };
+}
+
 export async function saveProduct(input: {
   id?: number; name: string; category?: string; basePrice: number;
   lowStockThreshold: number; tracksStock?: boolean; station?: string | null;
-  isPromo?: boolean;
+  isPromo?: boolean; sku?: string | null; stockInicial?: number;
 }) {
-  const { storeId } = await requireStoreOwner();
+  const { id: userId, storeId } = await requireStoreOwner();
+  // El stock inicial se valida con el mismo criterio que `restock`, salvo que
+  // acá 0 es legítimo: significa "todavía no llegó la mercadería".
+  const stockInicial = input.stockInicial ?? 0;
   if (
     !input.name.trim() ||
     input.basePrice < 0 ||
     !Number.isInteger(input.lowStockThreshold) ||
-    input.lowStockThreshold < 0
+    input.lowStockThreshold < 0 ||
+    !Number.isInteger(stockInicial) ||
+    stockInicial < 0
   ) return { error: "Datos inválidos" };
   const category = input.category?.trim() || null;
   // `!== false` para que un cliente viejo que no manda el campo conserve el
@@ -44,17 +64,22 @@ export async function saveProduct(input: {
   const isPromo = input.isPromo === true;
   const station = input.station?.trim() || null;
   if (input.id) {
+    // En edición el stock no se toca: se mueve por Reponer y Ajustar, que son
+    // por variante y dejan su movimiento.
     await db.update(products).set({
       name: input.name.trim(), category, basePrice: input.basePrice,
       lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
     }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
-    const [p] = await db.insert(products).values({
-      storeId, name: input.name.trim(), category, basePrice: input.basePrice,
-      lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
-    }).returning();
-    // variante default para producto sin variantes reales
-    await db.insert(productVariants).values({ storeId, productId: p.id, name: "" });
+    try {
+      await crearProducto(db, {
+        storeId, userId, name: input.name, category, basePrice: input.basePrice,
+        lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
+        sku: input.sku ?? null, stockInicial,
+      });
+    } catch (err) {
+      return errorDeGuardado(err, "No se pudo guardar el producto");
+    }
   }
   revalidatePath("/productos");
   return { ok: true };
@@ -76,8 +101,9 @@ export async function saveVariant(input: {
   condition?: string | null;
   foil?: boolean;
   language?: string | null;
+  stockInicial?: number;
 }) {
-  const { storeId } = await requireStoreOwner();
+  const { id: userId, storeId } = await requireStoreOwner();
   // Empty name is legitimate on UPDATE: every product gets a hidden "default"
   // variant with `name: ""` (see saveProduct above), and its SKU/price must
   // stay editable without forcing the owner to name it. Only INSERT (a new,
@@ -87,6 +113,8 @@ export async function saveVariant(input: {
   // `price`; null significa "no informado" y es válido.
   const amounts = [input.price, input.priceCash, input.priceWholesale, input.costUsd, input.costArs];
   if (amounts.some((n) => n != null && (Number.isNaN(n) || n < 0))) return { error: "Datos inválidos" };
+  const stockInicial = input.stockInicial ?? 0;
+  if (!Number.isInteger(stockInicial) || stockInicial < 0) return { error: "Datos inválidos" };
   const values = {
     name: input.name.trim(),
     sku: input.sku?.trim() || null,
@@ -107,19 +135,15 @@ export async function saveVariant(input: {
       await db.update(productVariants).set(values)
         .where(and(eq(productVariants.id, input.id), eq(productVariants.storeId, storeId)));
     } else {
-      // El producto padre debe ser de la tienda (evita atar variantes a
-      // productos de otra tienda por id).
-      const [parent] = await db.select({ id: products.id }).from(products)
-        .where(and(eq(products.id, input.productId), eq(products.storeId, storeId)));
-      if (!parent) return { error: "Producto no encontrado" };
-      await db.insert(productVariants).values({ ...values, storeId, productId: input.productId });
+      // La guarda de tienda sobre el producto padre va adentro de la
+      // transacción de `crearVariante`, junto con el stock inicial.
+      const creada = await crearVariante(db, {
+        storeId, userId, productId: input.productId, values, stockInicial,
+      });
+      if (!creada) return { error: "Producto no encontrado" };
     }
   } catch (err) {
-    const e = err as { code?: string; message?: string; cause?: { code?: string; message?: string } };
-    const code = e?.code ?? e?.cause?.code;
-    const message = String(e?.message ?? e?.cause?.message ?? err ?? "");
-    if (code === PG_UNIQUE_VIOLATION || /sku/i.test(message)) return { error: "SKU ya existe" };
-    return { error: "No se pudo guardar la variante" };
+    return errorDeGuardado(err, "No se pudo guardar la variante");
   }
   revalidatePath("/productos");
   return { ok: true };

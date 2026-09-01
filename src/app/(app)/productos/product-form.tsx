@@ -1,5 +1,6 @@
 "use client";
 import { useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -59,9 +60,15 @@ export function ProductForm({
   );
 
   const [station, setStation] = useState(product?.station ?? "");
+  // Solo al crear: van a la variante default. En edición el SKU se toca desde
+  // la fila del inventario y el stock por Reponer/Ajustar, que dejan
+  // movimiento.
+  const [sku, setSku] = useState("");
+  const [stockInicial, setStockInicial] = useState("");
 
   const [vName, setVName] = useState("");
   const [vSku, setVSku] = useState("");
+  const [vStock, setVStock] = useState("");
   const [vPrice, setVPrice] = useState("");
   const [vSetName, setVSetName] = useState("");
   const [vCondition, setVCondition] = useState("");
@@ -81,10 +88,24 @@ export function ProductForm({
         tracksStock,
         isPromo,
         station: usaEstaciones ? station : undefined,
+        sku: isEdit ? undefined : (sku || null),
+        stockInicial: isEdit ? undefined : Number(stockInicial || 0),
       });
       if ("error" in res && res.error) setError(res.error);
       else {
+        // El aviso de arriba se ve mientras se tipea; este se ve DESPUES, que
+        // es cuando el producto ya quedo invendible. El enlace lleva al filtro
+        // de inventario que ya existe.
+        if (!isEdit && tracksStock && Number(stockInicial || 0) === 0) {
+          toast.warning("Cargado sin stock", {
+            description: "No se va a poder vender hasta que le cargues stock desde Productos.",
+            action: { label: "Ver sin stock", onClick: () => { window.location.href = "/productos?stock=out"; } },
+            duration: 8000,
+          });
+        }
         setError("");
+        setSku("");
+        setStockInicial("");
         setOpen(false);
       }
     });
@@ -98,6 +119,7 @@ export function ProductForm({
         productId: product.id,
         name: vName,
         sku: vSku || null,
+        stockInicial: Number(vStock || 0),
         price: vPrice === "" ? null : Number(vPrice),
         setName: vSetName || null,
         condition: vCondition || null,
@@ -109,6 +131,7 @@ export function ProductForm({
         setVError("");
         setVName("");
         setVSku("");
+        setVStock("");
         setVPrice("");
         setVSetName("");
         setVCondition("");
@@ -214,17 +237,57 @@ export function ProductForm({
                   </p>
                 </div>
               )}
-              {tracksStock && (
+              {!isEdit && (
                 <div className="space-y-2">
-                  <Label htmlFor="product-threshold">Umbral stock bajo</Label>
+                  <Label htmlFor="product-sku">Código / SKU (opcional)</Label>
                   <Input
-                    id="product-threshold"
-                    type="number"
-                    min="0"
-                    value={lowStockThreshold}
-                    onChange={(e) => setLowStockThreshold(e.target.value)}
-                    required
+                    id="product-sku"
+                    value={sku}
+                    onChange={(e) => setSku(e.target.value)}
+                    placeholder="El del código de barras, si tiene"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Con SKU podés buscarlo escaneando el código en Vender. Sin
+                    SKU solo se encuentra por el nombre.
+                  </p>
+                </div>
+              )}
+              {tracksStock && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {!isEdit && (
+                    <div className="space-y-2">
+                      <Label htmlFor="product-stock">Stock inicial</Label>
+                      <Input
+                        id="product-stock"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={stockInicial}
+                        onChange={(e) => setStockInicial(e.target.value)}
+                        placeholder="0"
+                      />
+                      {/* Sin este aviso el producto nace invendible y no hay
+                          forma de saberlo hasta que el cliente está en el
+                          mostrador. Era la mitad del bug. */}
+                      {Number(stockInicial || 0) === 0 && (
+                        <p className="text-xs text-warning">
+                          Con 0 no vas a poder agregarlo al carrito en Vender
+                          hasta que le cargues stock.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="product-threshold">Umbral stock bajo</Label>
+                    <Input
+                      id="product-threshold"
+                      type="number"
+                      min="0"
+                      value={lowStockThreshold}
+                      onChange={(e) => setLowStockThreshold(e.target.value)}
+                      required
+                    />
+                  </div>
                 </div>
               )}
               {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
@@ -262,6 +325,13 @@ export function ProductForm({
             <Label className="text-xs">SKU</Label>
             <Input className="h-8" value={vSku} onChange={(e) => setVSku(e.target.value)} />
           </div>
+          {product.tracksStock && (
+            <div className="space-y-1">
+              <Label className="text-xs">Stock inicial</Label>
+              <Input className="h-8 w-24" type="number" min="0" step="1" placeholder="0"
+                value={vStock} onChange={(e) => setVStock(e.target.value)} />
+            </div>
+          )}
           <div className="space-y-1">
             <Label className="text-xs">Precio (opcional)</Label>
             <Input className="h-8 w-32" type="number" step="0.01" value={vPrice} onChange={(e) => setVPrice(e.target.value)} />
