@@ -1,5 +1,10 @@
 import { config } from "dotenv";
+import { leerArgsComoEnv } from "./argv-env";
+
 config({ path: ".env.local" });
+// Tambien acepta `npm run ... FOO=bar`: en PowerShell no existe el prefijo
+// de bash y npm reenvia eso como argumento. Ver scripts/argv-env.ts.
+leerArgsComoEnv();
 
 /**
  * Crea (o refresca) una tienda de PRUEBA en la misma base que las reales.
@@ -21,9 +26,9 @@ config({ path: ".env.local" });
  * ⚠️ Este script NO borra nada. Es idempotente: si la tienda ya existe, la
  * reusa y completa lo que falte. Para vaciarla está `reset:prueba`.
  *
- * Uso:
- *   OWNER_PASSWORD=... npm run seed:prueba
- *   OWNER_PASSWORD=... RUBRO=gastronomia STORE_SLUG=prueba-resto npm run seed:prueba
+ * Uso (esta forma sirve igual en PowerShell y en bash):
+ *   npm run seed:prueba OWNER_PASSWORD=...
+ *   npm run seed:prueba OWNER_PASSWORD=... RUBRO=gastronomia STORE_SLUG=prueba-resto
  */
 
 const SLUG = process.env.STORE_SLUG ?? "prueba";

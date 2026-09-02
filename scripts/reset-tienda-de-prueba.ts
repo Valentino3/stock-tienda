@@ -1,5 +1,10 @@
 import { config } from "dotenv";
+import { leerArgsComoEnv } from "./argv-env";
+
 config({ path: ".env.local" });
+// Tambien acepta `npm run ... FOO=bar`: en PowerShell no existe el prefijo
+// de bash y npm reenvia eso como argumento. Ver scripts/argv-env.ts.
+leerArgsComoEnv();
 
 /**
  * Vacía los movimientos de UNA tienda de prueba. Deja el catálogo y el dueño.
@@ -24,8 +29,8 @@ config({ path: ".env.local" });
  * Se conserva a propósito — volver a poblarlo cada vez haría que las pruebas
  * arranquen distinto cada día, y el punto es lo contrario.
  *
- * Uso:
- *   STORE_SLUG=prueba CONFIRMAR=prueba npm run reset:prueba
+ * Uso (sirve igual en PowerShell y en bash):
+ *   npm run reset:prueba STORE_SLUG=prueba CONFIRMAR=prueba
  */
 
 async function main() {
@@ -39,7 +44,7 @@ async function main() {
     process.exit(2);
   }
   if (process.env.CONFIRMAR !== slug) {
-    console.error(`Para confirmar, repetí el slug:\n  STORE_SLUG=${slug} CONFIRMAR=${slug} npm run reset:prueba`);
+    console.error(`Para confirmar, repetí el slug:\n  npm run reset:prueba STORE_SLUG=${slug} CONFIRMAR=${slug}`);
     process.exit(2);
   }
 

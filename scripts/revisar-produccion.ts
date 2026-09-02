@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { sql } from "drizzle-orm";
+import { leerArgsComoEnv } from "./argv-env";
 
 /**
  * Revisión de una base real, SOLO LECTURA.
@@ -27,9 +28,9 @@ import { sql } from "drizzle-orm";
  *      directamente: dos cajas abiertas, dos comprobantes con el mismo número,
  *      dos remitos con el mismo número, dos comandas abiertas en una mesa.
  *
- * Uso:
- *   DATABASE_URL=... npm run check:prod
- *   DATABASE_URL=... DB_DRIVER=pg npm run check:prod    # Postgres común
+ * Uso (sirve igual en PowerShell y en bash):
+ *   npm run check:prod
+ *   npm run check:prod DATABASE_URL=... DB_DRIVER=pg    # Postgres común
  *
  * No escribe absolutamente nada. Sale con código 1 si encuentra algo, para
  * poder encadenarlo en un deploy.
@@ -38,6 +39,8 @@ import { sql } from "drizzle-orm";
 // Igual que los demás scripts: si hay .env.local se usa, si no lo que venga del
 // entorno. Nunca hardcodea una URL.
 config({ path: ".env.local" });
+// Y las variables pasadas como argumento, que es lo que uno tipea en PowerShell.
+leerArgsComoEnv();
 
 type Hallazgo = { nivel: "error" | "aviso"; titulo: string; detalle: string };
 
