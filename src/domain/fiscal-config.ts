@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
-  arcaAccessTickets, arcaCredentials, storeFiscalConfig,
+  arcaAccessTickets, arcaCredentials, storeFiscalConfig, stores,
   type ArcaAmbiente, type StoreFiscalConfig,
 } from "@/db/schema";
 import { openSecret, sealSecret } from "@/lib/crypto/secret-box";
@@ -31,10 +31,31 @@ export async function getFiscalConfig(db: any, storeId: number): Promise<StoreFi
   return row ?? null;
 }
 
-/** Igual que getFiscalConfig pero lanza si falta o está incompleta. */
+/**
+ * Igual que getFiscalConfig pero lanza si falta o está incompleta.
+ *
+ * ⚠️ Es también la guarda que impide que una TIENDA DE PRUEBA emita un
+ * comprobante real. Va acá y no en cada camino de emisión porque las dos vías
+ * —`emitirFactura` y `emitirNotaCredito`— arrancan pidiendo la config, y
+ * cualquier vía futura va a tener que hacerlo también: es el único cuello de
+ * botella que no se puede saltear por olvido.
+ *
+ * El kill switch `ARCA_ALLOW_PRODUCCION` no alcanza: es del servidor entero, y
+ * en producción está en `true` porque los locales de verdad facturan. Sin esta
+ * comprobación, una prueba en la tienda de prueba emitiría una factura REAL
+ * ante ARCA, con el CUIT de alguien, y eso no se deshace con un `delete`:
+ * hay que emitir una nota de crédito.
+ */
 export async function requireFiscalConfig(db: any, storeId: number): Promise<StoreFiscalConfig> {
   const cfg = await getFiscalConfig(db, storeId);
   if (!cfg || !cfg.enabled || !cfg.cuit || !cfg.puntoVenta) throw new Error("FISCAL_NO_CONFIGURADO");
+
+  if (cfg.ambiente === "produccion") {
+    const [tienda] = await db.select({ esPrueba: stores.esPrueba }).from(stores)
+      .where(eq(stores.id, storeId));
+    if (tienda?.esPrueba) throw new Error("TIENDA_DE_PRUEBA_NO_FACTURA_EN_PRODUCCION");
+  }
+
   return cfg;
 }
 

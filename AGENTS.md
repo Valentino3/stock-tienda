@@ -20,13 +20,30 @@ producción. Lo verifica `tests/migraciones-journal.test.ts`.
 **Antes de abrir un PR: `npm run verificar`.** Corre tsc, lint, los tests y el
 build de una. Es lo mismo que corre CI.
 
-**Después de desplegar: `DATABASE_URL=… npm run check:prod`.** Solo lectura.
+**Después de desplegar: `npm run check:prod`.** Solo lectura.
 Reemplaza el "entrá al local y vendé algo a ver si anda": revisa migraciones
 sin aplicar, que los índices únicos parciales sigan existiendo, y las
 corrupciones que esos índices previenen (dos cajas abiertas, comprobantes o
 remitos con número repetido, dos comandas en una mesa). Los índices no los
 puede ver ningún test, porque el schema no los modela: la única forma de saber
 si siguen ahí es mirar la base.
+
+**Para probar contra producción está la tienda de prueba, no un local real.**
+`npm run seed:prueba OWNER_PASSWORD=…` la crea en la misma base, marcada con `stores.esPrueba`.
+Esa marca no es cosmética: `requireFiscalConfig` **rechaza emitir en ambiente
+producción** desde una tienda de prueba. El kill switch `ARCA_ALLOW_PRODUCCION`
+es del servidor entero y en producción está en `true`, así que sin esa guarda
+una prueba emitiría una factura real ante ARCA, y eso se deshace con una nota
+de crédito, no con un `delete`. Para vaciarla:
+`npm run reset:prueba STORE_SLUG=… CONFIRMAR=…`, que exige el slug dos veces y
+se niega a tocar una tienda sin la marca.
+
+**Los scripts aceptan `CLAVE=valor` como argumento**, no solo como variable de
+entorno: este repo se opera desde PowerShell, donde el prefijo `FOO=bar comando`
+de bash no existe y npm lo reenvía como argumento suelto. Ver
+`scripts/argv-env.ts`. Si agregás un script que pida variables, llamá a
+`leerArgsComoEnv()` o el primero que lo use desde PowerShell va a ver un "falta
+FOO" que no explica nada.
 
 **Las invariantes de plata van como propiedades, no como ejemplos.** Los
 `tests/propiedades-*.test.ts` generan las entradas con fast-check en vez de

@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import fs from "node:fs";
 import path from "node:path";
 import { sql } from "drizzle-orm";
+import { leerArgsComoEnv } from "./argv-env";
 
 /**
  * Revisión de una base real, SOLO LECTURA.
@@ -27,9 +28,9 @@ import { sql } from "drizzle-orm";
  *      directamente: dos cajas abiertas, dos comprobantes con el mismo número,
  *      dos remitos con el mismo número, dos comandas abiertas en una mesa.
  *
- * Uso:
- *   DATABASE_URL=... npm run check:prod
- *   DATABASE_URL=... DB_DRIVER=pg npm run check:prod    # Postgres común
+ * Uso (sirve igual en PowerShell y en bash):
+ *   npm run check:prod
+ *   npm run check:prod DATABASE_URL=... DB_DRIVER=pg    # Postgres común
  *
  * No escribe absolutamente nada. Sale con código 1 si encuentra algo, para
  * poder encadenarlo en un deploy.
@@ -38,6 +39,8 @@ import { sql } from "drizzle-orm";
 // Igual que los demás scripts: si hay .env.local se usa, si no lo que venga del
 // entorno. Nunca hardcodea una URL.
 config({ path: ".env.local" });
+// Y las variables pasadas como argumento, que es lo que uno tipea en PowerShell.
+leerArgsComoEnv();
 
 type Hallazgo = { nivel: "error" | "aviso"; titulo: string; detalle: string };
 
@@ -174,9 +177,17 @@ async function main() {
 
   // Cajas abiertas hace mucho: no es corrupción, es un turno que nadie cerró, y
   // se nota recién cuando el arqueo del mes no cierra.
+  //
+  // Las tiendas de prueba quedan afuera: dejar una caja de prueba abierta tres
+  // días es normal, y un aviso que suena siempre deja de leerse. Los chequeos
+  // de corrupción de arriba SÍ las incluyen — un número de comprobante
+  // duplicado es un bug del código, no un dato de prueba.
   const viejas = await db.execute<{ n: string | number }>(
-    sql`select count(*) as n from cash_sessions
-        where closed_at is null and opened_at < now() - interval '2 days'`
+    sql`select count(*) as n from cash_sessions cs
+        join stores s on s.id = cs.store_id
+        where cs.closed_at is null
+          and cs.opened_at < now() - interval '2 days'
+          and s.es_prueba = false`
   );
   const nViejas = Number(
     (((Array.isArray(viejas) ? viejas : (viejas as any).rows) as any[])[0]?.n) ?? 0
@@ -185,8 +196,20 @@ async function main() {
     aviso("Cajas abiertas hace más de dos días", `${nViejas}. Puede ser un turno que nadie cerró.`);
   }
 
+  // Que el operador sepa que hay tiendas de prueba mezcladas: los conteos de
+  // arriba las incluyen, y sin esta línea un duplicado "raro" manda a buscar
+  // en el local equivocado.
+  const dePrueba = await db.execute<{ slug: string }>(
+    sql`select slug from stores where es_prueba = true order by slug`
+  );
+  const slugsPrueba = ((Array.isArray(dePrueba) ? dePrueba : (dePrueba as any).rows) as { slug: string }[])
+    .map((r) => r.slug);
+
   // ---- salida ----
   const errores = hallazgos.filter((h) => h.nivel === "error");
+  if (slugsPrueba.length) {
+    console.log(`Tiendas de prueba en esta base: ${slugsPrueba.join(", ")}`);
+  }
   if (hallazgos.length === 0) {
     console.log("Todo en orden: migraciones aplicadas, índices presentes, sin datos duplicados.");
     process.exit(0);

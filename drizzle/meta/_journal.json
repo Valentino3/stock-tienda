@@ -218,6 +218,13 @@
       "when": 1788308051687,
       "tag": "0030_cuenta_corriente_caja",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1788351098956,
+      "tag": "0031_tienda_de_prueba",
+      "breakpoints": true
     }
   ]
 }

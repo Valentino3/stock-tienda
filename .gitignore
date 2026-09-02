@@ -57,3 +57,13 @@ next-env.d.ts
 # capturas del arnés visual (e2e/visual.spec.ts): son para comparar a ojo
 # entre fases, no para versionar. Pesan y cambian en cada corrida.
 /capturas/
+
+# Configuracion y estado local de los agentes. NO son del proyecto: son de la
+# maquina de cada uno, y .remember/ ademas guarda transcripciones de sesion.
+# Hoy los tapa el gitignore GLOBAL de esta maquina, que no viaja con el repo:
+# en otra maquina o con otra persona, un `git add .` los subiria.
+#
+# AGENTS.md y CLAUDE.md SI van versionados a proposito: son las reglas del
+# proyecto y sirven igual a una persona nueva que a un agente.
+.claude/
+.remember/
