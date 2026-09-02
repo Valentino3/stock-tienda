@@ -128,6 +128,7 @@ export function parseImportWorksheet(ws: ExcelJS.Worksheet): ParsedImportWorkshe
       language: text(row, "language") || null,
       priceCash: money(row, "priceCash"),
       priceWholesale: money(row, "priceWholesale"),
+      priceUsd: money(row, "priceUsd"),
       costUsd: money(row, "costUsd"),
       costArs: money(row, "costArs"),
       supplier: text(row, "supplier") ?? undefined,

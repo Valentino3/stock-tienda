@@ -90,6 +90,19 @@ describe("mapHeaderRow", () => {
     });
   });
 
+  it("distingue Precio USD (venta) de Costo USD (compra)", () => {
+    // El alias pelado "USD" sigue siendo del COSTO: el orden de ALIASES es lo
+    // que lo garantiza, y es lo que no hay que romper al agregar campos.
+    expect(mapHeaderRow(["USD"]).get("costUsd")).toBe(1);
+    expect(mapHeaderRow(["COSTO/USD"]).get("costUsd")).toBe(1);
+    expect(mapHeaderRow(["Precio USD"]).get("priceUsd")).toBe(1);
+    expect(mapHeaderRow(["PRECIO EN DOLARES"]).get("priceUsd")).toBe(1);
+
+    const mixto = mapHeaderRow(["PRODUCTO", "PRECIO VENTA", "PRECIO USD", "COSTO USD"]);
+    expect(mixto.get("priceUsd")).toBe(3);
+    expect(mixto.get("costUsd")).toBe(4);
+  });
+
   it("sin encabezados reconocibles no inventa un producto", () => {
     // El caller usa la ausencia de `product` para caer al orden posicional.
     expect(mapHeaderRow(["col1", "col2", "col3"]).has("product")).toBe(false);

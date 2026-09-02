@@ -53,6 +53,7 @@ const RUTAS_CARTAS = [
   "/comisiones",
   "/importar",
   "/facturacion",
+  "/precios",
 ];
 
 /**

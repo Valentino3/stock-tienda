@@ -51,6 +51,9 @@ export function ProductForm({
   const [name, setName] = useState(product?.name ?? "");
   const [category, setCategory] = useState(product?.category ?? "");
   const [basePrice, setBasePrice] = useState(product ? String(product.basePrice) : "");
+  const [basePriceUsd, setBasePriceUsd] = useState(
+    product?.basePriceUsd != null ? String(product.basePriceUsd) : ""
+  );
   const [lowStockThreshold, setLowStockThreshold] = useState(product ? String(product.lowStockThreshold) : "3");
   // Al crear, el default sale del rubro: un comercio cuenta unidades, un
   // restaurante no. Al editar, manda lo que ya tenía el producto.
@@ -84,6 +87,7 @@ export function ProductForm({
         name,
         category,
         basePrice: Number(basePrice),
+        basePriceUsd: basePriceUsd === "" ? null : Number(basePriceUsd),
         lowStockThreshold: Number(lowStockThreshold),
         tracksStock,
         isPromo,
@@ -175,17 +179,35 @@ export function ProductForm({
                   {categories.map((c) => <option key={c} value={c} />)}
                 </datalist>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="product-price">Precio base</Label>
-                <Input
-                  id="product-price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={basePrice}
-                  onChange={(e) => setBasePrice(e.target.value)}
-                  required
-                />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="product-price">Precio base</Label>
+                  <Input
+                    id="product-price"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={basePrice}
+                    onChange={(e) => setBasePrice(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="product-price-usd">Precio en USD (opcional)</Label>
+                  <Input
+                    id="product-price-usd"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={basePriceUsd}
+                    onChange={(e) => setBasePriceUsd(e.target.value)}
+                    placeholder="—"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Cargalo y el precio de arriba se recalcula solo cuando
+                    actualices la cotización en Precios.
+                  </p>
+                </div>
               </div>
               <label className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
                 <input

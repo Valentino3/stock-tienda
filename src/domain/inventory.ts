@@ -20,6 +20,10 @@ export type SortDir = "asc" | "desc";
 export const SORT_KEYS: SortKey[] = ["product", "stock", "price", "margin", "supplier"];
 export const STOCK_STATES: StockState[] = ["out", "low", "in"];
 
+/** Tiene o no precio de venta en dolares (propio o heredado del producto). */
+export type UsdState = "con" | "sin";
+export const USD_STATES: UsdState[] = ["con", "sin"];
+
 export type InventoryFilters = {
   q?: string;
   categories: string[];
@@ -28,6 +32,7 @@ export type InventoryFilters = {
   conditions: string[];
   languages: string[];
   stockState?: StockState;
+  usdState?: UsdState;
   priceMin?: number;
   priceMax?: number;
   costMin?: number;
@@ -65,6 +70,10 @@ export type InventoryRow = {
   ownPrice: number | null;
   /** true si la variante tiene precio propio; false si hereda el del producto. */
   priceOverridden: boolean;
+  /** Precio de venta en dolares ya resuelto: el propio o el del producto. */
+  priceUsd: number | null;
+  /** El propio de la variante, null si hereda. Lo necesita el form de edicion. */
+  ownPriceUsd: number | null;
   priceCash: number | null;
   priceWholesale: number | null;
   costArs: number | null;
@@ -85,6 +94,10 @@ export type InventoryRow = {
 // repetida en cuatro archivos de UI; acá queda una sola vez y del lado de la
 // base, para poder filtrar y ordenar por ella.
 const effectivePrice = sql<number>`coalesce(${productVariants.price}, ${products.basePrice})`;
+
+// Dolar efectivo, misma herencia que el precio. Nullable: la mayoria del
+// catalogo no se ata a la cotizacion.
+const effectiveUsd = sql<number | null>`coalesce(${productVariants.priceUsd}, ${products.basePriceUsd})`;
 
 // Margen % sobre el precio de venta. Solo tiene sentido con costo cargado y
 // precio positivo; en cualquier otro caso es null y la fila queda fuera de los
@@ -152,6 +165,11 @@ function buildWhere(db: any, storeId: number, f: InventoryFilters): SQL | undefi
     conditions.push(sql`${productVariants.stock} > ${products.lowStockThreshold}`);
   }
 
+  // El recalculo por dolar deja afuera lo que no tiene USD; este filtro es lo
+  // que convierte "quedaron 340 sin tocar" en poder hacer algo al respecto.
+  if (f.usdState === "con") conditions.push(sql`${effectiveUsd} is not null`);
+  if (f.usdState === "sin") conditions.push(sql`${effectiveUsd} is null`);
+
   if (f.priceMin !== undefined) conditions.push(gte(effectivePrice, f.priceMin));
   if (f.priceMax !== undefined) conditions.push(lte(effectivePrice, f.priceMax));
   if (f.costMin !== undefined) conditions.push(gte(productVariants.costArs, f.costMin));
@@ -210,6 +228,8 @@ export async function listInventory(
         isPromo: products.isPromo,
         price: effectivePrice.mapWith(Number),
         ownPrice: productVariants.price,
+        priceUsd: effectiveUsd,
+        ownPriceUsd: productVariants.priceUsd,
         priceCash: productVariants.priceCash,
         priceWholesale: productVariants.priceWholesale,
         costArs: productVariants.costArs,

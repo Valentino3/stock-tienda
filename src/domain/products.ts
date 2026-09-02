@@ -25,6 +25,8 @@ export type CrearProductoInput = {
   name: string;
   category?: string | null;
   basePrice: number;
+  /** Precio de venta en dolares. null = no se ata a la cotizacion. */
+  basePriceUsd?: number | null;
   lowStockThreshold: number;
   tracksStock: boolean;
   station?: string | null;
@@ -56,6 +58,7 @@ export async function crearProducto(
       name: input.name.trim(),
       category: input.category?.trim() || null,
       basePrice: input.basePrice,
+      basePriceUsd: input.basePriceUsd ?? null,
       lowStockThreshold: input.lowStockThreshold,
       tracksStock: input.tracksStock,
       station: input.station?.trim() || null,

@@ -197,6 +197,13 @@
       "when": 1787595709523,
       "tag": "0027_remitos",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788305659002,
+      "tag": "0028_precios_en_dolares",
+      "breakpoints": true
     }
   ]
 }

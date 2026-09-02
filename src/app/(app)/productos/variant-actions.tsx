@@ -34,6 +34,8 @@ export type ActionableVariant = {
   active: boolean;
   /** El precio propio, null si hereda el del producto. */
   ownPrice: number | null;
+  /** El precio en dolares propio, null si hereda el del producto. */
+  ownPriceUsd: number | null;
   priceCash: number | null;
   priceWholesale: number | null;
   costUsd: number | null;
@@ -113,6 +115,7 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
   const [name, setName] = useState(variant.name);
   const [sku, setSku] = useState(variant.sku ?? "");
   const [price, setPrice] = useState(str(variant.ownPrice));
+  const [priceUsd, setPriceUsd] = useState(str(variant.ownPriceUsd));
   const [priceCash, setPriceCash] = useState(str(variant.priceCash));
   const [priceWholesale, setPriceWholesale] = useState(str(variant.priceWholesale));
   const [costUsd, setCostUsd] = useState(str(variant.costUsd));
@@ -135,6 +138,7 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
         name,
         sku: sku || null,
         price: num(price),
+        priceUsd: num(priceUsd),
         priceCash: num(priceCash),
         priceWholesale: num(priceWholesale),
         costUsd: num(costUsd),
@@ -175,17 +179,30 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
             <Label htmlFor={id("sku")}>SKU</Label>
             <Input id={id("sku")} value={sku} onChange={(e) => setSku(e.target.value)} />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor={id("price")}>Precio venta (opcional)</Label>
-            <Input id={id("price")} type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} />
-            <p className="text-xs text-muted-foreground">
-              Vacío = usa el precio base del producto. Es el precio que cobra la caja.
-            </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor={id("price")}>Precio venta (opcional)</Label>
+              <Input id={id("price")} type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} />
+              <p className="text-xs text-muted-foreground">
+                Vacío = usa el precio base del producto. Es el precio que cobra la caja.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={id("price-usd")}>Precio venta USD (opcional)</Label>
+              <Input id={id("price-usd")} type="number" step="0.01" min="0" value={priceUsd} onChange={(e) => setPriceUsd(e.target.value)} />
+              <p className="text-xs text-muted-foreground">
+                Si lo cargás, actualizar la cotización en Precios recalcula el de
+                arriba. Vacío = usa el del producto.
+              </p>
+            </div>
           </div>
 
+          {/* Estas dos SE COBRAN desde la migración 0026: el cajero elige la
+              lista por línea en el carrito. Estaban agrupadas con los costos
+              bajo "no se usan al vender", que era cierto antes y ahora no. */}
           <fieldset className="space-y-3 rounded-lg border border-border p-3">
             <legend className="px-1 text-xs font-medium text-muted-foreground">
-              Referencia — no se usan al vender
+              Listas de precio — el cajero puede cobrar por éstas
             </legend>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -196,6 +213,17 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
                 <Label htmlFor={id("wholesale")}>Precio mayorista</Label>
                 <Input id={id("wholesale")} type="number" step="0.01" min="0" value={priceWholesale} onChange={(e) => setPriceWholesale(e.target.value)} />
               </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Vacías = esa lista no existe para este artículo y la caja la rechaza.
+            </p>
+          </fieldset>
+
+          <fieldset className="space-y-3 rounded-lg border border-border p-3">
+            <legend className="px-1 text-xs font-medium text-muted-foreground">
+              Costos y proveedor — no se cobran
+            </legend>
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor={id("cost-usd")}>Costo USD</Label>
                 <Input id={id("cost-usd")} type="number" step="0.01" min="0" value={costUsd} onChange={(e) => setCostUsd(e.target.value)} />

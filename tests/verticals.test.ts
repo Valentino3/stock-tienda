@@ -24,6 +24,7 @@ const NAV_RETAIL_DUENO = [
     label: "Administración",
     links: [
       { href: "/importar", label: "Importar" },
+      { href: "/precios", label: "Precios" },
       { href: "/reportes", label: "Reportes" },
       { href: "/comisiones", label: "Comisiones" },
       { href: "/facturacion", label: "Facturación" },
@@ -44,6 +45,11 @@ describe("retail: nada cambia para las tiendas que ya están en producción", ()
     expect(nav[0].label).toBe("Operación");
   });
 
+  it("el dueño ve Precios; el empleado no", () => {
+    const empleado = VERTICALS.retail.nav({ isOwner: false, openAvisos: 0 });
+    expect(empleado.flatMap((g) => g.links).some((l) => l.href === "/precios")).toBe(false);
+  });
+
   it("conserva los atributos de carta", () => {
     expect(VERTICALS.retail.atributosCatalogo).toEqual(["setName", "condition", "foil", "language"]);
   });
@@ -60,6 +66,11 @@ describe("gastronomía", () => {
 
   it("sus productos NO descuentan stock: un plato no tiene existencias", () => {
     expect(VERTICALS.gastronomia.defaultsProducto.tracksStock).toBe(false);
+  });
+
+  it("no ofrece Precios: un restaurante no cotiza su carta en dólares", () => {
+    const nav = VERTICALS.gastronomia.nav({ isOwner: true, openAvisos: 0 });
+    expect(nav.flatMap((g) => g.links).some((l) => l.href === "/precios")).toBe(false);
   });
 
   it("llama Menú a la sección de catálogo", () => {
