@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
-  cashMovements, cashSessions, clients, products, productVariants,
+  cashMovements, cashSessions, clientAccountMovements, clients, products, productVariants,
   sales, saleItems, storeFiscalConfig, stores, user,
 } from "@/db/schema";
 
@@ -72,13 +72,16 @@ export type CierreDeCaja = {
   porMedio: { method: string; count: number; total: number }[];
   movimientos: { kind: string; amount: number; description: string; createdAt: Date }[];
   totalSalidas: number;
+  /** Cobros de fiado y cargas de credito que entraron en efectivo a esta caja. */
+  cobrosCuenta: { clientName: string; type: string; method: string | null; amount: number; createdAt: Date }[];
+  efectivoCuenta: number;
   remitos: Remito[];
   /** Cuántas ventas del paquete están anuladas, y por cuánto. */
   anuladas: { count: number; total: number };
   /** Ventas que entraron después del cierre. Vacío es lo normal. */
   tardias: { count: number; total: number };
   /**
-   * `openingCash + efectivo − salidas`. Se recalcula acá para que la hoja se
+   * `openingCash + efectivo + cobros de cuenta − salidas`. Se recalcula acá para que la hoja se
    * auto-verifique contra el `expectedCash` que quedó guardado al cerrar: si
    * no coinciden, entraron ventas tardías.
    */
@@ -128,7 +131,28 @@ export async function getCashSessionClose(
     .where(eq(cashMovements.cashSessionId, sessionId))
     .orderBy(asc(cashMovements.createdAt));
 
+  // Cobros de cuenta corriente en efectivo imputados a esta caja. Van con el
+  // nombre del cliente porque la hoja tiene que poder explicar cada peso: sin
+  // el detalle, el esperado incluye plata que ninguna venta del turno justifica.
+  const cobrosCuenta = await db
+    .select({
+      clientName: clients.name,
+      type: clientAccountMovements.type,
+      method: clientAccountMovements.method,
+      amount: clientAccountMovements.amount,
+      createdAt: clientAccountMovements.createdAt,
+    })
+    .from(clientAccountMovements)
+    .innerJoin(clients, eq(clientAccountMovements.clientId, clients.id))
+    .where(and(
+      eq(clientAccountMovements.cashSessionId, sessionId),
+      eq(clientAccountMovements.method, "efectivo"),
+      inArray(clientAccountMovements.type, ["pago", "credito"]),
+    ))
+    .orderBy(asc(clientAccountMovements.createdAt));
+
   const totalSalidas = round2((movs as any[]).reduce((a, m) => a + m.amount, 0));
+  const efectivoCuenta = round2((cobrosCuenta as any[]).reduce((a, m) => a + m.amount, 0));
   const efectivo = porMedio.find((m) => m.method === "efectivo")?.total ?? 0;
 
   const anuladasList = remitos.filter((r) => r.voided);
@@ -141,6 +165,8 @@ export async function getCashSessionClose(
     porMedio,
     movimientos: movs as any[],
     totalSalidas,
+    cobrosCuenta: cobrosCuenta as any[],
+    efectivoCuenta,
     remitos,
     anuladas: {
       count: anuladasList.length,
@@ -150,7 +176,7 @@ export async function getCashSessionClose(
       count: tardiasList.length,
       total: round2(tardiasList.reduce((a, r) => a + r.total, 0)),
     },
-    efectivoEsperado: round2(session.openingCash + efectivo - totalSalidas),
+    efectivoEsperado: round2(session.openingCash + efectivo + efectivoCuenta - totalSalidas),
   };
 }
 

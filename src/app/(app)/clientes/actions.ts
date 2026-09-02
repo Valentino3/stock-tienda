@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
-import { createClient, recordPayment, updateDatosFiscales } from "@/domain/clients";
+import { createClient, recordAccountMovement, updateDatosFiscales } from "@/domain/clients";
 import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit, CONDICIONES_IVA_RECEPTOR } from "@/domain/fiscal-catalogs";
 
 // Tipo de retorno EXPLÍCITO: sin él, TypeScript infiere
@@ -102,26 +102,48 @@ export async function saveDatosFiscalesAction(input: {
   return { ok: true as const };
 }
 
-export async function recordClientPayment(input: {
+const ERRORES_CUENTA: Record<string, string> = {
+  INVALID_AMOUNT: "Monto inválido",
+  CLIENT_NOT_FOUND: "Cliente no encontrado",
+  NO_OPEN_SESSION:
+    "No hay caja abierta. Abrila para cobrar en efectivo, o registralo con otro medio si la plata no entró al cajón.",
+};
+
+/**
+ * Cobro de deuda o carga de crédito.
+ *
+ * `requireStore` y no owner: el cajero del mostrador del torneo tiene que
+ * poder. Además esto METE plata, no la saca — es menos riesgoso que un egreso,
+ * que sí es solo del dueño.
+ */
+export async function recordClientAccountMovement(input: {
   clientId: number;
+  kind: "pago" | "credito";
   amount: number;
   method?: string;
   note?: string;
-}) {
+}): Promise<{ ok: true; balance: number } | { error: string }> {
   const { id: userId, storeId } = await requireStore();
-  if (!(input.amount > 0)) return { error: "Monto inválido" };
+  if (!(input.amount > 0)) return { error: ERRORES_CUENTA.INVALID_AMOUNT };
+  let balance: number;
   try {
-    await recordPayment(db, {
+    ({ balance } = await recordAccountMovement(db, {
       storeId,
       clientId: input.clientId,
+      kind: input.kind,
       amount: input.amount,
       method: input.method || null,
       note: input.note,
       userId,
-    });
+    }));
   } catch (e) {
-    return { error: e instanceof Error && e.message === "CLIENT_NOT_FOUND" ? "Cliente no encontrado" : "No se pudo registrar el pago" };
+    const clave = e instanceof Error ? e.message : "";
+    return { error: ERRORES_CUENTA[clave] ?? "No se pudo registrar el movimiento" };
   }
   revalidatePath("/clientes");
-  return { ok: true as const };
+  revalidatePath(`/clientes/${input.clientId}`);
+  // El arqueo de la caja y el saldo del selector de venta quedan viejos si no.
+  revalidatePath("/caja");
+  revalidatePath("/vender");
+  return { ok: true as const, balance };
 }

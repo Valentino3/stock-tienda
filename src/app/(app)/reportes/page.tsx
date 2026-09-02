@@ -4,7 +4,10 @@ import { db } from "@/db";
 import { requireStoreOwner } from "@/lib/session";
 import { isoDate } from "@/lib/dates";
 import { money, moneyDiff, number } from "@/lib/format";
-import { getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport } from "@/domain/reports";
+import {
+  getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport,
+  getClientAccountReport,
+} from "@/domain/reports";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -58,12 +61,13 @@ export default async function ReportesPage({
   const fromValue = params.from ?? defaultFrom.toISOString().slice(0, 10);
   const toValue = params.to ?? defaultTo.toISOString().slice(0, 10);
 
-  const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements] = await Promise.all([
+  const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements, cuentaCorriente] = await Promise.all([
     getSalesReport(db, storeId, { from, to }),
     getTopProducts(db, storeId, { from, to, limit: 10, setName: params.set || undefined }),
     getLowStock(db, storeId, { setName: params.set || undefined }),
     getCashSessionHistory(db, storeId, { limit: 30 }),
     getCashMovementsReport(db, storeId, { from, to }),
+    getClientAccountReport(db, storeId, { from, to }),
   ]);
 
   const MOVEMENT_LABELS: Record<string, string> = { gasto: "Gastos", egreso: "Egresos" };
@@ -253,6 +257,42 @@ export default async function ReportesPage({
           </Panel>
         )}
       </Section>
+
+      {cuentaCorriente.length > 0 && (
+        <Section label="Cuenta corriente">
+          <Panel flush>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Concepto</TableHead>
+                  <TableHead>Medio</TableHead>
+                  <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cuentaCorriente.map((r: { type: string; method: string | null; count: number; total: number }) => (
+                  <TableRow key={`${r.type}-${r.method}`}>
+                    <TableCell>{r.type === "credito" ? "Crédito cargado" : "Cobro de deuda"}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {r.method ? (PAYMENT_LABELS[r.method] ?? r.method) : "—"}
+                    </TableCell>
+                    <TableCell className="figure text-right">{number(r.count)}</TableCell>
+                    <TableCell className="figure text-right font-medium text-success">
+                      {money(r.total)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Panel>
+          <p className="text-xs text-muted-foreground">
+            Plata que entró por cuenta corriente. NO se suma a las ventas: cuando
+            el cliente use su crédito va a generar una venta a cuenta, y contarlo
+            en los dos lados sería contarlo dos veces.
+          </p>
+        </Section>
+      )}
 
       <Section label="Top 10 productos">
         {topProducts.length === 0 ? (

@@ -1,8 +1,7 @@
 import Link from "next/link";
-import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { clients } from "@/db/schema";
 import { getOpenSession } from "@/domain/cash";
+import { listClientsWithBalance } from "@/domain/clients";
 import { getPricingConfig } from "@/domain/pricing-config";
 import { requireStore } from "@/lib/session";
 import { PageHeader } from "@/components/ui/page-header";
@@ -28,11 +27,14 @@ export default async function VenderPage() {
     );
   }
 
-  const clientList = await db
-    .select({ id: clients.id, name: clients.name })
-    .from(clients)
-    .where(and(eq(clients.storeId, storeId), eq(clients.active, true)))
-    .orderBy(clients.name);
+  // Con el saldo: el credito que un cliente dejo por adelantado es invisible
+  // desde el mostrador, y peor, solo se consume si el cajero elige el medio
+  // "Cuenta". Si elige efectivo, el cliente paga de nuevo algo que ya pago.
+  const clientList = (await listClientsWithBalance(db, storeId))
+    .filter((c: { active: boolean }) => c.active)
+    .map((c: { id: number; name: string; balance: number }) => ({
+      id: c.id, name: c.name, balance: c.balance,
+    }));
 
   // Cuándo se recalcularon los precios por última vez. El dispositivo lo compara
   // contra la fecha de su catálogo guardado: si el snapshot es anterior, sigue

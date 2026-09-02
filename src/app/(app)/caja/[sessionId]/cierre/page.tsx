@@ -125,6 +125,27 @@ export default async function CierrePage({ params }: { params: Promise<{ session
             </table>
           )}
 
+          {cierre.cobrosCuenta.length > 0 && (
+            <>
+              {/* Sin este detalle, el esperado de abajo incluye plata que
+                  ninguna venta del turno explica. */}
+              <h2 className="ledger-label mt-5">Cobros de cuenta corriente (efectivo)</h2>
+              <table className="mt-1 w-full text-sm">
+                <tbody>
+                  {cierre.cobrosCuenta.map((c, i) => (
+                    <tr key={i} className="border-b border-border">
+                      <td className="py-1">{c.clientName}</td>
+                      <td className="py-1 text-muted-foreground">
+                        {c.type === "credito" ? "carga de crédito" : "cobro de deuda"}
+                      </td>
+                      <td className="figure py-1 text-right">+{money(c.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+
           {cierre.movimientos.length > 0 && (
             <>
               <h2 className="ledger-label mt-5">Gastos y egresos</h2>
@@ -150,7 +171,9 @@ export default async function CierrePage({ params }: { params: Promise<{ session
                 <td className="py-1">
                   Efectivo esperado
                   <span className="block text-xs text-muted-foreground">
-                    inicial {money(s.openingCash)} + efectivo cobrado − salidas {money(cierre.totalSalidas)}
+                    inicial {money(s.openingCash)} + efectivo cobrado
+                    {cierre.efectivoCuenta > 0 && ` + cuenta corriente ${money(cierre.efectivoCuenta)}`}
+                    {" "}− salidas {money(cierre.totalSalidas)}
                   </span>
                 </td>
                 <td className="figure py-1 text-right font-medium">{money(cierre.efectivoEsperado)}</td>

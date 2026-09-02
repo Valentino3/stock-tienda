@@ -44,6 +44,9 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: str
   arqueo.addRow([]);
   arqueo.addRow(["Monto inicial", s.openingCash]);
   for (const m of c.porMedio) arqueo.addRow([METODO[m.method] ?? m.method, m.total, `${m.count} venta(s)`]);
+  if (c.efectivoCuenta > 0) {
+    arqueo.addRow(["Cobros de cuenta corriente (efectivo)", c.efectivoCuenta]);
+  }
   arqueo.addRow(["Salidas (gastos y egresos)", -c.totalSalidas]);
   arqueo.addRow([]);
   arqueo.addRow(["Efectivo esperado (recalculado)", c.efectivoEsperado]);
@@ -56,6 +59,19 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: str
   // estuvieran en la hoja imprimible, quien mira el Excel no las vería.
   arqueo.addRow(["Ventas anuladas (fuera de los totales)", c.anuladas.count, c.anuladas.total]);
   arqueo.addRow(["Ventas sincronizadas después del cierre", c.tardias.count, c.tardias.total]);
+
+  if (c.cobrosCuenta.length) {
+    const cuenta = wb.addWorksheet("Cuenta corriente");
+    cuenta.addRow(["Fecha", "Cliente", "Tipo", "Monto"]);
+    for (const m of c.cobrosCuenta) {
+      cuenta.addRow([
+        m.createdAt.toLocaleString("es-AR"),
+        m.clientName,
+        m.type === "credito" ? "Carga de crédito" : "Cobro de deuda",
+        m.amount,
+      ]);
+    }
+  }
 
   const ventas = wb.addWorksheet("Ventas");
   ventas.addRow(["N°", "Fecha", "Vendedor", "Medio", "Cliente", "Descuento", "Total", "Estado", "Motivo de anulación", "Tardía"]);

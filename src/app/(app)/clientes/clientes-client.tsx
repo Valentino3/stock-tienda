@@ -10,7 +10,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { money } from "@/lib/format";
-import { saveClient, recordClientPayment } from "./actions";
+import { saveClient, recordClientAccountMovement } from "./actions";
 
 
 export function NewClientForm() {
@@ -55,24 +55,50 @@ export function NewClientForm() {
   );
 }
 
-export function PaymentButton({ clientId, clientName, balance }: { clientId: number; clientName: string; balance: number }) {
+type Kind = "pago" | "credito";
+
+/**
+ * Cobrar una deuda o cargarle crédito por adelantado.
+ *
+ * ⚠️ El botón ya NO se deshabilita con saldo cero. Ese `disabled={balance <= 0}`
+ * era el único motivo por el que no se podía cargarle crédito a un cliente
+ * nuevo — el caso del torneo, que es justamente cuando el saldo es cero.
+ *
+ * El signo del saldo elige el modo por defecto, pero los dos siempre son
+ * alcanzables: el default es una sugerencia, no un candado. Descartado el
+ * "monto con signo": nadie tipea −20.000, y un signo mal puesto es plata mal
+ * registrada.
+ */
+export function MovimientoCuentaButton({
+  clientId, clientName, balance,
+}: { clientId: number; clientName: string; balance: number }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<Kind>(balance > 0 ? "pago" : "credito");
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("efectivo");
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
+  const monto = Number(amount) || 0;
+  const resultante = balance - monto;
+
   function submit(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const res = await recordClientPayment({ clientId, amount: Number(amount), method, note });
-      if ("error" in res && res.error) return setError(res.error);
+      const res = await recordClientAccountMovement({ clientId, kind, amount: monto, method, note });
+      if ("error" in res) return setError(res.error);
       setError("");
       setAmount(""); setNote("");
       setOpen(false);
-      toast.success("Pago registrado");
+      toast.success(
+        res.balance < 0
+          ? `Listo. ${clientName} queda con ${money(-res.balance)} a favor.`
+          : res.balance > 0
+            ? `Listo. ${clientName} queda debiendo ${money(res.balance)}.`
+            : `Listo. ${clientName} queda al día.`
+      );
       router.refresh();
     });
   }
@@ -80,30 +106,84 @@ export function PaymentButton({ clientId, clientName, balance }: { clientId: num
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" disabled={balance <= 0}>Registrar pago</Button>
+        <Button variant="outline" size="sm">Cuenta</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Pago de {clientName}</DialogTitle>
-          <DialogDescription>Saldo actual: {money(balance)}. El pago baja la deuda.</DialogDescription>
+          <DialogTitle>Cuenta de {clientName}</DialogTitle>
+          <DialogDescription>
+            {balance > 0
+              ? `Debe ${money(balance)}.`
+              : balance < 0
+                ? `Tiene ${money(-balance)} a favor.`
+                : "Está al día."}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
+          <div className="flex overflow-hidden rounded-lg border border-border">
+            {([
+              { value: "pago", label: "Cobro de deuda" },
+              { value: "credito", label: "Cargar crédito" },
+            ] as const).map((o) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => setKind(o.value)}
+                aria-pressed={kind === o.value}
+                className={
+                  kind === o.value
+                    ? "flex-1 bg-brand px-3 py-1.5 text-sm text-brand-foreground"
+                    : "flex-1 px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent"
+                }
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {kind === "pago"
+              ? "El cliente cancela lo que debe."
+              : "El cliente deja plata a cuenta para usar después: una inscripción, una seña."}
+          </p>
+
           <div className="space-y-2">
-            <Label htmlFor={`pay-amount-${clientId}`}>Monto</Label>
-            <Input id={`pay-amount-${clientId}`} type="number" step="0.01" min="0" required placeholder="0,00" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <Label htmlFor={`mov-amount-${clientId}`}>Monto</Label>
+            <Input id={`mov-amount-${clientId}`} type="number" step="0.01" min="0" required placeholder="0,00" value={amount} onChange={(e) => setAmount(e.target.value)} />
           </div>
           <div className="space-y-2">
-            <Label htmlFor={`pay-method-${clientId}`}>Medio</Label>
-            <Select id={`pay-method-${clientId}`} value={method} onChange={(e) => setMethod(e.target.value)}>
+            <Label htmlFor={`mov-method-${clientId}`}>Medio</Label>
+            <Select id={`mov-method-${clientId}`} value={method} onChange={(e) => setMethod(e.target.value)}>
               <option value="efectivo">Efectivo</option>
               <option value="transferencia">Transferencia</option>
               <option value="tarjeta">Tarjeta</option>
             </Select>
+            {method === "efectivo" && (
+              <p className="text-xs text-muted-foreground">
+                En efectivo suma al arqueo de la caja abierta, así que necesita
+                una caja abierta.
+              </p>
+            )}
           </div>
           <div className="space-y-2">
-            <Label htmlFor={`pay-note-${clientId}`}>Nota (opcional)</Label>
-            <Input id={`pay-note-${clientId}`} value={note} onChange={(e) => setNote(e.target.value)} />
+            <Label htmlFor={`mov-note-${clientId}`}>Nota (opcional)</Label>
+            <Input id={`mov-note-${clientId}`} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Inscripción torneo, seña…" />
           </div>
+
+          {/* Decir a dónde queda el saldo antes de confirmar: cargarle crédito a
+              alguien que debe se aplica primero contra esa deuda, y eso
+              sorprende si no se dice. */}
+          {monto > 0 && (
+            <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+              Después de esto:{" "}
+              <strong>
+                {resultante < 0
+                  ? `${money(-resultante)} a favor`
+                  : resultante > 0
+                    ? `debe ${money(resultante)}`
+                    : "al día"}
+              </strong>
+            </p>
+          )}
           {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>

@@ -30,10 +30,12 @@ type Props = {
   openedByName: string | null;
   totals: MethodTotal[];
   movements: MovementInfo[];
+  /** Cobros de fiado y cargas de credito en efectivo imputados a esta caja. */
+  cobrosCuenta: { id: number; clientName: string; type: string; amount: number }[];
   isOwner: boolean;
 };
 
-export function CajaClient({ session, openedByName, totals, movements, isOwner }: Props) {
+export function CajaClient({ session, openedByName, totals, movements, cobrosCuenta, isOwner }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { pendientes } = useEstadoOffline();
@@ -191,6 +193,7 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
 
   const sessionTotal = totals.reduce((acc, t) => acc + t.total, 0);
   const movementsTotal = movements.reduce((acc, m) => acc + m.amount, 0);
+  const cuentaTotal = cobrosCuenta.reduce((acc, m) => acc + m.amount, 0);
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-2">
@@ -234,6 +237,37 @@ export function CajaClient({ session, openedByName, totals, movements, isOwner }
             )}
           </CardContent>
         </Card>
+
+        {cobrosCuenta.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Cobros de cuenta corriente</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="divide-y divide-border text-sm">
+                {cobrosCuenta.map((m) => (
+                  <li key={m.id} className="flex items-baseline justify-between gap-3 py-2 first:pt-0">
+                    <span className="min-w-0">
+                      <span className="ledger-label mr-2">
+                        {m.type === "credito" ? "crédito" : "cobro"}
+                      </span>
+                      {m.clientName}
+                    </span>
+                    <span className="figure shrink-0 font-medium text-success">+{money(m.amount)}</span>
+                  </li>
+                ))}
+                <li className="flex items-baseline justify-between border-t-2 border-foreground/80 py-2 pb-0">
+                  <span className="ledger-label">Total en efectivo</span>
+                  <span className="figure font-semibold text-success">+{money(cuentaTotal)}</span>
+                </li>
+              </ul>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Es efectivo que entró al cajón sin ser una venta de este turno, y
+                por eso suma al esperado del cierre.
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>

@@ -32,7 +32,18 @@ type PaymentMethod = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
  * sincronizar. Hasta entonces se lo referencia por `uid`, y el `<Select>` usa
  * un valor con prefijo para no confundir los dos espacios de identidad.
  */
-type ClientOption = { id: number | null; uid?: string; name: string };
+type ClientOption = {
+  id: number | null;
+  uid?: string;
+  name: string;
+  /**
+   * Positivo = debe; negativo = tiene a favor. `undefined` para los clientes
+   * que vinieron del snapshot offline: ahi el saldo NO viaja a proposito. Una
+   * foto vieja de plata invita a entregar mercaderia dos veces, y eso es peor
+   * que no mostrar el dato.
+   */
+  balance?: number;
+};
 
 const valorCliente = (c: ClientOption) => (c.id != null ? `id:${c.id}` : `uid:${c.uid}`);
 type DiscountKind = "amount" | "percent";
@@ -429,6 +440,7 @@ export function SaleForm({
 
   // Los clientes creados sin conexión se pueden elegir enseguida, antes de
   // existir en el servidor. Se mezclan con los que vinieron del snapshot.
+  const clienteElegido = clients.find((c) => valorCliente(c) === clientId);
   const clientesDisponibles: ClientOption[] = [
     ...clients,
     ...clientesNuevos.map((c) => ({ id: null, uid: c.uid, name: `${c.name} (sin sincronizar)` })),
@@ -1026,6 +1038,7 @@ export function SaleForm({
               ))}
             </div>
             {paymentMethod === "cuenta" && (
+              <>
               <div className="flex gap-2">
                 <Select
                   value={clientId}
@@ -1034,13 +1047,32 @@ export function SaleForm({
                 >
                   <option value="">Elegí cliente…</option>
                   {clientesDisponibles.map((c) => (
-                    <option key={valorCliente(c)} value={valorCliente(c)}>{c.name}</option>
+                    <option key={valorCliente(c)} value={valorCliente(c)}>
+                      {c.balance != null && c.balance < 0
+                        ? `${c.name} - a favor ${money(-c.balance)}`
+                        : c.name}
+                    </option>
                   ))}
                 </Select>
                 <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => setNewClientOpen(true)}>
                   + Nuevo
                 </Button>
               </div>
+              {/* Convierte un mecanismo invisible en uno legible: el credito se
+                  consume solo, pero hasta ahora nadie lo veia pasar. */}
+              {clienteElegido?.balance != null && clienteElegido.balance < 0 && (
+                <p className="text-xs text-muted-foreground">
+                  Le quedan <strong>{money(-clienteElegido.balance)}</strong> a favor.
+                  {total > 0 && (
+                    clienteElegido.balance + total < 0
+                      ? ` Esta venta lo deja con ${money(-(clienteElegido.balance + total))} a favor.`
+                      : clienteElegido.balance + total > 0
+                        ? ` Esta venta lo deja debiendo ${money(clienteElegido.balance + total)}.`
+                        : " Esta venta lo deja al dia."
+                  )}
+                </p>
+              )}
+              </>
             )}
           </div>
 
