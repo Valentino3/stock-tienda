@@ -15,10 +15,11 @@ import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
 import { money, number } from "@/lib/format";
 import type { PriceList } from "@/domain/sales";
-import { buscarEnCatalogo } from "@/lib/offline/busqueda";
+import { buscarEnCatalogo, MIN_CARACTERES } from "@/lib/offline/busqueda";
+import { esErrorDeRed } from "@/lib/errores-red";
 import {
   descargarSnapshot, encolar, altaClienteOffline, altaProductoOffline, restaurarRespaldo,
-  useEstadoOffline,
+  refrescarConexion, useEstadoOffline,
 } from "@/lib/offline/estado";
 import type { VentaEnCola } from "@/lib/offline/db";
 import { searchVariants, submitSale, createClientForSale } from "./actions";
@@ -38,7 +39,12 @@ type DiscountKind = "amount" | "percent";
 type CartItem = {
   variantId: number;
   productName: string;
-  variantName: string;
+  /**
+   * Nullable como en `VarianteCatalogo`. La columna es NOT NULL con default
+   * `''` (la variante default de un producto sin variantes reales), pero el
+   * tipo del catálogo lo declara opcional y `label` ya filtra los vacíos.
+   */
+  variantName: string | null;
   setName: string | null;
   condition: string | null;
   foil: boolean;
@@ -136,7 +142,7 @@ function resolveDiscount(kind: DiscountKind, value: number, base: number): numbe
 
 function label(item: {
   productName: string;
-  variantName: string;
+  variantName: string | null;
   setName?: string | null;
   condition?: string | null;
   foil?: boolean;
@@ -202,6 +208,12 @@ export function SaleForm({
   // catálogo guardado se busca ahí. Sin catálogo guardado no hay nada que
   // hacer, y la UI lo dice en vez de devolver cero resultados en silencio.
   const offline = verificado && !conectado;
+  /**
+   * 12 h: un snapshot de esta manana sigue siendo utilizable en una feria,
+   * uno de anteayer casi seguro tiene precios y stock que ya no existen.
+   */
+  const catalogoVencido =
+    !!meta && Date.now() - new Date(meta.generadoEn).getTime() > 12 * 60 * 60 * 1000;
   const [ticket, setTicket] = useState<VentaEnCola | null>(null);
   const [bajando, setBajando] = useState(false);
   const archivoRef = useRef<HTMLInputElement>(null);
@@ -216,6 +228,21 @@ export function SaleForm({
   const [nuevoProdPending, startNuevoProd] = useTransition();
   const [term, setTerm] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  /**
+   * Avisos del buscador y del carrito: "Sin stock", fallo de la busqueda.
+   * Separado de `error`, que es el del cobro y se dibuja en la otra columna
+   * — un cartel a dos columnas de distancia del clic que lo produjo se lee
+   * como "no pasó nada".
+   */
+  const [avisoBusqueda, setAvisoBusqueda] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  /**
+   * El termino cuya busqueda YA volvio. Se usa para el vacio en vez de `term`:
+   * mientras corre el debounce, `term` ya cambio pero todavia no se busco, y
+   * decir "Sin resultados" ahí sería mentir por 300 ms en cada tecla.
+   */
+  const [terminoBuscado, setTerminoBuscado] = useState("");
+  const [reintentandoConexion, setReintentandoConexion] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
   const [clients, setClients] = useState<ClientOption[]>(initialClients);
@@ -332,20 +359,61 @@ export function SaleForm({
   }
 
   useEffect(() => {
+    // Guarda de carrera: sin esto la respuesta de "sob" puede llegar después
+    // de la de "sobre" y pisar sus resultados. El cleanup solo cancelaba el
+    // timeout, no la petición ya en vuelo.
+    let vigente = true;
     const handle = setTimeout(() => {
-      if (term.trim().length < 2) {
+      const t = term.trim();
+      // Los dos caminos que no viajan al servidor apagan `buscando` a mano: si
+      // una peticion quedo en vuelo y el dispositivo paso a offline, su
+      // `.finally` ya no corre (quedo no vigente) y el cartel "Buscando..."
+      // se quedaria prendido para siempre.
+      if (t.length < MIN_CARACTERES) {
         setResults([]);
+        setTerminoBuscado("");
+        setAvisoBusqueda("");
+        setBuscando(false);
         return;
       }
       if (offline) {
         setResults(catalogo ? buscarEnCatalogo(catalogo, term) : []);
+        setTerminoBuscado(t);
+        setAvisoBusqueda("");
+        setBuscando(false);
         return;
       }
+      setBuscando(true);
       // El debounce de 300 ms existe por el viaje al servidor; offline la
       // búsqueda es en memoria y responde igual de rápido igualmente.
-      searchVariants(term).then(setResults).catch(() => setResults([]));
+      searchVariants(term)
+        .then((r) => {
+          if (!vigente) return;
+          setResults(r);
+          setTerminoBuscado(t);
+          setAvisoBusqueda("");
+        })
+        .catch((err) => {
+          // Antes esto era `.catch(() => setResults([]))`: un fallo del
+          // servidor se veía exactamente igual que "no hay coincidencias", o
+          // sea un espacio en blanco. Es lo que hacía que un problema real
+          // pareciera un producto que no existe.
+          if (!vigente) return;
+          setResults([]);
+          setAvisoBusqueda(
+            esErrorDeRed(err)
+              ? "Sin conexión con el servidor. Reintentá, o prepará el catálogo para vender sin conexión."
+              : "No se pudo buscar. Reintentá en unos segundos."
+          );
+        })
+        .finally(() => {
+          if (vigente) setBuscando(false);
+        });
     }, 300);
-    return () => clearTimeout(handle);
+    return () => {
+      vigente = false;
+      clearTimeout(handle);
+    };
   }, [term, offline, catalogo]);
 
   // Los clientes creados sin conexión se pueden elegir enseguida, antes de
@@ -438,7 +506,7 @@ export function SaleForm({
     // versión anterior no trae el campo, y el default es que SÍ lleva stock.
     const llevaStock = r.tracksStock !== false;
     if (llevaStock && r.stock <= 0) {
-      setError(`Sin stock: ${label(r)}`);
+      setAvisoBusqueda(`Sin stock: ${label(r)}. Cargá stock desde Productos.`);
       return;
     }
     setError("");
@@ -679,9 +747,31 @@ export function SaleForm({
             </Notice>
           )}
           {offline && catalogo && (
-            <Notice tone="warn">
-              Buscando en el catálogo guardado en este dispositivo. El stock que se muestra
-              es del último momento con conexión.
+            // La antigüedad va acá adentro y no solo en la esquina de arriba:
+            // es lo que explica por qué un producto cargado hace un rato no
+            // aparece. El snapshot solo se refresca a mano.
+            <Notice tone={catalogoVencido ? "danger" : "warn"}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  Buscando en el catálogo guardado en este dispositivo
+                  {meta && ` el ${new Date(meta.generadoEn).toLocaleString("es-AR")}`}.
+                  El stock y los precios son del último momento con conexión, y lo
+                  que hayas cargado después no está acá.
+                </span>
+                {/* Sin esto, un falso negativo de la sonda (que marca offline
+                    si /api/health tarda más de 2,5 s) deja al vendedor
+                    buscando en el catálogo viejo hasta el siguiente ciclo de
+                    30 segundos, sin ninguna forma de apurarlo. */}
+                <Button
+                  type="button" variant="outline" size="sm" disabled={reintentandoConexion}
+                  onClick={async () => {
+                    setReintentandoConexion(true);
+                    try { await refrescarConexion(true); } finally { setReintentandoConexion(false); }
+                  }}
+                >
+                  {reintentandoConexion ? "Probando…" : "Reintentar conexión"}
+                </Button>
+              </div>
             </Notice>
           )}
           {/* Dar de alta un producto es del dueño, igual que en Productos. Si el
@@ -739,6 +829,20 @@ export function SaleForm({
               </ul>
             )}
           </div>
+
+          {/* Los tres estados que antes eran el mismo espacio en blanco: se
+              está buscando, falló la búsqueda, o no hay coincidencias. Y el
+              aviso del carrito ("Sin stock") vive acá, al lado del clic que lo
+              produce, en vez de en la columna de Cobro. */}
+          {avisoBusqueda ? (
+            <Notice tone="danger" role="alert">{avisoBusqueda}</Notice>
+          ) : buscando ? (
+            <p className="text-sm text-muted-foreground">Buscando…</p>
+          ) : terminoBuscado && results.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Sin resultados para «{terminoBuscado}».
+            </p>
+          ) : null}
 
           {cart.length === 0 ? (
             <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border py-12 text-center">
