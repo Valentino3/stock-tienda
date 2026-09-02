@@ -133,7 +133,12 @@ export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transfer
 //   anulacion — se anuló la venta que originó un cargo: lo revierte. Es un
 //               movimiento propio y no un pago, para que el historial muestre
 //               por qué bajó la deuda sin inventar plata que nunca entró.
-export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion"]);
+//   credito   — el cliente deja plata a cuenta por adelantado (la inscripción a
+//               un torneo, una seña). Resta del saldo igual que un pago, pero
+//               NO cancela una deuda: por eso es un tipo propio. Con `pago`,
+//               "Total pagado" diría que canceló algo que nunca debió, y no
+//               habría forma de reportar cuánto se cobró por adelantado.
+export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion", "credito"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
 // Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
@@ -727,10 +732,27 @@ export const clientAccountMovements = pgTable("client_account_movements", {
   amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(), // positivo
   saleId: integer("sale_id").references(() => sales.id),
   method: paymentMethodEnum("method"), // medio del pago (null para cargos)
+  /**
+   * Caja en la que entró este efectivo.
+   *
+   * Se completa SOLO cuando el movimiento metió billetes en el cajón: cobros y
+   * créditos en efectivo. NULL en todo lo demás —cargos de venta, anulaciones,
+   * y cobros por transferencia o tarjeta— y NULL en todo lo histórico, que es
+   * lo que hace que ninguna caja ya cerrada cambie de número al recalcularse.
+   *
+   * Es la columna que hace que el efectivo de una cuenta corriente sume al
+   * arqueo. Sin ella, cobrarle $5.000 de fiado a un cliente producía una
+   * diferencia de +5.000 al cerrar: la plata estaba en el cajón y el esperado
+   * no la contemplaba.
+   */
+  cashSessionId: integer("cash_session_id").references(() => cashSessions.id),
   note: text("note"),
   createdBy: text("created_by").notNull().references(() => user.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (t) => [index("client_movements_client_idx").on(t.clientId)]);
+}, (t) => [
+  index("client_movements_client_idx").on(t.clientId),
+  index("client_movements_cash_session_idx").on(t.cashSessionId),
+]);
 
 // Avisos internos de la tienda (ej: stock bajo que el empleado reporta al dueño).
 export const notifications = pgTable("notifications", {

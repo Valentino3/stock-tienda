@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
-import { money, number } from "@/lib/format";
+import { money, moneyDiff, number } from "@/lib/format";
 import { getClient, getClientLedger, getClientSummary, type LedgerEntry } from "@/domain/clients";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { Section } from "@/components/ui/section";
 import { StatTile } from "@/components/ui/stat-tile";
-import { PaymentButton } from "../clientes-client";
+import { MovimientoCuentaButton } from "../clientes-client";
 import { DatosFiscalesCard } from "./datos-fiscales-card";
 
 const METHOD_LABELS: Record<string, string> = {
@@ -70,20 +70,25 @@ export default async function ClienteDetallePage({
             <Button asChild variant="outline" size="sm">
               <Link href="/clientes">Volver</Link>
             </Button>
-            <PaymentButton clientId={client.id} clientName={client.name} balance={summary.balance} />
+            <MovimientoCuentaButton clientId={client.id} clientName={client.name} balance={summary.balance} />
           </>
         }
       />
 
       <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Valor absoluto y el signo en el hint: un titular grande entre
+            paréntesis se lee mal, y "Debe / A favor" es más claro que un menos. */}
         <StatTile
           label="Saldo actual"
-          value={money(summary.balance)}
-          tone={summary.balance > 0 ? "destructive" : "success"}
-          hint={summary.balance > 0 ? "Debe" : "Al día"}
+          value={money(Math.abs(summary.balance))}
+          tone={summary.balance > 0 ? "destructive" : summary.balance < 0 ? "brand" : "success"}
+          hint={summary.balance > 0 ? "Debe" : summary.balance < 0 ? "A favor" : "Al día"}
         />
         <StatTile label="Total comprado" value={money(summary.charged)} />
         <StatTile label="Total pagado" value={money(summary.paid)} />
+        {summary.credited > 0 && (
+          <StatTile label="Crédito cargado" value={money(summary.credited)} tone="brand" />
+        )}
         <StatTile
           label="Compras a cuenta"
           value={number(summary.purchases)}
@@ -107,7 +112,9 @@ export default async function ClienteDetallePage({
       <Section label="Movimientos">
         {ledger.length === 0 ? (
           <p className="rounded-xl border border-dashed border-border bg-card/50 px-4 py-10 text-center text-sm text-muted-foreground">
-            Este cliente todavía no tiene compras a cuenta ni pagos registrados.
+            Todavía no tiene movimientos. Podés cargarle un crédito a cuenta —una
+            inscripción cobrada por adelantado, una seña— o va a aparecer acá su
+            primera compra a cuenta.
           </p>
         ) : (
           <div className="space-y-3">
@@ -138,6 +145,7 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
           <Badge variant="destructive">{sale ? `Venta #${sale.id}` : "Cargo"}</Badge>
         )}
         {entry.type === "pago" && <Badge variant="success">Pago</Badge>}
+        {entry.type === "credito" && <Badge variant="brand">Carga de crédito</Badge>}
         {entry.type === "anulacion" && (
           <Badge variant="outline">{sale ? `Anulación venta #${sale.id}` : "Anulación"}</Badge>
         )}
@@ -157,13 +165,19 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
 
         <span
           className={`figure ml-auto font-medium ${
-            isCharge ? "text-destructive" : entry.type === "pago" ? "text-success" : "text-muted-foreground"
+            isCharge
+              ? "text-destructive"
+              : entry.type === "pago"
+                ? "text-success"
+                : entry.type === "credito"
+                  ? "text-brand"
+                  : "text-muted-foreground"
           }`}
         >
           {isCharge ? "+" : "−"}{money(entry.amount)}
         </span>
         <span className="figure w-32 text-right text-sm text-muted-foreground">
-          Saldo {money(entry.balanceAfter)}
+          Saldo {moneyDiff(entry.balanceAfter)}
         </span>
       </div>
 

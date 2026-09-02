@@ -1,5 +1,8 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import { cashMovements, cashSessions, sales, type CashMovement, type CashSession } from "@/db/schema";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import {
+  cashMovements, cashSessions, clientAccountMovements, sales,
+  type CashMovement, type CashSession,
+} from "@/db/schema";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -90,8 +93,25 @@ export async function closeCashSession(
       .from(cashMovements)
       .where(eq(cashMovements.cashSessionId, input.sessionId));
 
+    // Cobros de cuenta corriente en efectivo: plata que entró al cajón sin ser
+    // una venta de este turno —un cliente que salda su fiado, una inscripción
+    // cobrada por adelantado— y que por eso el `sales` de arriba no ve.
+    //
+    // El filtro por `method` es redundante con la invariante de la columna
+    // (`cashSessionId` solo se completa si el movimiento fue en efectivo). Va
+    // igual, como segunda guarda: es el mismo criterio de cinturón-y-tirantes
+    // que usa openCashSession con su pre-check más el índice único.
+    const [{ inflow }] = await tx
+      .select({ inflow: sql<number>`coalesce(sum(${clientAccountMovements.amount}), 0)`.mapWith(Number) })
+      .from(clientAccountMovements)
+      .where(and(
+        eq(clientAccountMovements.cashSessionId, input.sessionId),
+        eq(clientAccountMovements.method, "efectivo"),
+        inArray(clientAccountMovements.type, ["pago", "credito"]),
+      ));
+
     const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
-    const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0) - out);
+    const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0) + inflow - out);
 
     const [closed] = await tx.update(cashSessions)
       .set({

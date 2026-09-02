@@ -1,0 +1,3 @@
+ALTER TABLE "client_account_movements" ADD COLUMN "cash_session_id" integer;--> statement-breakpoint
+ALTER TABLE "client_account_movements" ADD CONSTRAINT "client_account_movements_cash_session_id_cash_sessions_id_fk" FOREIGN KEY ("cash_session_id") REFERENCES "public"."cash_sessions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "client_movements_cash_session_idx" ON "client_account_movements" USING btree ("cash_session_id");

@@ -1,0 +1,1 @@
+ALTER TYPE "public"."client_movement_type" ADD VALUE 'credito';

@@ -204,6 +204,20 @@
       "when": 1788305659002,
       "tag": "0028_precios_en_dolares",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788308022848,
+      "tag": "0029_credito_cuenta_corriente",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1788308051687,
+      "tag": "0030_cuenta_corriente_caja",
+      "breakpoints": true
     }
   ]
 }

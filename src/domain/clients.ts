@@ -1,13 +1,16 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  clients, clientAccountMovements, sales, saleItems, productVariants, products, user,
+  clients, clientAccountMovements, cashSessions, sales, saleItems, productVariants, products, user,
   type Client,
 } from "@/db/schema";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-// Saldo = Σcargo − Σpago − Σanulación (positivo = el cliente debe).
-// `cargo` suma; `pago` y `anulacion` restan, y por eso caen las dos en el else.
+// Saldo = Σcargo − Σpago − Σanulación − Σcrédito.
+//   positivo = el cliente debe;  negativo = tiene saldo A FAVOR.
+// `cargo` suma; los otros tres restan, y por eso caen todos en el else. Un
+// crédito cargado por adelantado entra acá sin código extra, y una venta a
+// cuenta posterior lo consume sola.
 const balanceExpr = sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else -${clientAccountMovements.amount} end), 0)`;
 
 /** Datos fiscales del cliente. Todos opcionales: ver el comentario en schema.ts. */
@@ -83,12 +86,6 @@ export async function getClient(db: any, storeId: number, id: number): Promise<C
   return row ?? null;
 }
 
-export async function getClientMovements(db: any, storeId: number, clientId: number) {
-  return db.select().from(clientAccountMovements)
-    .where(and(eq(clientAccountMovements.storeId, storeId), eq(clientAccountMovements.clientId, clientId)))
-    .orderBy(desc(clientAccountMovements.createdAt));
-}
-
 export async function getClientBalance(db: any, storeId: number, clientId: number): Promise<number> {
   const [row] = await db
     .select({ balance: balanceExpr.mapWith(Number) })
@@ -114,7 +111,7 @@ export type LedgerSale = {
   items: LedgerItem[];
 };
 
-export type MovementType = "cargo" | "pago" | "anulacion";
+export type MovementType = "cargo" | "pago" | "anulacion" | "credito";
 
 export type LedgerEntry = {
   id: number;
@@ -276,6 +273,9 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
       // Las anulaciones se cuentan aparte: si se sumaran a `paid` el historial
       // mostraría plata que nunca entró, y si se ignoraran el saldo no cerraría.
       voided: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'anulacion' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
+      // Plata que el cliente dejo por adelantado. Va aparte de `paid` porque no
+      // cancela ninguna deuda: sumarla ahi diria que pago algo que nunca debio.
+      credited: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'credito' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
       purchases: sql<number>`count(*) filter (where ${clientAccountMovements.type} = 'cargo') - count(*) filter (where ${clientAccountMovements.type} = 'anulacion')`.mapWith(Number),
       // Un max() agregado no pasa por el mapeo de columna del driver: Neon
       // devuelve Date y PGlite string. Se normaliza abajo.
@@ -290,6 +290,7 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
   const charged = round2(row?.charged ?? 0);
   const paid = round2(row?.paid ?? 0);
   const voided = round2(row?.voided ?? 0);
+  const credited = round2(row?.credited ?? 0);
   const last = row?.lastMovementAt ?? null;
   return {
     /** Comprado neto: lo cargado menos lo que se anuló. */
@@ -297,27 +298,96 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
     paid,
     voided,
     purchases: row?.purchases ?? 0,
-    balance: round2(charged - paid - voided),
+    credited,
+    // ⚠️ Tiene que dar EXACTAMENTE lo mismo que `balanceExpr`. Son dos cuentas
+    // distintas —una en SQL, otra en JS— y si divergen, /clientes y
+    // /clientes/[id] muestran dos saldos distintos para el mismo cliente.
+    balance: round2(charged - paid - voided - credited),
     lastMovementAt: last ? new Date(last) : null,
   };
 }
 
-// Registra un pago del cliente (baja la deuda). El medio (efectivo/etc.) es
-// informativo — NO entra a la caja en este alcance (ver plan, follow-up).
+/** Cobro de una deuda, o carga de crédito por adelantado. */
+export type ClientAccountKind = "pago" | "credito";
+
+/**
+ * 🔴 CAMINO DE PLATA. Registra un movimiento de cuenta corriente que resta del
+ * saldo, y —si entró en efectivo— lo imputa a la caja abierta.
+ *
+ * Antes el medio de pago era informativo y NADA de esto entraba al arqueo. Eso
+ * ya era un bug: cobrarle 5.000 de fiado a un cliente en efectivo dejaba el
+ * cajón con plata que el esperado no explicaba, y el cierre marcaba una
+ * diferencia positiva que en realidad estaba bien.
+ *
+ * Reglas, y la asimetría es a propósito:
+ *   - En EFECTIVO exige caja abierta y se ata a ella por FK. Es plata física.
+ *   - Por transferencia o tarjeta NO la exige: una transferencia puede entrar a
+ *     las once de la noche con la caja cerrada, y rechazarla sería inventar una
+ *     restricción que el negocio no tiene.
+ *
+ * El lock sobre la sesión no es decorativo: sin él, el cajero cobra mientras
+ * otro dispositivo cierra la caja, el movimiento aterriza en una sesión ya
+ * cerrada y el `expectedCash` congelado no lo contempla. La plata queda en el
+ * cajón y el descuadre aparece recién en la hoja impresa.
+ */
+export async function recordAccountMovement(
+  db: any,
+  input: {
+    storeId: number; clientId: number; kind: ClientAccountKind; amount: number;
+    method?: string | null; note?: string | null; userId: string;
+  }
+): Promise<{ movementId: number; balance: number }> {
+  if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
+  // El cliente se valida ANTES que la caja: sin este orden, cobrarle a un
+  // cliente de otra tienda sin caja abierta devolvería NO_OPEN_SESSION, que es
+  // el menos informativo de los dos errores.
+  const client = await getClient(db, input.storeId, input.clientId);
+  if (!client) throw new Error("CLIENT_NOT_FOUND");
+
+  const enEfectivo = input.method === "efectivo";
+
+  return db.transaction(async (tx: any) => {
+    let cashSessionId: number | null = null;
+    if (enEfectivo) {
+      const [abierta] = await tx.select().from(cashSessions)
+        .where(and(eq(cashSessions.storeId, input.storeId), isNull(cashSessions.closedAt)))
+        .limit(1)
+        .for("update");
+      if (!abierta) throw new Error("NO_OPEN_SESSION");
+      cashSessionId = abierta.id;
+    }
+
+    const [mov] = await tx.insert(clientAccountMovements).values({
+      storeId: input.storeId,
+      clientId: input.clientId,
+      type: input.kind,
+      amount: round2(input.amount),
+      method: (input.method as any) ?? null,
+      cashSessionId,
+      note: input.note?.trim() || null,
+      createdBy: input.userId,
+    }).returning({ id: clientAccountMovements.id });
+
+    // El saldo resultante viaja de vuelta para el aviso honesto ("le quedan
+    // 15.000 a favor") sin una consulta extra desde la UI.
+    const [row] = await tx
+      .select({ balance: balanceExpr.mapWith(Number) })
+      .from(clientAccountMovements)
+      .where(and(
+        eq(clientAccountMovements.storeId, input.storeId),
+        eq(clientAccountMovements.clientId, input.clientId),
+      ));
+
+    return { movementId: mov.id, balance: round2(row?.balance ?? 0) };
+  });
+}
+
+/**
+ * Cobro de deuda. Envoltorio, para no tocar los llamados que ya existen.
+ */
 export async function recordPayment(
   db: any,
   input: { storeId: number; clientId: number; amount: number; method?: string | null; note?: string | null; userId: string }
 ): Promise<void> {
-  if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
-  const client = await getClient(db, input.storeId, input.clientId);
-  if (!client) throw new Error("CLIENT_NOT_FOUND");
-  await db.insert(clientAccountMovements).values({
-    storeId: input.storeId,
-    clientId: input.clientId,
-    type: "pago",
-    amount: round2(input.amount),
-    method: (input.method as any) ?? null,
-    note: input.note?.trim() || null,
-    createdBy: input.userId,
-  });
+  await recordAccountMovement(db, { ...input, kind: "pago" });
 }

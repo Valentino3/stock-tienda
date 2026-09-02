@@ -1,5 +1,8 @@
-import { and, between, desc, eq, ilike, isNotNull, sql } from "drizzle-orm";
-import { cashMovements, cashSessions, products, productVariants, sales, saleItems, user } from "@/db/schema";
+import { and, between, desc, eq, ilike, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+  cashMovements, cashSessions, clientAccountMovements, products, productVariants,
+  sales, saleItems, user,
+} from "@/db/schema";
 
 // Todos los reportes están scopeados por tienda (storeId).
 
@@ -163,6 +166,34 @@ export async function getCashMovementsReport(db: any, storeId: number, range: { 
     .innerJoin(cashSessions, eq(cashMovements.cashSessionId, cashSessions.id))
     .where(and(eq(cashSessions.storeId, storeId), between(cashMovements.createdAt, range.from, range.to)))
     .groupBy(cashMovements.kind);
+}
+
+/**
+ * Cobros de cuenta corriente del período, por tipo y medio.
+ *
+ * ⚠️ Va SEPARADO de las ventas y no se suma a ellas. Cuando el cliente consuma
+ * su crédito va a generar una venta a cuenta, y contarlo en los dos lados sería
+ * doble conteo. Tampoco entra a las comisiones: un crédito no es una venta, y
+ * cuando se consuma, la venta que lo consuma comisiona como corresponde.
+ *
+ * Existe igual porque si no, el dueño ve efectivo en el cajón que /reportes no
+ * explica en ningún lado.
+ */
+export async function getClientAccountReport(db: any, storeId: number, range: { from: Date; to: Date }) {
+  return db
+    .select({
+      type: clientAccountMovements.type,
+      method: clientAccountMovements.method,
+      count: sql<number>`count(*)`.mapWith(Number),
+      total: sql<number>`coalesce(sum(${clientAccountMovements.amount}), 0)`.mapWith(Number),
+    })
+    .from(clientAccountMovements)
+    .where(and(
+      eq(clientAccountMovements.storeId, storeId),
+      inArray(clientAccountMovements.type, ["pago", "credito"]),
+      between(clientAccountMovements.createdAt, range.from, range.to),
+    ))
+    .groupBy(clientAccountMovements.type, clientAccountMovements.method);
 }
 
 export async function getCashSessionHistory(db: any, storeId: number, opts: { limit?: number } = {}) {
