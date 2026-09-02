@@ -17,7 +17,9 @@
     "e2e:ui": "npm run e2e:db && playwright test --ui",
     "seed:superadmin": "tsx scripts/seed-superadmin.ts",
     "seed:store": "tsx scripts/seed-store.ts",
-    "seed:demo": "tsx scripts/seed-demo.ts"
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "check:prod": "tsx scripts/revisar-produccion.ts",
+    "verificar": "npx tsc --noEmit && npm run lint && npm test && npm run build"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.18",
@@ -57,6 +59,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "fast-check": "^4.9.0",
     "shadcn": "^4.13.1",
     "tailwindcss": "^4",
     "tsx": "^4.23.1",

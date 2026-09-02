@@ -15,7 +15,25 @@ mismo número.
 **Las migraciones escritas a mano van también en `drizzle/meta/_journal.json`.**
 `tests/helpers/db.ts` replica todos los `.sql` de la carpeta, así que una
 migración sin entrada en el journal pasa todos los tests y nunca se aplica en
-producción.
+producción. Lo verifica `tests/migraciones-journal.test.ts`.
+
+**Antes de abrir un PR: `npm run verificar`.** Corre tsc, lint, los tests y el
+build de una. Es lo mismo que corre CI.
+
+**Después de desplegar: `DATABASE_URL=… npm run check:prod`.** Solo lectura.
+Reemplaza el "entrá al local y vendé algo a ver si anda": revisa migraciones
+sin aplicar, que los índices únicos parciales sigan existiendo, y las
+corrupciones que esos índices previenen (dos cajas abiertas, comprobantes o
+remitos con número repetido, dos comandas en una mesa). Los índices no los
+puede ver ningún test, porque el schema no los modela: la única forma de saber
+si siguen ahí es mirar la base.
+
+**Las invariantes de plata van como propiedades, no como ejemplos.** Los
+`tests/propiedades-*.test.ts` generan las entradas con fast-check en vez de
+enumerarlas: el arqueo se compara contra un modelo escrito aparte sobre
+secuencias de operaciones al azar, y el prorrateo del descuento fiscal contra
+su post-condición `Σ = S − D`. Si agregás algo que suma o resta plata, la
+propiedad es más barata y más completa que veinte casos a mano.
 
 **Esto cobra plata de verdad.** Dos locales venden con esto todos los días.
 Antes de tocar `src/domain/sales.ts`, `cash.ts`, `fiscal-*.ts` o
