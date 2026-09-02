@@ -147,6 +147,14 @@ function InventoryTableRow({
             base
           </span>
         )}
+        {/* El dólar del que sale ese precio. Solo al dueño: no es secreto
+            —se deduce del precio y la cotización— pero es un dato de autoría,
+            no de mostrador. */}
+        {isOwner && row.priceUsd != null && (
+          <span className="block text-[10px] font-normal text-muted-foreground">
+            US$ {row.priceUsd}
+          </span>
+        )}
       </TableCell>
 
       <TableCell className="figure text-right text-muted-foreground">
@@ -212,6 +220,7 @@ function InventoryTableRow({
             stock: row.stock,
             active: row.variantActive,
             ownPrice: row.ownPrice,
+            ownPriceUsd: row.ownPriceUsd,
             priceCash: row.priceCash,
             priceWholesale: row.priceWholesale,
             costUsd: row.costUsd,

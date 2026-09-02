@@ -1,6 +1,6 @@
 import {
-  EMPTY_FILTERS, SORT_KEYS, STOCK_STATES,
-  type InventoryFilters, type SortKey, type StockState,
+  EMPTY_FILTERS, SORT_KEYS, STOCK_STATES, USD_STATES,
+  type InventoryFilters, type SortKey, type StockState, type UsdState,
 } from "@/domain/inventory";
 
 /**
@@ -17,7 +17,7 @@ export type SearchParams = Record<string, string | string[] | undefined>;
 /** Nombres cortos para que la URL siga siendo legible y compartible. */
 const PARAM = {
   q: "q", categories: "cat", suppliers: "prov", sets: "set",
-  conditions: "cond", languages: "lang", stockState: "stock",
+  conditions: "cond", languages: "lang", stockState: "stock", usdState: "usd",
   priceMin: "pmin", priceMax: "pmax",
   costMin: "cmin", costMax: "cmax",
   marginMin: "mmin", marginMax: "mmax",
@@ -54,6 +54,7 @@ export function parseFilters(sp: SearchParams): InventoryFilters {
   const sort = one(sp, PARAM.sort);
   const dir = one(sp, PARAM.dir);
   const stock = one(sp, PARAM.stockState);
+  const usd = one(sp, PARAM.usdState);
   const foil = one(sp, PARAM.foil);
   const estado = one(sp, PARAM.active);
   const page = num(sp, PARAM.page);
@@ -66,6 +67,7 @@ export function parseFilters(sp: SearchParams): InventoryFilters {
     conditions: list(sp, PARAM.conditions),
     languages: list(sp, PARAM.languages),
     stockState: STOCK_STATES.includes(stock as StockState) ? (stock as StockState) : undefined,
+    usdState: USD_STATES.includes(usd as UsdState) ? (usd as UsdState) : undefined,
     priceMin: num(sp, PARAM.priceMin),
     priceMax: num(sp, PARAM.priceMax),
     costMin: num(sp, PARAM.costMin),
@@ -106,6 +108,7 @@ export function buildQuery(
   setList(PARAM.conditions, f.conditions);
   setList(PARAM.languages, f.languages);
   if (f.stockState) sp.set(PARAM.stockState, f.stockState);
+  if (f.usdState) sp.set(PARAM.usdState, f.usdState);
   setNum(PARAM.priceMin, f.priceMin);
   setNum(PARAM.priceMax, f.priceMax);
   setNum(PARAM.costMin, f.costMin);
@@ -152,6 +155,10 @@ const STOCK_LABELS: Record<StockState, string> = {
   out: "Sin stock", low: "Stock bajo", in: "Con stock",
 };
 
+const USD_LABELS: Record<UsdState, string> = {
+  con: "Con precio en dólares", sin: "Sin precio en dólares",
+};
+
 /**
  * Los filtros activos como lista plana. Cada valor de una multi-selección es su
  * propio chip: con cinco proveedores tildados se quita uno sin perder los otros.
@@ -181,6 +188,10 @@ export function activeChips(f: InventoryFilters): ActiveChip[] {
 
   if (f.stockState) {
     chips.push({ key: "stock", label: STOCK_LABELS[f.stockState], clear: { stockState: undefined } });
+  }
+
+  if (f.usdState) {
+    chips.push({ key: "usd", label: USD_LABELS[f.usdState], clear: { usdState: undefined } });
   }
 
   const range = (

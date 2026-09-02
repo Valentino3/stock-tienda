@@ -182,6 +182,20 @@ export const products = pgTable("products", {
   station: text("station"),
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   /**
+   * Precio de VENTA en dólares. null = este producto no se ata a la cotización
+   * y el recálculo no lo toca.
+   *
+   * ⚠️ No confundir con `product_variants.costUsd`, que es historia de compra y
+   * NUNCA se recalcula. Éste es una decisión comercial y existe justamente para
+   * ser recalculado: `base_price = redondear(base_price_usd × cotización)`.
+   *
+   * Vive también acá y no solo en la variante porque la variante default de un
+   * producto cargado a mano tiene `price = null` y el precio real está en
+   * `basePrice`. Con el USD solo en la variante, ese producto —que es la mayor
+   * parte de un catálogo cargado a mano— quedaría afuera del recálculo.
+   */
+  basePriceUsd: numeric("base_price_usd", { precision: 12, scale: 2, mode: "number" }),
+  /**
    * Si es false, vender este producto NO mueve stock: no descuenta, no lo
    * frena el guard de existencias y no aparece en los avisos de stock bajo.
    *
@@ -230,14 +244,26 @@ export const productVariants = pgTable("product_variants", {
   sku: text("sku"),
   stock: integer("stock").notNull().default(0),
   price: numeric("price", { precision: 12, scale: 2, mode: "number" }), // null => hereda basePrice
-  // Listas de precio alternativas. Solo informativas: la venta siempre usa el
-  // precio de venta (price ?? basePrice). Sirven para consultar al revisar el
-  // inventario, que es como las usa el comercio.
+  /**
+   * Precio de VENTA en dólares de esta variante. null = hereda el del producto
+   * (`products.basePriceUsd`), igual que `price` hereda `basePrice`.
+   *
+   * El recálculo escribe en el nivel donde vive el USD: si el USD está en el
+   * producto se escribe `products.basePrice` y las variantes que heredan siguen
+   * heredando; si está acá, se escribe `price`.
+   */
+  priceUsd: numeric("price_usd", { precision: 12, scale: 2, mode: "number" }),
+  // Listas de precio alternativas. Desde la migración 0026 SE COBRAN: el cajero
+  // elige la lista por línea en el carrito y `resolverPrecio` las usa. Un null
+  // significa "esta variante no tiene esa lista" y la venta por esa lista se
+  // rechaza con PRICE_LIST_NOT_SET, nunca cae al precio de venta.
   priceCash: numeric("price_cash", { precision: 12, scale: 2, mode: "number" }), // "efectivo menor"
   priceWholesale: numeric("price_wholesale", { precision: 12, scale: 2, mode: "number" }),
   // Costos de reposición. Se guardan tal cual los carga el comercio: costArs NO
   // se recalcula desde costUsd, porque cada compra se cerró a una cotización
-  // distinta y recalcular pisaría el dato real.
+  // distinta y recalcular pisaría el dato real. Es la diferencia exacta con
+  // `priceUsd`, que SÍ se recalcula: uno es lo que pagaste, el otro lo que
+  // decidís cobrar.
   costUsd: numeric("cost_usd", { precision: 12, scale: 2, mode: "number" }),
   costArs: numeric("cost_ars", { precision: 12, scale: 2, mode: "number" }),
   supplier: text("supplier"),
@@ -260,6 +286,111 @@ export const productVariants = pgTable("product_variants", {
   index("product_variants_store_stock_idx").on(t.storeId, t.stock),
   index("product_variants_store_supplier_idx").on(t.storeId, t.supplier),
   uniqueIndex("product_variants_store_uid_idx").on(t.storeId, t.uid),
+  // El recálculo por dólar y el filtro "sin precio en dólares" entran por acá.
+  index("product_variants_store_price_usd_idx").on(t.storeId, t.priceUsd),
+]);
+
+/**
+ * Cómo esta tienda convierte dólares a pesos.
+ *
+ * Tabla 1:1 y NO una columna en `stores`, por dos motivos y el segundo decide:
+ *
+ *  1. `resolveActiveStore` hace un SELECT sobre `stores` en cada request. Ahí
+ *     va lo que se necesita siempre (el rubro); la cotización se necesita en
+ *     una sola pantalla, igual que la config fiscal.
+ *  2. `reservarNumeroDeRemito` hace `UPDATE stores ... RETURNING` dentro de la
+ *     transacción de CADA venta, y eso toma un lock de fila sobre la tienda.
+ *     Con la cotización ahí, un recálculo de miles de filas bloquearía todas
+ *     las ventas del local mientras corre. El precedente de
+ *     `remitoUltimoNumero` existe POR ese lock, no a pesar de él.
+ */
+export const storePricingConfig = pgTable("store_pricing_config", {
+  storeId: integer("store_id").primaryKey().references(() => stores.id),
+  /** Pesos por dólar. null = todavía no se cargó y no se puede recalcular. */
+  usdRate: numeric("usd_rate", { precision: 12, scale: 2, mode: "number" }),
+  usdRateUpdatedAt: timestamp("usd_rate_updated_at"),
+  usdRateUpdatedBy: text("usd_rate_updated_by").references(() => user.id),
+  /** 'nearest' | 'up'. Ver PASOS_REDONDEO en src/domain/pricing-usd.ts. */
+  roundingMode: text("rounding_mode").notNull().default("nearest"),
+  roundingStep: integer("rounding_step").notNull().default(100),
+  /**
+   * Descuento de cada lista respecto del precio de venta, en porcentaje.
+   *
+   * null = el recálculo NO toca esa lista. Es el default y es la propiedad de
+   * no-regresión: una tienda que no los configura recalcula solo el precio de
+   * venta y sus listas cargadas a mano quedan intactas.
+   */
+  cashPct: numeric("cash_pct", { precision: 5, scale: 2, mode: "number" }),
+  wholesalePct: numeric("wholesale_pct", { precision: 5, scale: 2, mode: "number" }),
+  /**
+   * Cuándo se aplicó el último recálculo. Lo compara el dispositivo contra la
+   * fecha de su snapshot: si el catálogo guardado es anterior, sigue cobrando
+   * los precios viejos y hay que avisarlo.
+   */
+  pricesUpdatedAt: timestamp("prices_updated_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+/**
+ * Una fila del plan de recálculo: qué se toca y con qué valores.
+ *
+ * En `nivel: "producto"`, `price` es `products.base_price` y las dos listas van
+ * en null — esas columnas solo existen en la variante. En `nivel: "variante"`
+ * son las tres columnas de `product_variants`, y un null en `despues` significa
+ * "no tocar esa columna", nunca "ponerla en null".
+ */
+export type PriceRecalcTarget = {
+  /** Dónde vive el USD, que es también dónde se escribe el precio. */
+  nivel: "producto" | "variante";
+  productId: number;
+  variantId: number | null;
+  nombre: string;
+  usd: number;
+  antes: { price: number | null; priceCash: number | null; priceWholesale: number | null };
+  despues: { price: number | null; priceCash: number | null; priceWholesale: number | null };
+};
+
+/**
+ * Un recálculo de precios, previsualizado y quizá aplicado.
+ *
+ * Mismo ciclo que `import_batches` —se planifica, se muestra, se confirma una
+ * sola vez— porque es el mismo problema: un efecto masivo que hay que poder
+ * leer antes de que ocurra. `rows` guarda antes y después de cada objetivo, y
+ * es lo que permite deshacer.
+ */
+export const priceRecalcBatches = pgTable("price_recalc_batches", {
+  id: text("id").primaryKey(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  // Los parámetros quedan congelados en el lote: la config puede cambiar entre
+  // la previsualización y la confirmación, y lo que se aplica tiene que ser
+  // exactamente lo que el dueño leyó en pantalla.
+  usdRate: numeric("usd_rate", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  roundingMode: text("rounding_mode").notNull(),
+  roundingStep: integer("rounding_step").notNull(),
+  cashPct: numeric("cash_pct", { precision: 5, scale: 2, mode: "number" }),
+  wholesalePct: numeric("wholesale_pct", { precision: 5, scale: 2, mode: "number" }),
+  rows: jsonb("rows").$type<PriceRecalcTarget[]>().notNull(),
+  changed: integer("changed").notNull().default(0),
+  unchanged: integer("unchanged").notNull().default(0),
+  /** Sin precio en dólares: no se tocan. */
+  skipped: integer("skipped").notNull().default(0),
+  /**
+   * Variantes que heredarían el USD del producto pero tienen `price` propio en
+   * pesos, así que su precio efectivo NO se mueve. Se cuenta aparte porque es
+   * la única forma de que el dueño entienda por qué recalculó y el mostrador
+   * sigue cobrando lo mismo.
+   */
+  overridden: integer("overridden").notNull().default(0),
+  /** 'pending' | 'confirmed' | 'reverted'. */
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  confirmedAt: timestamp("confirmed_at"),
+  revertedAt: timestamp("reverted_at"),
+  revertedBy: text("reverted_by").references(() => user.id),
+}, (t) => [
+  index("price_recalc_batches_store_status_idx").on(t.storeId, t.status),
 ]);
 
 // NOTA: existe además un índice único parcial `cash_sessions_one_open_idx`
@@ -877,6 +1008,8 @@ export type CashSession = typeof cashSessions.$inferSelect;
 export type CashMovement = typeof cashMovements.$inferSelect;
 export type Commission = typeof commissions.$inferSelect;
 export type StoreFiscalConfig = typeof storeFiscalConfig.$inferSelect;
+export type StorePricingConfig = typeof storePricingConfig.$inferSelect;
+export type PriceRecalcBatch = typeof priceRecalcBatches.$inferSelect;
 export type ArcaCredentials = typeof arcaCredentials.$inferSelect;
 export type ArcaAccessTicket = typeof arcaAccessTickets.$inferSelect;
 export type Comprobante = typeof comprobantes.$inferSelect;

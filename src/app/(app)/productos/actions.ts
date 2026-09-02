@@ -44,6 +44,7 @@ export async function saveProduct(input: {
   id?: number; name: string; category?: string; basePrice: number;
   lowStockThreshold: number; tracksStock?: boolean; station?: string | null;
   isPromo?: boolean; sku?: string | null; stockInicial?: number;
+  basePriceUsd?: number | null;
 }) {
   const { id: userId, storeId } = await requireStoreOwner();
   // El stock inicial se valida con el mismo criterio que `restock`, salvo que
@@ -55,7 +56,8 @@ export async function saveProduct(input: {
     !Number.isInteger(input.lowStockThreshold) ||
     input.lowStockThreshold < 0 ||
     !Number.isInteger(stockInicial) ||
-    stockInicial < 0
+    stockInicial < 0 ||
+    (input.basePriceUsd != null && (Number.isNaN(input.basePriceUsd) || input.basePriceUsd < 0))
   ) return { error: "Datos inválidos" };
   const category = input.category?.trim() || null;
   // `!== false` para que un cliente viejo que no manda el campo conserve el
@@ -68,6 +70,7 @@ export async function saveProduct(input: {
     // por variante y dejan su movimiento.
     await db.update(products).set({
       name: input.name.trim(), category, basePrice: input.basePrice,
+      basePriceUsd: input.basePriceUsd ?? null,
       lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
     }).where(and(eq(products.id, input.id), eq(products.storeId, storeId)));
   } else {
@@ -75,6 +78,7 @@ export async function saveProduct(input: {
       await crearProducto(db, {
         storeId, userId, name: input.name, category, basePrice: input.basePrice,
         lowStockThreshold: input.lowStockThreshold, tracksStock, station, isPromo,
+        basePriceUsd: input.basePriceUsd ?? null,
         sku: input.sku ?? null, stockInicial,
       });
     } catch (err) {
@@ -91,6 +95,7 @@ export async function saveVariant(input: {
   name: string;
   sku: string | null;
   price: number | null;
+  priceUsd?: number | null;
   priceCash?: number | null;
   priceWholesale?: number | null;
   costUsd?: number | null;
@@ -111,7 +116,7 @@ export async function saveVariant(input: {
   if (!input.id && !input.name.trim()) return { error: "Datos inválidos" };
   // Ningún importe puede ser negativo. Los alternativos se validan igual que
   // `price`; null significa "no informado" y es válido.
-  const amounts = [input.price, input.priceCash, input.priceWholesale, input.costUsd, input.costArs];
+  const amounts = [input.price, input.priceUsd, input.priceCash, input.priceWholesale, input.costUsd, input.costArs];
   if (amounts.some((n) => n != null && (Number.isNaN(n) || n < 0))) return { error: "Datos inválidos" };
   const stockInicial = input.stockInicial ?? 0;
   if (!Number.isInteger(stockInicial) || stockInicial < 0) return { error: "Datos inválidos" };
@@ -119,6 +124,7 @@ export async function saveVariant(input: {
     name: input.name.trim(),
     sku: input.sku?.trim() || null,
     price: input.price,
+    priceUsd: input.priceUsd ?? null,
     priceCash: input.priceCash ?? null,
     priceWholesale: input.priceWholesale ?? null,
     costUsd: input.costUsd ?? null,

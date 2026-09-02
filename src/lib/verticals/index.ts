@@ -55,7 +55,10 @@ export type VerticalConfig = {
   nav: (ctx: ContextoNav) => NavGroup[];
 };
 
-const NAV_ADMIN = (ctx: ContextoNav, extra: { importar: boolean; mesas?: boolean }): NavGroup[] =>
+const NAV_ADMIN = (
+  ctx: ContextoNav,
+  extra: { importar: boolean; precios?: boolean; mesas?: boolean }
+): NavGroup[] =>
   ctx.isOwner
     ? [
         {
@@ -63,6 +66,9 @@ const NAV_ADMIN = (ctx: ContextoNav, extra: { importar: boolean; mesas?: boolean
           links: [
             ...(extra.mesas ? [{ href: "/mesas", label: "Mesas" }] : []),
             ...(extra.importar ? [{ href: "/importar", label: "Importar" }] : []),
+            // Un restaurante no cotiza su carta en dolares. Mismo criterio que
+            // Importar, que tampoco tiene sentido con un menu de 40 platos.
+            ...(extra.precios ? [{ href: "/precios", label: "Precios" }] : []),
             { href: "/reportes", label: "Reportes" },
             { href: "/comisiones", label: "Comisiones" },
             { href: "/facturacion", label: "Facturación" },
@@ -101,7 +107,7 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
           { href: "/caja", label: "Caja" },
         ],
       },
-      ...NAV_ADMIN(ctx, { importar: true }),
+      ...NAV_ADMIN(ctx, { importar: true, precios: true }),
     ],
   },
 

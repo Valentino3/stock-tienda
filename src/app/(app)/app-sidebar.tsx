@@ -2,24 +2,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Menu,
-  ShoppingCart,
-  Package,
-  Receipt,
-  Wallet,
-  Upload,
-  BarChart3,
-  HandCoins,
-  Users,
-  Contact,
-  Bell,
-  ReceiptText,
-  UtensilsCrossed,
-  LayoutGrid,
-  ChefHat,
-  type LucideIcon,
-} from "lucide-react";
+import { BarChart3, Bell, ChefHat, Contact, DollarSign, HandCoins, LayoutGrid, Menu, Package, Receipt, ReceiptText, ShoppingCart, Upload, Users, UtensilsCrossed, Wallet, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -38,6 +21,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/clientes": Contact,
   "/caja": Wallet,
   "/importar": Upload,
+  "/precios": DollarSign,
   "/reportes": BarChart3,
   "/comisiones": HandCoins,
   "/facturacion": ReceiptText,

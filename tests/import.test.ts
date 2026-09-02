@@ -18,6 +18,54 @@ beforeEach(async () => {
   await seedTestUser(db, "u1", "owner", store);
 });
 
+describe("precio en dólares", () => {
+  it("un producto nuevo de una sola variante deja el USD en el producto", async () => {
+    // Espeja lo que ya hace `basePrice`. Sin esto, el USD viviría solo en las
+    // variantes y el primer recálculo dejaría `base_price` muerto: editarlo
+    // desde el formulario de producto no cambiaría nada.
+    await executeImport(db, store, await validateImportRows(db, store, [
+      row(2, { product: "Booster", variant: "", sku: "B-1", priceUsd: 10 }),
+    ]), "u1", { mode: "absolute" });
+
+    const [p] = await db.select().from(products).where(eq(products.name, "Booster"));
+    expect(p.basePriceUsd).toBe(10);
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.productId, p.id));
+    expect(v.priceUsd).toBeNull();
+  });
+
+  it("una variante con USD distinto al del producto lo guarda propio", async () => {
+    await executeImport(db, store, await validateImportRows(db, store, [
+      row(2, { product: "Caja", variant: "Chica", sku: "C-1", priceUsd: 10 }),
+      row(3, { product: "Caja", variant: "Grande", sku: "C-2", priceUsd: 25 }),
+    ]), "u1", { mode: "absolute" });
+
+    const [p] = await db.select().from(products).where(eq(products.name, "Caja"));
+    const vs = await db.select().from(productVariants).where(eq(productVariants.productId, p.id));
+    const grande = vs.find((v) => v.name === "Grande")!;
+    expect(grande.priceUsd).toBe(25);
+  });
+
+  it("actualizar por planilla no toca el costo en dólares", async () => {
+    // Son dos cosas distintas: uno es lo que cobrás, el otro lo que pagaste.
+    const [p] = await db.insert(products).values({ storeId: store, name: "Sobre", basePrice: 100 }).returning();
+    await db.insert(productVariants)
+      .values({ storeId: store, productId: p.id, name: "", sku: "S-1", costUsd: 4 });
+
+    await executeImport(db, store, await validateImportRows(db, store, [
+      row(2, { product: "Sobre", variant: "", sku: "S-1", priceUsd: 9 }),
+    ]), "u1", { mode: "absolute" });
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.sku, "S-1"));
+    expect(v.priceUsd).toBe(9);
+    expect(v.costUsd).toBe(4);
+  });
+
+  it("un precio en dólares negativo rechaza la fila", async () => {
+    const out = await validateImportRows(db, store, [row(2, { priceUsd: -1 })]);
+    expect(out[0].error).toMatch(/precio usd/i);
+  });
+});
+
 describe("validateImportRows", () => {
   it("flags invalid rows and duplicate SKUs in file", async () => {
     const out = await validateImportRows(db, store, [

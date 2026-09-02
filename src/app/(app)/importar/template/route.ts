@@ -5,17 +5,17 @@ import { NextResponse } from "next/server";
 // que esta plantilla es una sugerencia, no un contrato: se puede reordenar,
 // borrar las que no se usen o subir una planilla propia con otros títulos.
 const HEADERS = [
-  "Producto", "Variante", "SKU", "Precio venta", "Stock",
+  "Producto", "Variante", "SKU", "Precio venta", "Precio USD", "Stock",
   "Efectivo menor", "Precio mayorista", "Costo USD", "Costo ARS",
   "Proveedor", "SKU proveedor", "Set", "Condición", "Foil", "Idioma",
 ];
 
 const EXAMPLES = [
-  ["Remera Roja", "M", "REM-R-M", 12000, 5, 10800, 8400, "", 6000, "Textiles SA", "TX-114", "", "", "", ""],
-  ["Remera Roja", "L", "REM-R-L", 12000, 3, 10800, 8400, "", 6000, "Textiles SA", "TX-115", "", "", "", ""],
-  ["Gorra Negra", "", "GOR-N", 8000, 10, 7200, 5600, "", 4000, "Textiles SA", "", "", "", "", ""],
-  ["Charizard", "Base Set NM", "CHAR-BS-NM", 50000, 3, 45000, 35000, 33.9, 50000, "TCG Dylan", "", "Base Set", "NM", "FALSE", "EN"],
-  ["Charizard", "Base Set NM Foil", "CHAR-BS-NM-F", 150000, 1, 135000, 105000, 99, 146000, "Devir", "", "Base Set", "NM", "TRUE", "EN"],
+  ["Remera Roja", "M", "REM-R-M", 12000, "", 5, 10800, 8400, "", 6000, "Textiles SA", "TX-114", "", "", "", ""],
+  ["Remera Roja", "L", "REM-R-L", 12000, "", 3, 10800, 8400, "", 6000, "Textiles SA", "TX-115", "", "", "", ""],
+  ["Gorra Negra", "", "GOR-N", 8000, "", 10, 7200, 5600, "", 4000, "Textiles SA", "", "", "", "", ""],
+  ["Charizard", "Base Set NM", "CHAR-BS-NM", 50000, 33.8, 3, 45000, 35000, 33.9, 50000, "TCG Dylan", "", "Base Set", "NM", "FALSE", "EN"],
+  ["Charizard", "Base Set NM Foil", "CHAR-BS-NM-F", 150000, 101.4, 1, 135000, 105000, 99, 146000, "Devir", "", "Base Set", "NM", "TRUE", "EN"],
 ];
 
 export async function GET() {
@@ -39,10 +39,15 @@ export async function GET() {
     "Si la planilla NO trae columna Stock, el stock actual no se toca: sirve para actualizar solo precios.",
     "Si SÍ trae Stock, el valor de la planilla reemplaza al actual (no se suma).",
     "",
-    "Efectivo menor, Precio mayorista, Costo USD, Costo ARS y Proveedor son informativos:",
-    "se ven al revisar el inventario. La venta siempre usa Precio venta.",
+    "Efectivo menor y Precio mayorista SÍ se cobran: el cajero elige la lista al vender.",
+    "Vacías = esa lista no existe para ese artículo y la caja la rechaza.",
     "",
-    "Costo ARS se guarda tal cual lo escribís, no se recalcula desde Costo USD.",
+    "Precio USD es el precio de VENTA en dólares. Si lo cargás, actualizar la cotización",
+    "en Precios recalcula el Precio venta en pesos. Vacío = ese artículo no sigue al dólar.",
+    "",
+    "Costo USD y Costo ARS son otra cosa: es lo que PAGASTE, y no se recalculan nunca.",
+    "Costo ARS se guarda tal cual lo escribís, no se deriva de Costo USD: cada compra",
+    "se cerró a una cotización distinta y recalcular pisaría el dato real.",
   ]) notes.addRow([line]);
 
   const buffer = await wb.xlsx.writeBuffer();

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import type { InventoryFilters as Filters, StockState } from "@/domain/inventory";
+import type { InventoryFilters as Filters, StockState, UsdState } from "@/domain/inventory";
 import type { AtributoCatalogo } from "@/lib/verticals";
 import { buildQuery, activeChips } from "./filters";
 
@@ -22,6 +22,12 @@ const STOCK_OPTIONS: { value: StockState; label: string }[] = [
   { value: "out", label: "Sin stock" },
   { value: "low", label: "Stock bajo" },
   { value: "in", label: "Con stock" },
+];
+
+// Solo para el dueño: es un dato de autoría de precios, no de mostrador.
+const USD_OPTIONS: { value: UsdState; label: string }[] = [
+  { value: "con", label: "Con USD" },
+  { value: "sin", label: "Sin USD" },
 ];
 
 /** Cuántos filtros hay puestos, para el contador del botón "Más filtros". */
@@ -78,6 +84,27 @@ export function InventoryFilters({
             );
           })}
         </div>
+
+        {isOwner && (
+          <div className="inline-flex rounded-lg border border-border p-0.5">
+            {USD_OPTIONS.map((opt) => {
+              const active = filters.usdState === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => go({ usdState: active ? undefined : opt.value })}
+                  className={cn(
+                    "rounded-md px-2.5 py-1 text-sm transition-colors",
+                    active ? "bg-brand text-brand-foreground" : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <FiltersPanel filters={filters} facets={facets} isOwner={isOwner} atributos={atributos} />
 

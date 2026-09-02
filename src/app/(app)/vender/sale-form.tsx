@@ -201,8 +201,12 @@ function DiscountControl({
 }
 
 export function SaleForm({
-  clients: initialClients, storeId, cashSessionId, esDueno,
-}: { clients: ClientOption[]; storeId: number; cashSessionId: number; esDueno: boolean }) {
+  clients: initialClients, storeId, cashSessionId, esDueno, preciosActualizadosEn = null,
+}: {
+  clients: ClientOption[]; storeId: number; cashSessionId: number; esDueno: boolean;
+  /** Ultimo recalculo de precios de la tienda, en ISO. null = nunca hubo. */
+  preciosActualizadosEn?: string | null;
+}) {
   const { conectado, verificado, catalogo, clientesNuevos, meta } = useEstadoOffline();
   // Sin conexión NO se busca contra el servidor, pero tampoco se cae: si hay
   // catálogo guardado se busca ahí. Sin catálogo guardado no hay nada que
@@ -212,6 +216,13 @@ export function SaleForm({
    * 12 h: un snapshot de esta manana sigue siendo utilizable en una feria,
    * uno de anteayer casi seguro tiene precios y stock que ya no existen.
    */
+  /**
+   * El catalogo guardado quedo antes del ultimo recalculo de precios: este
+   * dispositivo, si sale a vender sin conexion, cobra los precios viejos.
+   */
+  const preciosDesactualizados =
+    !!meta && !!preciosActualizadosEn &&
+    new Date(meta.generadoEn).getTime() < new Date(preciosActualizadosEn).getTime();
   const catalogoVencido =
     !!meta && Date.now() - new Date(meta.generadoEn).getTime() > 12 * 60 * 60 * 1000;
   const [ticket, setTicket] = useState<VentaEnCola | null>(null);
@@ -740,6 +751,23 @@ export function SaleForm({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Con conexion es el unico momento en que se puede hacer algo: el
+              catalogo offline solo se baja a mano. */}
+          {preciosDesactualizados && !offline && (
+            <Notice tone="warn">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <span>
+                  Los precios se actualizaron el{" "}
+                  {new Date(preciosActualizadosEn!).toLocaleString("es-AR")} y el
+                  catálogo guardado en este dispositivo es anterior. Si vendés sin
+                  conexión, va a cobrar los precios viejos.
+                </span>
+                <Button type="button" variant="outline" size="sm" disabled={bajando} onClick={prepararOffline}>
+                  {bajando ? "Descargando…" : "Actualizar catálogo"}
+                </Button>
+              </div>
+            </Notice>
+          )}
           {offline && !catalogo && (
             <Notice tone="danger">
               Este dispositivo no tiene el catálogo guardado, así que no se puede buscar

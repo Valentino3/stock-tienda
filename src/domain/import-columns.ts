@@ -12,7 +12,7 @@
 export type ImportField =
   | "product" | "variant" | "sku" | "price" | "stock"
   | "setName" | "condition" | "foil" | "language"
-  | "priceCash" | "priceWholesale" | "costUsd" | "costArs"
+  | "priceCash" | "priceWholesale" | "priceUsd" | "costUsd" | "costArs"
   | "supplier" | "supplierSku";
 
 /** Orden posicional de la plantilla original, para archivos sin encabezado reconocible. */
@@ -41,6 +41,7 @@ export function normalizeHeader(raw: string): string {
 const ALIASES: [ImportField, string[]][] = [
   ["priceCash", ["efectivo menor", "precio efectivo", "efectivo", "contado", "precio contado"]],
   ["priceWholesale", ["precio mayorista", "mayorista", "precio mayor"]],
+  ["priceUsd", ["precio usd", "precio en usd", "precio venta usd", "precio dolares", "precio en dolares", "pvp usd"]],
   ["costUsd", ["costo usd", "costo u s", "costo dolares", "costo en usd", "usd"]],
   ["costArs", ["costo ars", "costo pesos", "costo", "costo en pesos"]],
   ["supplierSku", ["sku proveedor", "codigo proveedor", "cod proveedor", "sku prov"]],
@@ -131,6 +132,7 @@ export const FIELD_LABELS: Record<ImportField, string> = {
   language: "Idioma",
   priceCash: "Efectivo menor",
   priceWholesale: "Precio mayorista",
+  priceUsd: "Precio USD",
   costUsd: "Costo USD",
   costArs: "Costo ARS",
   supplier: "Proveedor",

@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { clients } from "@/db/schema";
 import { getOpenSession } from "@/domain/cash";
+import { getPricingConfig } from "@/domain/pricing-config";
 import { requireStore } from "@/lib/session";
 import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
@@ -33,6 +34,15 @@ export default async function VenderPage() {
     .where(and(eq(clients.storeId, storeId), eq(clients.active, true)))
     .orderBy(clients.name);
 
+  // Cuándo se recalcularon los precios por última vez. El dispositivo lo compara
+  // contra la fecha de su catálogo guardado: si el snapshot es anterior, sigue
+  // cobrando los precios de antes y hay que decirlo.
+  //
+  // Va como prop y no por un endpoint que se sondee: el catálogo offline solo se
+  // baja a mano, así que basta con avisar cuando la pantalla se abre CON
+  // conexión, que es el único momento en que se puede hacer algo al respecto.
+  const pricing = await getPricingConfig(db, storeId);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Vender" description="Buscá un producto, armá el carrito y cobrá." />
@@ -44,6 +54,7 @@ export default async function VenderPage() {
         storeId={storeId}
         cashSessionId={session.id}
         esDueno={role === "owner"}
+        preciosActualizadosEn={pricing?.pricesUpdatedAt?.toISOString() ?? null}
       />
     </div>
   );
