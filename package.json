@@ -19,7 +19,9 @@
     "seed:store": "tsx scripts/seed-store.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "check:prod": "tsx scripts/revisar-produccion.ts",
-    "verificar": "npx tsc --noEmit && npm run lint && npm test && npm run build"
+    "verificar": "npx tsc --noEmit && npm run lint && npm test && npm run build",
+    "seed:prueba": "tsx scripts/tienda-de-prueba.ts",
+    "reset:prueba": "tsx scripts/reset-tienda-de-prueba.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.18",

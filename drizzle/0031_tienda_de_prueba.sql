@@ -1,0 +1,1 @@
+ALTER TABLE "stores" ADD COLUMN "es_prueba" boolean DEFAULT false NOT NULL;

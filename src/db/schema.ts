@@ -41,6 +41,21 @@ export const stores = pgTable("stores", {
    * el cual dos cajeros podrian entregar el mismo numero.
    */
   remitoUltimoNumero: integer("remito_ultimo_numero").notNull().default(0),
+  /**
+   * Tienda de prueba: existe en la MISMA base que las reales, para poder
+   * verificar un deploy contra la infraestructura de verdad —Neon, el navegador
+   * del mostrador, la impresora— sin ensuciar los datos de un local que vende.
+   *
+   * No es cosmetico. Prende dos cosas:
+   *   1. La app muestra una banda permanente, para que nadie confunda esta
+   *      tienda con la suya.
+   *   2. `requireFiscalConfig` RECHAZA emitir en ambiente produccion. El kill
+   *      switch ARCA_ALLOW_PRODUCCION es global al servidor, asi que en
+   *      produccion esta en true y sin esta guarda una prueba emitiria una
+   *      factura REAL ante ARCA. Homologacion si: es justamente donde se
+   *      prueba el camino fiscal entero sin consecuencias.
+   */
+  esPrueba: boolean("es_prueba").notNull().default(false),
 });
 
 // ---- better-auth ----

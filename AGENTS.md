@@ -28,6 +28,15 @@ remitos con número repetido, dos comandas en una mesa). Los índices no los
 puede ver ningún test, porque el schema no los modela: la única forma de saber
 si siguen ahí es mirar la base.
 
+**Para probar contra producción está la tienda de prueba, no un local real.**
+`npm run seed:prueba` la crea en la misma base, marcada con `stores.esPrueba`.
+Esa marca no es cosmética: `requireFiscalConfig` **rechaza emitir en ambiente
+producción** desde una tienda de prueba. El kill switch `ARCA_ALLOW_PRODUCCION`
+es del servidor entero y en producción está en `true`, así que sin esa guarda
+una prueba emitiría una factura real ante ARCA, y eso se deshace con una nota
+de crédito, no con un `delete`. Para vaciarla: `npm run reset:prueba`, que
+exige el slug dos veces y se niega a tocar una tienda sin la marca.
+
 **Las invariantes de plata van como propiedades, no como ejemplos.** Los
 `tests/propiedades-*.test.ts` generan las entradas con fast-check en vez de
 enumerarlas: el arqueo se compara contra un modelo escrito aparte sobre
