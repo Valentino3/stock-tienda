@@ -224,7 +224,7 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
                   <li key={t.method} className="flex items-baseline justify-between py-2 first:pt-0 last:pb-0">
                     <span>
                       {METHOD_LABEL[t.method] ?? t.method}{" "}
-                      <span className="text-muted-foreground">· {number(t.count)} venta(s)</span>
+                      <span className="text-muted-foreground">· {number(t.count)} pago(s)</span>
                     </span>
                     <span className="figure font-medium">{money(t.total)}</span>
                   </li>

@@ -1,7 +1,7 @@
 import { and, between, desc, eq, ilike, inArray, isNotNull, sql } from "drizzle-orm";
 import {
   cashMovements, cashSessions, clientAccountMovements, products, productVariants,
-  sales, saleItems, user,
+  sales, saleItems, salePayments, user,
 } from "@/db/schema";
 
 // Todos los reportes están scopeados por tienda (storeId).
@@ -79,8 +79,30 @@ export async function getSellerSalesSummary(
     acc.total = round2(acc.total + f.total);
     acc.promo = round2(acc.promo + promo);
     acc.normal = round2(acc.normal + (f.total - promo));
-    if (f.paymentMethod === "cuenta") acc.aCuenta = round2(acc.aCuenta + f.total);
     porVendedor.set(f.sellerId, acc);
+  }
+
+  // Lo fiado va en una consulta APARTE y no como un join en la de arriba: esa
+  // ya tiene un leftJoin a `sale_items`, y sumarle otro multiplica filas e
+  // infla `total`/`normal`/`promo`. Seria plata inventada en la tabla con la
+  // que el dueño liquida comisiones.
+  const fiados = await db
+    .select({
+      sellerId: sales.sellerId,
+      total: sql<number>`coalesce(sum(${salePayments.amount}), 0)`.mapWith(Number),
+    })
+    .from(salePayments)
+    .innerJoin(sales, eq(salePayments.saleId, sales.id))
+    .where(and(
+      eq(sales.storeId, storeId), eq(sales.voided, false),
+      between(sales.createdAt, range.from, range.to),
+      eq(salePayments.method, "cuenta"),
+    ))
+    .groupBy(sales.sellerId);
+  for (const f of fiados as any[]) {
+    const acc = porVendedor.get(f.sellerId);
+    // Con parte fiada se acredita SOLO esa parte, no el total de la venta.
+    if (acc) acc.aCuenta = round2(f.total);
   }
 
   return [...porVendedor.values()].sort((a, b) => b.total - a.total);
@@ -97,13 +119,20 @@ export async function getSalesReport(db: any, storeId: number, range: { from: Da
     .from(sales).where(notVoided)
     .groupBy(sql`to_char(${sales.createdAt}, 'YYYY-MM-DD')`)
     .orderBy(sql`to_char(${sales.createdAt}, 'YYYY-MM-DD')`);
+  // De `sale_payments`: con pago dividido una venta aporta a mas de un medio.
+  // `count` cuenta PAGOS, no ventas, asi que su suma ya no es la cantidad de
+  // ventas del periodo — la columna se llama "Pagos" en la pantalla.
+  // `byDay` NO cambia: sigue sobre sales.total, y la invariante que queda es
+  // que la suma de byMethod y la de byDay dan lo mismo.
   const byMethod = await db
     .select({
-      method: sales.paymentMethod,
+      method: salePayments.method,
       count: sql<number>`count(*)`.mapWith(Number),
-      total: sql<number>`sum(${sales.total})`.mapWith(Number),
+      total: sql<number>`sum(${salePayments.amount})`.mapWith(Number),
     })
-    .from(sales).where(notVoided).groupBy(sales.paymentMethod);
+    .from(salePayments)
+    .innerJoin(sales, eq(salePayments.saleId, sales.id))
+    .where(notVoided).groupBy(salePayments.method);
   return { byDay, byMethod };
 }
 

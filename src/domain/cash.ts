@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  cashMovements, cashSessions, clientAccountMovements, sales,
+  cashMovements, cashSessions, clientAccountMovements, sales, salePayments,
   type CashMovement, type CashSession,
 } from "@/db/schema";
 
@@ -78,14 +78,19 @@ export async function closeCashSession(
       .where(and(eq(cashSessions.id, input.sessionId), eq(cashSessions.storeId, input.storeId))).for("update");
     if (!session || session.closedAt) throw new Error("SESSION_NOT_OPEN");
 
+    // Se suma de `sale_payments` y no de `sales.total`: una venta puede
+    // haberse cobrado con varios medios, y agrupar por el predominante metería
+    // la parte de tarjeta dentro del efectivo esperado. `sales.payment_method`
+    // sigue existiendo, pero para mostrar, no para sumar.
     const totals = await tx
       .select({
-        method: sales.paymentMethod,
-        total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
+        method: salePayments.method,
+        total: sql<number>`coalesce(sum(${salePayments.amount}), 0)`.mapWith(Number),
       })
-      .from(sales)
+      .from(salePayments)
+      .innerJoin(sales, eq(salePayments.saleId, sales.id))
       .where(and(eq(sales.cashSessionId, input.sessionId), eq(sales.voided, false)))
-      .groupBy(sales.paymentMethod);
+      .groupBy(salePayments.method);
 
     // Gastos + egresos: efectivo que salió de la caja, resta del esperado.
     const [{ out }] = await tx

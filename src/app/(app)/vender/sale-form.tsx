@@ -287,6 +287,14 @@ export function SaleForm({
   // A quien se le acredita esta venta. Arranca en quien esta operando, que es
   // el 95% de los casos y tiene que costar cero toques.
   const [sellerId, setSellerId] = useState(usuarioId);
+  // Pago dividido. `montos` es texto porque es un campo a medio escribir; los
+  // pagos se derivan de ahi. Ni el modo ni los montos se persisten en el
+  // carrito: un reparto a medias recuperado horas despues es plata mal
+  // asignada esperando a que alguien apriete Cobrar.
+  const [dividido, setDividido] = useState(false);
+  const [montos, setMontos] = useState<Record<PaymentMethod, string>>({
+    efectivo: "", transferencia: "", tarjeta: "", cuenta: "",
+  });
   // Uno mismo primero: el caso frecuente tiene que estar arriba, y el nombre
   // propio se reconoce más rápido que una posición alfabética.
   const vendedoresOrdenados = [
@@ -649,10 +657,38 @@ export function SaleForm({
   const totalDiscount = round2(lines.reduce((acc, l) => acc + l.discount, 0) + saleDiscount);
   const units = cart.reduce((acc, i) => acc + i.quantity, 0);
 
+  const pagosDivididos = PAYMENT_METHODS
+    .map((m) => ({ method: m.value, amount: Number(montos[m.value].replace(",", ".")) || 0 }))
+    .filter((p) => p.amount > 0);
+  const asignado = round2(pagosDivididos.reduce((a, p) => a + p.amount, 0));
+  const falta = round2(total - asignado);
+  // Con pago dividido, "hay parte a cuenta" reemplaza a "el medio es cuenta".
+  const fiado = dividido
+    ? round2(pagosDivididos.filter((p) => p.method === "cuenta").reduce((a, p) => a + p.amount, 0))
+    : (paymentMethod === "cuenta" ? total : 0);
+  const necesitaCliente = fiado > 0;
+
+  function completarResto(m: PaymentMethod) {
+    const otros = round2(pagosDivididos.filter((p) => p.method !== m).reduce((a, p) => a + p.amount, 0));
+    const resto = round2(total - otros);
+    setMontos((prev) => ({ ...prev, [m]: resto > 0 ? String(resto) : "" }));
+  }
+
   function confirmSale() {
     setError("");
-    if (paymentMethod === "cuenta" && !clientId) {
-      setError("Elegí un cliente para la venta a cuenta.");
+    if (necesitaCliente && !clientId) {
+      setError("Elegí un cliente para la parte a cuenta.");
+      return;
+    }
+    if (dividido && falta !== 0) {
+      // El servidor lo rechaza igual con PAYMENT_TOTAL_MISMATCH, pero
+      // descubrirlo recien al apretar Cobrar, con el cliente enfrente, es el
+      // peor momento posible.
+      setError(
+        falta > 0
+          ? `Falta repartir ${money(falta)}.`
+          : `Los pagos se pasan del total por ${money(-falta)}.`,
+      );
       return;
     }
     // El uid sobrevive a los intentos fallidos: recién se renueva cuando una
@@ -672,16 +708,18 @@ export function SaleForm({
     // Volvió la conexión pero el cliente elegido todavía es uno creado sin
     // conexión: no existe en el servidor, así que la venta a cuenta no tiene a
     // quién imputarle la deuda. Se sincroniza primero.
-    if (paymentMethod === "cuenta" && clienteUid) {
+    if (necesitaCliente && clienteUid) {
       setError("Ese cliente todavía no se sincronizó. Sincronizá las ventas pendientes y volvé a intentar.");
       return;
     }
 
     startTransition(async () => {
       const res = await submitSale({
-        paymentMethod,
+        // Una forma o la otra. En modo simple el payload queda IDENTICO al de
+        // antes de esta feature, que es la no-regresion del camino comun.
+        ...(dividido ? { pagos: pagosDivididos } : { paymentMethod }),
         sellerId,
-        clientId: paymentMethod === "cuenta" ? clienteIdNumerico ?? undefined : undefined,
+        clientId: necesitaCliente ? clienteIdNumerico ?? undefined : undefined,
         items: cart.map((i) => ({
           variantId: i.variantId,
           quantity: i.quantity,
@@ -724,6 +762,8 @@ export function SaleForm({
         setSaleDiscountValue(0);
         setClientId("");
         setPaymentMethod("efectivo");
+        setDividido(false);
+        setMontos({ efectivo: "", transferencia: "", tarjeta: "", cuenta: "" });
         // Un vendedor pegado entre ventas es el modo de falla silencioso de
         // toda la feature: la venta siguiente se le acredita al compañero sin
         // que nadie lo note.
@@ -785,6 +825,8 @@ export function SaleForm({
     setSaleDiscountValue(0);
     setClientId("");
     setPaymentMethod("efectivo");
+    setDividido(false);
+    setMontos({ efectivo: "", transferencia: "", tarjeta: "", cuenta: "" });
     setSellerId(usuarioId);
   }
 
@@ -1165,20 +1207,85 @@ export function SaleForm({
 
           <div className="space-y-2">
             <SectionLabel>Medio de pago</SectionLabel>
-            <div className="grid grid-cols-2 gap-2">
-              {PAYMENT_METHODS.map((m) => (
-                <Button
-                  key={m.value}
-                  type="button"
-                  variant={paymentMethod === m.value ? "brand" : "outline"}
-                  size="sm"
-                  onClick={() => setPaymentMethod(m.value)}
+            {/* El camino de un toque no se toca: es el 95% de las ventas y no
+                puede volverse mas lento por una feature que se usa poco. */}
+            {!dividido ? (
+              <div className="grid grid-cols-2 gap-2">
+                {PAYMENT_METHODS.map((m) => (
+                  <Button
+                    key={m.value}
+                    type="button"
+                    variant={paymentMethod === m.value ? "brand" : "outline"}
+                    size="sm"
+                    onClick={() => setPaymentMethod(m.value)}
+                  >
+                    {m.label}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {PAYMENT_METHODS.map((m) => (
+                  <div key={m.value} className="flex items-center gap-2">
+                    <span className="w-28 shrink-0 text-sm">{m.label}</span>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      aria-label={`Monto en ${m.label}`}
+                      className="figure h-8 flex-1 px-2 text-right"
+                      placeholder="0"
+                      value={montos[m.value]}
+                      onChange={(e) =>
+                        setMontos((prev) => ({ ...prev, [m.value]: e.target.value }))
+                      }
+                    />
+                    {/* El cajero tipea 5000 en Efectivo y toca "resto" en el
+                        otro medio: evita la mayoria de los errores de tipeo. */}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      onClick={() => completarResto(m.value)}
+                    >
+                      resto
+                    </Button>
+                  </div>
+                ))}
+                <p
+                  className={cn("figure text-xs", falta === 0 ? "text-muted-foreground" : "text-destructive")}
+                  role={falta === 0 ? undefined : "alert"}
                 >
-                  {m.label}
-                </Button>
-              ))}
-            </div>
-            {paymentMethod === "cuenta" && (
+                  Asignado {money(asignado)}
+                  {falta > 0 && ` · falta ${money(falta)}`}
+                  {falta < 0 && ` · se pasa por ${money(-falta)}`}
+                </p>
+              </div>
+            )}
+            {/* Sin conexion la cola guarda un solo medio (ver VentaEnCola): si
+                se dejara dividir, las otras partes se perderian en silencio. */}
+            {!offline && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  const proximo = !dividido;
+                  setDividido(proximo);
+                  // Al abrirlo, el estado inicial equivale a la venta simple:
+                  // el medio ya elegido con el total completo.
+                  setMontos(
+                    proximo
+                      ? { efectivo: "", transferencia: "", tarjeta: "", cuenta: "",
+                          [paymentMethod]: total > 0 ? String(total) : "" }
+                      : { efectivo: "", transferencia: "", tarjeta: "", cuenta: "" },
+                  );
+                }}
+              >
+                {dividido ? "Un solo medio" : "Dividir pago"}
+              </Button>
+            )}
+            {necesitaCliente && (
               <>
               <div className="flex gap-2">
                 <Select
@@ -1204,11 +1311,11 @@ export function SaleForm({
               {clienteElegido?.balance != null && clienteElegido.balance < 0 && (
                 <p className="text-xs text-muted-foreground">
                   Le quedan <strong>{money(-clienteElegido.balance)}</strong> a favor.
-                  {total > 0 && (
-                    clienteElegido.balance + total < 0
-                      ? ` Esta venta lo deja con ${money(-(clienteElegido.balance + total))} a favor.`
-                      : clienteElegido.balance + total > 0
-                        ? ` Esta venta lo deja debiendo ${money(clienteElegido.balance + total)}.`
+                  {fiado > 0 && (
+                    clienteElegido.balance + fiado < 0
+                      ? ` Esta venta lo deja con ${money(-(clienteElegido.balance + fiado))} a favor.`
+                      : clienteElegido.balance + fiado > 0
+                        ? ` Esta venta lo deja debiendo ${money(clienteElegido.balance + fiado)}.`
                         : " Esta venta lo deja al dia."
                   )}
                 </p>
@@ -1230,10 +1337,15 @@ export function SaleForm({
             type="button"
             className="w-full"
             size="lg"
-            disabled={pending || cart.length === 0}
+            // Con el reparto incompleto no se deja cobrar: el servidor lo
+            // rechaza igual, pero enterarse recien al apretar, con el cliente
+            // enfrente, es el peor momento.
+            disabled={pending || cart.length === 0 || (dividido && falta !== 0)}
             onClick={confirmSale}
           >
-            {pending
+            {dividido && falta > 0
+              ? `Falta repartir ${money(falta)}`
+              : pending
               ? "Confirmando…"
               : reintentable
                 ? "Reintentar venta"

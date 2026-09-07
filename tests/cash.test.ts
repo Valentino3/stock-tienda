@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
-import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
+import { createTestDb, seedTestUser, seedTestStore, sembrarVentasCrudas } from "./helpers/db";
 import { cashSessions, sales, type CashSession } from "@/db/schema";
 import { openCashSession, closeCashSession, getOpenSession, createCashMovement, getSessionCashMovements } from "@/domain/cash";
 
@@ -26,7 +26,7 @@ describe("cash sessions", () => {
 
   it("closes computing expected cash and difference, ignoring voided sales", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
-    await db.insert(sales).values([
+    await sembrarVentasCrudas(db, [
       { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
       { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 3000, paymentMethod: "tarjeta" },
       { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 500, paymentMethod: "efectivo", voided: true },
@@ -40,7 +40,7 @@ describe("cash sessions", () => {
 
   it("registra gastos/egresos y los resta del efectivo esperado al cerrar", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
-    await db.insert(sales).values([
+    await sembrarVentasCrudas(db, [
       { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
     ]);
     await createCashMovement(db, { storeId: store, sessionId: s.id, kind: "gasto", amount: 300, description: "insumos", userId: "u1" });

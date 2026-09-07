@@ -2,6 +2,7 @@
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { createSale, type Discount } from "@/domain/sales";
+import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import { createClient } from "@/domain/clients";
 import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit } from "@/domain/fiscal-catalogs";
@@ -62,6 +63,9 @@ const ERROR_MESSAGES: Record<string, string> = {
   VARIANT_NOT_FOUND: "Producto no encontrado",
   CLIENT_REQUIRED: "Elegí un cliente para la venta a cuenta.",
   CLIENT_NOT_FOUND: "Cliente no encontrado.",
+  PAYMENT_INPUT_INVALID: "Pago inválido.",
+  INVALID_PAYMENT_METHOD: "Medio de pago inválido.",
+  INVALID_PAYMENT_AMOUNT: "Los montos del pago tienen que ser mayores a cero.",
   SELLER_NOT_IN_STORE: "Ese vendedor no es de esta tienda. Recargá la pantalla y elegilo de nuevo.",
   SELLER_INACTIVE: "Ese vendedor está desactivado. Elegí otro.",
 };
@@ -72,7 +76,10 @@ const ERROR_MESSAGES: Record<string, string> = {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function submitSale(input: {
-  paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+  /** Un solo medio por el total. Excluyente con `pagos`. */
+  paymentMethod?: PaymentMethod;
+  /** Pago dividido: varios medios que tienen que sumar el total. */
+  pagos?: Pago[];
   items: { variantId: number; quantity: number; discount?: Discount }[];
   saleDiscount?: Discount;
   clientId?: number | null;
@@ -93,6 +100,14 @@ export async function submitSale(input: {
       !validDiscount(i.discount)
   );
   if (invalid || !validDiscount(input.saleDiscount)) return { error: "Cantidad o descuento inválido" };
+  // Se valida en el borde igual que los descuentos: el dominio vuelve a
+  // hacerlo, pero acá el mensaje puede ser el que lee el cajero.
+  if (input.pagos !== undefined) {
+    const pagosInvalidos =
+      !Array.isArray(input.pagos) || input.pagos.length === 0 ||
+      input.pagos.some((p) => !esMetodoValido(p?.method) || !Number.isFinite(p?.amount) || p.amount <= 0);
+    if (pagosInvalidos) return { error: "Pago inválido" };
+  }
   if (input.uid !== undefined && !UUID_RE.test(input.uid)) return { error: "Identificador de venta inválido" };
   try {
     // ⚠️ El orden importa: `sellerId` ahora también vive dentro de `input`, así
@@ -102,6 +117,16 @@ export async function submitSale(input: {
     const sale = await createSale(db, { ...input, storeId, sellerId, registeredBy: operador });
     return { ok: true as const, saleId: sale.id, total: sale.total, duplicada: sale.duplicada === true };
   } catch (e) {
+    // El total del servidor va en el mensaje: si un precio cambio con el
+    // carrito abierto, reintentar a ciegas con el total viejo falla siempre.
+    if (e instanceof Error && e.message === "PAYMENT_TOTAL_MISMATCH") {
+      const total = (e as Error & { total?: number }).total;
+      return {
+        error: total != null
+          ? `Los pagos no suman el total de la venta ($ ${total.toFixed(2)}). Cambió un precio: volvé a repartir el pago.`
+          : "Los pagos no suman el total de la venta.",
+      };
+    }
     // Un corte de red no dice si la venta entró: puede haberse perdido solo la
     // respuesta. Se marca como reintentable para que el form reuse el uid en
     // vez de armar un carrito nuevo (que sí cobraría dos veces).

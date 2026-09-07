@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import fc from "fast-check";
+import { sql as sqlRaw } from "drizzle-orm";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants } from "@/db/schema";
 import { openCashSession, closeCashSession, createCashMovement, getOpenSession } from "@/domain/cash";
@@ -17,9 +18,15 @@ import { createClient, recordAccountMovement } from "@/domain/clients";
  * contra el que calcula una suma escrita acá, en el test, sin mirar el dominio.
  *
  *     esperado = inicial
- *              + ventas en efectivo NO anuladas
+ *              + la PARTE en efectivo de las ventas NO anuladas
  *              + cobros de cuenta corriente en efectivo
  *              − gastos y egresos
+ *
+ * Desde el pago dividido una venta puede repartirse entre varios medios, así
+ * que el modelo suma por bucket: lo que entra al cajón es la parte en efectivo,
+ * no el total de la venta. Cada corrida verifica además que los pagos de toda
+ * venta sumen su total — la invariante que sostiene que `sales.payment_method`
+ * sea un dato denormalizado y no una segunda fuente de verdad.
  *
  * Un test de ejemplo prueba una secuencia. Éste prueba las que a nadie se le
  * ocurren: anular la única venta en efectivo del turno, un crédito por
@@ -55,14 +62,23 @@ beforeAll(async () => {
 type Metodo = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
 
 type Op =
-  | { t: "venta"; metodo: Metodo; cantidad: number; anular: boolean }
+  | { t: "venta"; medios: Metodo[]; pesos: number[]; cantidad: number; anular: boolean }
   | { t: "salida"; kind: "gasto" | "egreso"; monto: number }
   | { t: "cuenta"; kind: "pago" | "credito"; metodo: "efectivo" | "transferencia"; monto: number };
 
 const op: fc.Arbitrary<Op> = fc.oneof(
   fc.record({
     t: fc.constant("venta" as const),
-    metodo: fc.constantFrom<Metodo>("efectivo", "transferencia", "tarjeta", "cuenta"),
+    // Uno a cuatro medios sobre la misma venta. `uniqueArray` porque el
+    // dominio consolida los repetidos y el test no está probando eso acá.
+    medios: fc.uniqueArray(
+      fc.constantFrom<Metodo>("efectivo", "transferencia", "tarjeta", "cuenta"),
+      { minLength: 1, maxLength: 4 },
+    ),
+    // Pesos con los que se reparte el total. Se generan pesos y no montos
+    // sueltos para que la partición sume el total POR CONSTRUCCIÓN: con montos
+    // libres, fast-check descartaría casi todo lo que genera.
+    pesos: fc.array(fc.integer({ min: 1, max: 100 }), { minLength: 4, maxLength: 4 }),
     cantidad: fc.integer({ min: 1, max: 5 }),
     anular: fc.boolean(),
   }),
@@ -84,6 +100,23 @@ const turno = fc.record({
   ops: fc.array(op, { minLength: 0, maxLength: 8 }),
 });
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Reparte un total entre varios medios. Escrito acá y no importado del
+ * dominio: el modelo tiene que ser independiente de lo que verifica.
+ *
+ * La última parte es el RESTO y no un porcentaje redondeado: así la suma da el
+ * total exacto por construcción, sin depender de que dos redondeos coincidan.
+ */
+function repartir(total: number, medios: Metodo[], pesos: number[]) {
+  const w = pesos.slice(0, medios.length);
+  const suma = w.reduce((a, b) => a + b, 0);
+  const partes = w.map((peso) => round2((total * peso) / suma));
+  partes[partes.length - 1] = round2(total - partes.slice(0, -1).reduce((a, b) => a + b, 0));
+  return medios.map((method, i) => ({ method, amount: partes[i] }));
+}
+
 describe("el esperado de la caja", () => {
   it("coincide con el modelo para cualquier secuencia de operaciones", async () => {
     await fc.assert(
@@ -97,19 +130,24 @@ describe("el esperado de la caja", () => {
         const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: inicial });
 
         // El modelo: la misma suma, escrita a mano y sin mirar el dominio.
-        let efectivo = 0, salidas = 0;
+        // Un bucket por medio, porque una venta ya no cae entera en uno solo.
+        const ventas: Record<Metodo, number> = {
+          efectivo: 0, transferencia: 0, tarjeta: 0, cuenta: 0,
+        };
+        let cobrosEfectivo = 0, salidas = 0;
 
         for (const o of ops) {
           if (o.t === "venta") {
+            const pagos = repartir(PRECIO * o.cantidad, o.medios, o.pesos);
             const venta = await createSale(db, {
-              storeId: store, sellerId: "u1", paymentMethod: o.metodo,
-              clientId: o.metodo === "cuenta" ? clientId : undefined,
+              storeId: store, sellerId: "u1", pagos,
+              clientId: pagos.some((p) => p.method === "cuenta") ? clientId : undefined,
               items: [{ variantId, quantity: o.cantidad }],
             });
             if (o.anular) {
               await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1", reason: "prueba" });
-            } else if (o.metodo === "efectivo") {
-              efectivo += venta.total;
+            } else {
+              for (const p of pagos) ventas[p.method] = round2(ventas[p.method] + p.amount);
             }
           } else if (o.t === "salida") {
             await createCashMovement(db, {
@@ -122,11 +160,11 @@ describe("el esperado de la caja", () => {
               storeId: store, clientId, kind: o.kind, amount: o.monto,
               method: o.metodo, userId: "u1",
             });
-            if (o.metodo === "efectivo") efectivo += o.monto;
+            if (o.metodo === "efectivo") cobrosEfectivo += o.monto;
           }
         }
 
-        const esperadoModelo = Math.round((inicial + efectivo - salidas) * 100) / 100;
+        const esperadoModelo = round2(inicial + ventas.efectivo + cobrosEfectivo - salidas);
         const cerrada = await closeCashSession(db, {
           storeId: store, sessionId: caja.id, userId: "u1", countedCash: esperadoModelo,
         });
@@ -135,9 +173,31 @@ describe("el esperado de la caja", () => {
         // Contar exactamente lo que el modelo dice tiene que cuadrar.
         expect(cerrada.difference).toBe(0);
 
+        // Los otros dos buckets que el cierre persiste. Antes nadie los
+        // pinchaba: con un solo medio por venta era casi imposible equivocarse,
+        // y con pago dividido es justo donde se mete la parte equivocada.
+        expect(cerrada.totalTransfer).toBe(round2(ventas.transferencia));
+        expect(cerrada.totalCard).toBe(round2(ventas.tarjeta));
+
         // Y la hoja impresa no puede decir otra cosa que el sistema.
         const hoja = (await getCashSessionClose(db, store, caja.id))!;
         expect(hoja.efectivoEsperado).toBe(cerrada.expectedCash);
+        // Ata la SEGUNDA agrupación al modelo COMPLETO, no solo a su tajada de
+        // efectivo: es la que se rompe con pago dividido.
+        for (const m of ["efectivo", "transferencia", "tarjeta", "cuenta"] as Metodo[]) {
+          expect(hoja.porMedio.find((x) => x.method === m)?.total ?? 0).toBe(round2(ventas[m]));
+        }
+
+        // Ninguna venta puede quedar con pagos que no sumen su total, ni sin
+        // pagos. Es lo que hace que `sales.payment_method` pueda ser un dato
+        // denormalizado sin volverse una segunda fuente de verdad.
+        const descuadres = await db.execute(sqlRaw`
+          select s.id from sales s
+          left join sale_payments p on p.sale_id = s.id
+          group by s.id, s.total
+          having coalesce(round(sum(p.amount), 2), -1) <> s.total`);
+        const filas = Array.isArray(descuadres) ? descuadres : (descuadres as any).rows;
+        expect(filas).toEqual([]);
       }),
       // Cada corrida abre, opera y cierra una caja real contra PGlite. 60 son
       // ~450 secuencias distintas de operaciones y la suite sigue siendo

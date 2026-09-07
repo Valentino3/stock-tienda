@@ -82,7 +82,17 @@ export function RemitoImprimible({ remito, emisor }: { remito: Remito; emisor: E
           <p>CLIENTE : {remito.clientName ?? "Consumidor Final"}</p>
           {remito.clientDoc && <p className="figure">CUIT : {remito.clientDoc}</p>}
         </div>
-        <p>condición de venta : {METODO[remito.paymentMethod] ?? remito.paymentMethod}</p>
+        {/* Con un solo medio el papel queda identico al de siempre; con pago
+            dividido se detallan las partes, porque "Efectivo" a secas en una
+            venta que se pago mitad con tarjeta es un papel que miente. */}
+        <p>
+          condición de venta :{" "}
+          {remito.pagos.length <= 1
+            ? METODO[remito.paymentMethod] ?? remito.paymentMethod
+            : remito.pagos
+                .map((p) => `${METODO[p.method] ?? p.method} ${money(p.amount)}`)
+                .join(" + ")}
+        </p>
       </div>
       <Regla />
 

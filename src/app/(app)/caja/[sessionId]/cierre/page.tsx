@@ -108,7 +108,7 @@ export default async function CierrePage({ params }: { params: Promise<{ session
             <Dato label="Salidas (gastos y egresos)" valor={money(cierre.totalSalidas)} figure />
           </dl>
 
-          <h2 className="ledger-label mt-5">Ventas por medio de pago</h2>
+          <h2 className="ledger-label mt-5">Cobrado por medio de pago</h2>
           {cierre.porMedio.length === 0 ? (
             <p className="text-sm text-muted-foreground">Sin ventas en este turno.</p>
           ) : (
@@ -117,7 +117,11 @@ export default async function CierrePage({ params }: { params: Promise<{ session
                 {cierre.porMedio.map((m) => (
                   <tr key={m.method} className="border-b border-border">
                     <td className="py-1">{METODO[m.method] ?? m.method}</td>
-                    <td className="figure py-1 text-right text-muted-foreground">{number(m.count)} venta(s)</td>
+                    {/* PAGOS y no ventas: una venta cobrada con dos medios cuenta en los
+                        dos, asi que la suma de esta columna ya no es la cantidad de
+                        ventas del turno. Decir "venta(s)" daria una cifra que no
+                        cuadra con nada, y el dueño la usa para controlar. */}
+                    <td className="figure py-1 text-right text-muted-foreground">{number(m.count)} pago(s)</td>
                     <td className="figure py-1 text-right font-medium">{money(m.total)}</td>
                   </tr>
                 ))}

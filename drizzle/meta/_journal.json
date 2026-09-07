@@ -232,6 +232,13 @@
       "when": 1788798760626,
       "tag": "0032_vendedor_de_la_venta",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788800556488,
+      "tag": "0033_pago_dividido",
+      "breakpoints": true
     }
   ]
 }

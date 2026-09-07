@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
-  products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores,
+  products, productVariants, sales, saleItems, salePayments, cashSessions, clients, clientAccountMovements, stores,
 } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 import { calcularTotales, esListaValida, resolverPrecio, type Discount, type PriceList } from "@/domain/sales";
@@ -470,6 +470,14 @@ export async function replaySale(
         // dos remitos con el mismo numero.
         remitoNumero: await reservarNumeroDeRemito(tx, storeId),
       }).returning();
+
+      // La venta offline se cobro con UN medio (la cola no divide el pago),
+      // pero la fila va igual: el arqueo suma de `sale_payments`, asi que sin
+      // esto cada venta sincronizada desapareceria del esperado de su caja y
+      // apareceria como un faltante que nadie puede explicar.
+      await tx.insert(salePayments).values({
+        saleId: sale.id, method: venta.paymentMethod, amount: total,
+      });
 
       if (venta.paymentMethod === "cuenta") {
         await tx.insert(clientAccountMovements).values({
