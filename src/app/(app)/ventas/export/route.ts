@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import { and, desc, eq, gte, lt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, or } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, user } from "@/db/schema";
 import { requireStore } from "@/lib/session";
@@ -12,8 +12,10 @@ export async function GET(req: Request) {
   const { from, to, label } = rangeFromQuery(req.url);
 
   const conditions = [eq(sales.storeId, storeId), gte(sales.createdAt, from), lt(sales.createdAt, to)];
-  // Empleado: solo sus ventas. Dueño: todas.
-  if (role !== "owner") conditions.push(eq(sales.sellerId, id));
+  // Empleado: lo que vendio O lo que anoto. Dueño: todas. Misma regla que
+  // /ventas — si el Excel mostrara menos que la pantalla, el empleado creeria
+  // que le falta una venta.
+  if (role !== "owner") conditions.push(or(eq(sales.sellerId, id), eq(sales.registeredBy, id))!);
 
   const rows = await db
     .select({ sale: sales, sellerName: user.name })

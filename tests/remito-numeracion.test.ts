@@ -145,7 +145,7 @@ describe("getRemito", () => {
     await seedTestUser(db, "empleado", "employee", store);
     const venta = await vender(); // la vendió u1
 
-    expect(await getRemito(db, store, venta.id, { sellerId: "empleado" })).toBeNull();
-    expect(await getRemito(db, store, venta.id, { sellerId: "u1" })).not.toBeNull();
+    expect(await getRemito(db, store, venta.id, { visibleParaUserId: "empleado" })).toBeNull();
+    expect(await getRemito(db, store, venta.id, { visibleParaUserId: "u1" })).not.toBeNull();
   });
 });

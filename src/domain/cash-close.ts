@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   cashMovements, cashSessions, clientAccountMovements, clients, products, productVariants,
@@ -272,15 +272,20 @@ export async function getRemito(
   db: any,
   storeId: number,
   saleId: number,
-  // Empleado: solo sus propias ventas, misma regla que /ventas. Se filtra en
-  // la CONSULTA y no despues, para que el resultado sea indistinguible de una
-  // venta que no existe — un 404 no confirma que el id sea de otro vendedor.
-  opts: { sellerId?: string } = {},
+  // Empleado: lo que vendio O lo que anoto, misma regla que /ventas. Se filtra
+  // en la CONSULTA y no despues, para que el resultado sea indistinguible de
+  // una venta que no existe — un 404 no confirma que el id sea de otro.
+  opts: { visibleParaUserId?: string } = {},
 ): Promise<Remito | null> {
   // Scope por tienda: los ids son secuenciales y un `eq(id)` pelado imprimiria
   // la venta de otro comercio.
   const condiciones = [eq(sales.storeId, storeId), eq(sales.id, saleId)];
-  if (opts.sellerId) condiciones.push(eq(sales.sellerId, opts.sellerId));
+  if (opts.visibleParaUserId) {
+    condiciones.push(or(
+      eq(sales.sellerId, opts.visibleParaUserId),
+      eq(sales.registeredBy, opts.visibleParaUserId),
+    )!);
+  }
 
   const [remito] = await armarRemitos(db, and(...condiciones), null);
   return remito ?? null;

@@ -126,7 +126,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // `snap?.v === CARRITO_VERSION` descarta solo el carrito viejo; sin el bump, un
 // cajero con el carrito armado en el momento del deploy rehidrataría líneas sin
 // esos campos y `precioDe` devolvería undefined.
-const CARRITO_VERSION = 2;
+// v3: el carrito guarda tambien el vendedor elegido. Sin el bump, un carrito
+// armado justo en el momento del deploy rehidrataria un snapshot sin el campo.
+const CARRITO_VERSION = 3;
 const carritoKey = (storeId: number) => `stock-tienda:carrito:${storeId}`;
 
 type CarritoGuardado = {
@@ -134,6 +136,7 @@ type CarritoGuardado = {
   uid: string;
   cart: CartItem[];
   paymentMethod: PaymentMethod;
+  sellerId: string;
   clientId: string;
   saleDiscountKind: DiscountKind;
   saleDiscountValue: number;
@@ -216,9 +219,14 @@ function DiscountControl({
 }
 
 export function SaleForm({
-  clients: initialClients, storeId, cashSessionId, esDueno, preciosActualizadosEn = null,
+  clients: initialClients, storeId, cashSessionId, esDueno, vendedores, usuarioId,
+  preciosActualizadosEn = null,
 }: {
   clients: ClientOption[]; storeId: number; cashSessionId: number; esDueno: boolean;
+  /** Usuarios activos de la tienda a los que se puede acreditar la venta. */
+  vendedores: { id: string; name: string }[];
+  /** El de la sesion: default del selector y, siempre, quien queda como que anoto. */
+  usuarioId: string;
   /** Ultimo recalculo de precios de la tienda, en ISO. null = nunca hubo. */
   preciosActualizadosEn?: string | null;
 }) {
@@ -276,6 +284,15 @@ export function SaleForm({
   // `item.quantity` sigue siendo la única fuente de verdad de la plata— y por
   // eso no se persiste en localStorage.
   const [qtyDraft, setQtyDraft] = useState<{ variantId: number; value: string } | null>(null);
+  // A quien se le acredita esta venta. Arranca en quien esta operando, que es
+  // el 95% de los casos y tiene que costar cero toques.
+  const [sellerId, setSellerId] = useState(usuarioId);
+  // Uno mismo primero: el caso frecuente tiene que estar arriba, y el nombre
+  // propio se reconoce más rápido que una posición alfabética.
+  const vendedoresOrdenados = [
+    ...vendedores.filter((v) => v.id === usuarioId),
+    ...vendedores.filter((v) => v.id !== usuarioId),
+  ];
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
   const [clients, setClients] = useState<ClientOption[]>(initialClients);
   const [clientId, setClientId] = useState<string>("");
@@ -306,6 +323,12 @@ export function SaleForm({
         setCart(snap.cart);
         setSaleUid(snap.uid ?? "");
         setPaymentMethod(snap.paymentMethod ?? "efectivo");
+        // Solo si sigue siendo un vendedor valido: uno que se fue de la tienda
+        // o quedo desactivado rebotaria con SELLER_NOT_IN_STORE al confirmar,
+        // con la cola enfrente. Cae al default y sigue.
+        if (snap.sellerId && vendedores.some((v) => v.id === snap.sellerId)) {
+          setSellerId(snap.sellerId);
+        }
         setClientId(snap.clientId ?? "");
         setSaleDiscountKind(snap.saleDiscountKind ?? "amount");
         setSaleDiscountValue(snap.saleDiscountValue ?? 0);
@@ -315,7 +338,7 @@ export function SaleForm({
       // con el carrito vacío. Nunca vale romper la pantalla de venta por esto.
     }
     hidratado.current = true;
-  }, [storeId]);
+  }, [storeId, vendedores]);
 
   useEffect(() => {
     if (!hidratado.current) return;
@@ -325,13 +348,13 @@ export function SaleForm({
         return;
       }
       const snap: CarritoGuardado = {
-        v: CARRITO_VERSION, uid: saleUid, cart, paymentMethod, clientId, saleDiscountKind, saleDiscountValue,
+        v: CARRITO_VERSION, uid: saleUid, cart, paymentMethod, sellerId, clientId, saleDiscountKind, saleDiscountValue,
       };
       localStorage.setItem(carritoKey(storeId), JSON.stringify(snap));
     } catch {
       // Idem: guardar es best-effort.
     }
-  }, [storeId, cart, saleUid, paymentMethod, clientId, saleDiscountKind, saleDiscountValue]);
+  }, [storeId, cart, saleUid, paymentMethod, sellerId, clientId, saleDiscountKind, saleDiscountValue]);
 
   // Alta de cliente inline (para venta a cuenta sin salir de la pantalla).
   const [newClientOpen, setNewClientOpen] = useState(false);
@@ -657,6 +680,7 @@ export function SaleForm({
     startTransition(async () => {
       const res = await submitSale({
         paymentMethod,
+        sellerId,
         clientId: paymentMethod === "cuenta" ? clienteIdNumerico ?? undefined : undefined,
         items: cart.map((i) => ({
           variantId: i.variantId,
@@ -700,6 +724,10 @@ export function SaleForm({
         setSaleDiscountValue(0);
         setClientId("");
         setPaymentMethod("efectivo");
+        // Un vendedor pegado entre ventas es el modo de falla silencioso de
+        // toda la feature: la venta siguiente se le acredita al compañero sin
+        // que nadie lo note.
+        setSellerId(usuarioId);
       }
     });
   }
@@ -757,6 +785,7 @@ export function SaleForm({
     setSaleDiscountValue(0);
     setClientId("");
     setPaymentMethod("efectivo");
+    setSellerId(usuarioId);
   }
 
   return (
@@ -1093,6 +1122,46 @@ export function SaleForm({
               labelText="Sobre total"
             />
           </div>
+
+          {/*
+            Solo si hay a quién elegir: en un local de un solo usuario un
+            desplegable con una opción es un control muerto en el camino más
+            caliente de la app. Va acá, debajo del medio de pago, y no más
+            arriba: dos locales usan esta pantalla todos los días de memoria, y
+            mover el Total o el Medio de pago se paga en velocidad de mostrador.
+          */}
+          {vendedores.length > 1 && (
+            <div className="space-y-2">
+              <SectionLabel>Vendedor</SectionLabel>
+              <Select
+                // Sin conexión la venta se acredita a quien sincroniza (ver
+                // /ventas/replay), así que el valor MOSTRADO tiene que ser ése.
+                // Dejar el nombre del compañero en un control deshabilitado
+                // sería la mentira exacta que hay que evitar. El estado no se
+                // pisa: si vuelve internet, la elección sigue.
+                value={offline ? usuarioId : sellerId}
+                onChange={(e) => setSellerId(e.target.value)}
+                aria-label="Vendedor"
+                disabled={offline}
+              >
+                {vendedoresOrdenados.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.id === usuarioId ? `${v.name} (vos)` : v.name}
+                  </option>
+                ))}
+              </Select>
+              {offline ? (
+                <p className="text-xs text-muted-foreground">
+                  Sin conexión la venta se acredita a vos.
+                </p>
+              ) : sellerId !== usuarioId ? (
+                <p className="text-xs text-muted-foreground">
+                  Se le acredita a {vendedores.find((v) => v.id === sellerId)?.name}. Queda
+                  registrado que la anotaste vos.
+                </p>
+              ) : null}
+            </div>
+          )}
 
           <div className="space-y-2">
             <SectionLabel>Medio de pago</SectionLabel>

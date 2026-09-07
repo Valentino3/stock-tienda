@@ -1,5 +1,10 @@
-import { and, desc, eq, exists, gte, inArray, lt, not } from "drizzle-orm";
+import { and, desc, eq, exists, gte, inArray, lt, not, or } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { sales, saleItems, productVariants, products, user, comprobantes } from "@/db/schema";
+
+// Segunda vuelta sobre `user` para el que anoto la venta. Es un join por PK:
+// cuesta nada, y sin el la columna de auditoria no se ve en ningun lado.
+const registrador = alias(user, "registrador");
 
 const PAGE_SIZE = 50;
 
@@ -7,7 +12,18 @@ export type SalesHistoryOpts = {
   storeId: number;
   from?: Date;
   to?: Date;
+  /** Filtro explícito por vendedor acreditado (el <select> del dueño). */
   sellerId?: string;
+  /**
+   * Recorte por usuario para quien NO ve toda la tienda: ve lo que vendió O lo
+   * que anotó.
+   *
+   * El segundo término no es un lujo: sin él, un empleado que anota la venta de
+   * un compañero la pierde de vista justo cuando le van a preguntar por ella —
+   * o cuando hay que anularla. Se compone con `sellerId` por AND, así que el
+   * <select> de vendedor sigue funcionando dentro de lo que puede ver.
+   */
+  visibleParaUserId?: string;
   page: number;
   /** "sin" = todavía sin factura viva; "con" = ya tiene una emitida o en curso. */
   facturacion?: "sin" | "con";
@@ -21,6 +37,12 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
 
   const conditions = [eq(sales.storeId, opts.storeId), gte(sales.createdAt, from), lt(sales.createdAt, to)];
   if (opts.sellerId) conditions.push(eq(sales.sellerId, opts.sellerId));
+  if (opts.visibleParaUserId) {
+    conditions.push(or(
+      eq(sales.sellerId, opts.visibleParaUserId),
+      eq(sales.registeredBy, opts.visibleParaUserId),
+    )!);
+  }
 
   // El filtro va en la QUERY y no después de paginar: filtrar en memoria sobre
   // una página ya cortada daría páginas de tamaño distinto y saltearía ventas.
@@ -38,9 +60,10 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
   }
 
   const rows = await db
-    .select({ sale: sales, sellerName: user.name })
+    .select({ sale: sales, sellerName: user.name, registradaPorName: registrador.name })
     .from(sales)
     .innerJoin(user, eq(sales.sellerId, user.id))
+    .innerJoin(registrador, eq(sales.registeredBy, registrador.id))
     .where(and(...conditions))
     .orderBy(desc(sales.createdAt), desc(sales.id))
     .limit(PAGE_SIZE + 1)

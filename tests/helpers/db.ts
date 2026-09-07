@@ -68,7 +68,7 @@ export async function seedTestSale(
   const session = abierta ?? (await db.insert(schema.cashSessions)
     .values({ storeId: opts.storeId, openedBy: userId, openingCash: 0 }).returning())[0];
   const [sale] = await db.insert(schema.sales).values({
-    storeId: opts.storeId, sellerId: userId, cashSessionId: session.id,
+    storeId: opts.storeId, sellerId: userId, registeredBy: userId, cashSessionId: session.id,
     total, discountAmount: opts.discountAmount ?? 0, paymentMethod: "efectivo",
   }).returning();
   await db.insert(schema.saleItems)

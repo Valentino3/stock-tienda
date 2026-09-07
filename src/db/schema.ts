@@ -445,7 +445,25 @@ export const sales = pgTable("sales", {
   // anteriores a esta columna y para cualquier alta que no venga del mostrador.
   uid: text("uid"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  /**
+   * A quién se le ACREDITA la venta. Es el eje comercial: `getSellerSalesSummary`
+   * agrupa por acá y sobre eso se liquidan las comisiones.
+   *
+   * Se puede elegir en el mostrador, así que puede no ser el usuario de la
+   * sesión: un empleado anota la venta de un compañero que no está. Por eso
+   * `createSale` valida que sea un usuario ACTIVO de ESTA tienda — el id llega
+   * del navegador y acá se paga plata.
+   */
   sellerId: text("seller_id").notNull().references(() => user.id),
+  /**
+   * Quién la ANOTÓ. Es el eje operativo, y sale siempre de la sesión.
+   *
+   * Son dos columnas y no una porque son dos preguntas distintas. Sin ésta, un
+   * empleado puede mover una comisión a cualquiera sin dejar rastro, y la
+   * comisión deja de ser defendible cuando se discute. Es también la que
+   * permite que quien anotó una venta ajena la siga viendo en su historial.
+   */
+  registeredBy: text("registered_by").notNull().references(() => user.id),
   cashSessionId: integer("cash_session_id").notNull().references(() => cashSessions.id),
   total: numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull(),
   // Descuento general resuelto ($) sobre el subtotal; `total` ya es el neto final.
@@ -497,6 +515,10 @@ export const sales = pgTable("sales", {
   // de imprimir el duplicado. Los NULL no chocan, asi que las ventas viejas
   // sin remito no se ven afectadas.
   uniqueIndex("sales_store_remito_idx").on(t.storeId, t.remitoNumero),
+  // El historial de un empleado pasa a filtrar por "vendió O anotó". Sin este
+  // índice ese OR se resuelve con un seq scan sobre todas las ventas de la
+  // tienda, y /ventas es una pantalla que se abre todo el día.
+  index("sales_store_registered_by_idx").on(t.storeId, t.registeredBy),
 ]);
 
 // ---- gastronomía: mesas y órdenes ----

@@ -30,7 +30,7 @@ describe("getSalesHistory", () => {
     // actually has something to exclude.
     await db.insert(sales).values({
       storeId: store,
-      sellerId: "u1",
+      sellerId: "u1", registeredBy: "u1",
       cashSessionId,
       total: 1000,
       paymentMethod: "efectivo",
@@ -60,7 +60,7 @@ describe("getSalesHistory", () => {
   it("an explicit wide from/to range bypasses the 30-day default but still paginates", async () => {
     await db.insert(sales).values({
       storeId: store,
-      sellerId: "u1",
+      sellerId: "u1", registeredBy: "u1",
       cashSessionId,
       total: 1000,
       paymentMethod: "efectivo",
@@ -82,12 +82,69 @@ describe("getSalesHistory", () => {
     const store2 = await seedTestStore(db, "t2");
     await seedTestUser(db, "u2", "owner", store2);
     const s2 = await openCashSession(db, { storeId: store2, userId: "u2", openingCash: 0 });
-    await db.insert(sales).values({ storeId: store2, sellerId: "u2", cashSessionId: s2.id, total: 999, paymentMethod: "efectivo" });
+    await db.insert(sales).values({ storeId: store2, sellerId: "u2", registeredBy: "u2", cashSessionId: s2.id, total: 999, paymentMethod: "efectivo" });
     await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }] });
 
     const r1 = await getSalesHistory(db, { storeId: store, page: 1 });
     expect(r1.sales).toHaveLength(1);
     expect(r1.sales.every((row: { sale: { storeId: number } }) => row.sale.storeId === store)).toBe(true);
+  });
+
+  /**
+   * Con vendedor elegible, "mis ventas" deja de ser una sola columna.
+   *
+   * Un empleado que anota la venta de un compañero ausente tiene que seguir
+   * viéndola: es la venta que él cargó, sobre la que le van a preguntar, y la
+   * que quizá haya que anular. Filtrar solo por `sellerId` la hace desaparecer
+   * justo de la pantalla de quien la hizo.
+   */
+  describe("visibleParaUserId", () => {
+    beforeEach(async () => {
+      await seedTestUser(db, "ana", "employee", store);
+      await seedTestUser(db, "beto", "employee", store);
+    });
+
+    const vender = (sellerId: string, registeredBy: string) =>
+      createSale(db, {
+        storeId: store, sellerId, registeredBy,
+        paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }],
+      });
+
+    it("el empleado ve la venta que anotó para otro", async () => {
+      await vender("beto", "ana");
+      const r = await getSalesHistory(db, { storeId: store, visibleParaUserId: "ana", page: 1 });
+      expect(r.sales).toHaveLength(1);
+      expect(r.sales[0].sale.sellerId).toBe("beto");
+    });
+
+    it("el empleado ve sus propias ventas", async () => {
+      await vender("ana", "ana");
+      const r = await getSalesHistory(db, { storeId: store, visibleParaUserId: "ana", page: 1 });
+      expect(r.sales).toHaveLength(1);
+    });
+
+    it("el empleado NO ve una venta ajena que no anotó", async () => {
+      await vender("beto", "beto");
+      const r = await getSalesHistory(db, { storeId: store, visibleParaUserId: "ana", page: 1 });
+      expect(r.sales).toHaveLength(0);
+    });
+
+    it("el dueño (sin recorte) las ve todas", async () => {
+      await vender("beto", "beto");
+      await vender("beto", "ana");
+      const r = await getSalesHistory(db, { storeId: store, page: 1 });
+      expect(r.sales).toHaveLength(2);
+    });
+
+    it("el filtro por vendedor se compone con el recorte, no lo reemplaza", async () => {
+      await vender("beto", "ana");   // visible para ana, acreditada a beto
+      await vender("ana", "ana");    // visible para ana, acreditada a ana
+      const r = await getSalesHistory(db, {
+        storeId: store, visibleParaUserId: "ana", sellerId: "beto", page: 1,
+      });
+      expect(r.sales).toHaveLength(1);
+      expect(r.sales[0].sale.sellerId).toBe("beto");
+    });
   });
 
   // El filtro va en la QUERY y no después de paginar: filtrar en memoria sobre

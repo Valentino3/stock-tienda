@@ -225,6 +225,13 @@
       "when": 1788351098956,
       "tag": "0031_tienda_de_prueba",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1788798760626,
+      "tag": "0032_vendedor_de_la_venta",
+      "breakpoints": true
     }
   ]
 }

@@ -27,9 +27,9 @@ describe("cash sessions", () => {
   it("closes computing expected cash and difference, ignoring voided sales", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
     await db.insert(sales).values([
-      { storeId: store, sellerId: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
-      { storeId: store, sellerId: "u1", cashSessionId: s.id, total: 3000, paymentMethod: "tarjeta" },
-      { storeId: store, sellerId: "u1", cashSessionId: s.id, total: 500, paymentMethod: "efectivo", voided: true },
+      { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 3000, paymentMethod: "tarjeta" },
+      { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 500, paymentMethod: "efectivo", voided: true },
     ]);
     const closed = await closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 2900 });
     expect(closed.expectedCash).toBe(3000); // 1000 + 2000
@@ -41,7 +41,7 @@ describe("cash sessions", () => {
   it("registra gastos/egresos y los resta del efectivo esperado al cerrar", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
     await db.insert(sales).values([
-      { storeId: store, sellerId: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
     ]);
     await createCashMovement(db, { storeId: store, sessionId: s.id, kind: "gasto", amount: 300, description: "insumos", userId: "u1" });
     await createCashMovement(db, { storeId: store, sessionId: s.id, kind: "egreso", amount: 200, description: "retiro", userId: "u1" });

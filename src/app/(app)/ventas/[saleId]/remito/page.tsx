@@ -28,7 +28,7 @@ export default async function RemitoPage({ params }: { params: Promise<{ saleId:
   if (!Number.isInteger(id)) notFound();
 
   const remito = await getRemito(db, storeId, id, {
-    sellerId: role === "owner" ? undefined : userId,
+    visibleParaUserId: role === "owner" ? undefined : userId,
   });
   if (!remito) notFound();
 

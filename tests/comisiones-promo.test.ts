@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
+import fc from "fast-check";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants } from "@/db/schema";
 import { openCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
 import { getSellerSalesSummary } from "@/domain/reports";
 import { eq } from "drizzle-orm";
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /**
  * Base de comisiones partida entre promo y no promo.
@@ -125,4 +128,95 @@ describe("getSellerSalesSummary con promo", () => {
     // comercio, y el sistema no la toma por él.
     expect(r.normal + r.promo).toBe(3000);
   });
+});
+
+/**
+ * 🔴 La atribución, contra cualquier reparto de vendedor y registrador.
+ *
+ * El mostrador ahora deja elegir a quién se le acredita una venta, y sobre esa
+ * columna se liquidan comisiones. El riesgo no es que el número esté un poco
+ * mal: es que el resumen agrupe por la columna equivocada y le pague a quien
+ * apretó el botón en vez de a quien vendió, o que se pierda plata al agrupar.
+ *
+ * Se genera el reparto en vez de enumerar casos porque lo que hay que saber no
+ * es que un caso anda, sino que ninguna combinación de (vendedor, registrador)
+ * puede mover plata de un empleado a otro ni hacerla desaparecer.
+ */
+describe("atribución por vendedor", () => {
+  const EMPLEADOS = ["ana", "beto", "caro"] as const;
+
+  beforeEach(async () => {
+    for (const e of EMPLEADOS) await seedTestUser(db, e, "employee", store);
+  });
+
+  it("no pierde ni inventa plata para ningún reparto de vendedor/registrador", async () => {
+    await fc.assert(
+      fc.asyncProperty(
+        fc.array(
+          fc.record({
+            vendedor: fc.constantFrom(...EMPLEADOS),
+            registrador: fc.constantFrom(...EMPLEADOS),
+            cantidad: fc.integer({ min: 1, max: 3 }),
+            promo: fc.boolean(),
+          }),
+          { minLength: 1, maxLength: 6 },
+        ),
+        async (ventas) => {
+          // Base propia por corrida: la propiedad se afirma sobre lo que ella
+          // misma vendió, no sobre lo que dejó la corrida anterior.
+          db = await createTestDb();
+          store = await seedTestStore(db);
+          await seedTestUser(db, "u1", "owner", store);
+          for (const e of EMPLEADOS) await seedTestUser(db, e, "employee", store);
+          const [p1] = await db.insert(products)
+            .values({ storeId: store, name: "Normal", basePrice: 1000 }).returning();
+          const [v1] = await db.insert(productVariants)
+            .values({ storeId: store, productId: p1.id, name: "", stock: 1000 }).returning();
+          const [p2] = await db.insert(products)
+            .values({ storeId: store, name: "En promo", basePrice: 300, isPromo: true }).returning();
+          const [v2] = await db.insert(productVariants)
+            .values({ storeId: store, productId: p2.id, name: "", stock: 1000 }).returning();
+          await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+
+          // El modelo: la suma esperada por vendedor, escrita acá y sin mirar
+          // el dominio.
+          const esperado = new Map<string, number>();
+          for (const v of ventas) {
+            const venta = await createSale(db, {
+              storeId: store,
+              sellerId: v.vendedor,
+              registeredBy: v.registrador,
+              paymentMethod: "efectivo",
+              items: [{ variantId: v.promo ? v2.id : v1.id, quantity: v.cantidad }],
+            });
+            esperado.set(v.vendedor, round2((esperado.get(v.vendedor) ?? 0) + venta.total));
+          }
+
+          const filas = await getSellerSalesSummary(db, store, RANGO);
+          const porId = new Map(filas.map((f) => [f.sellerId, f]));
+
+          // 1. Cada vendedor recibe exactamente lo suyo. Si el resumen agrupara
+          //    por el registrador, esto falla en cuanto los dos difieren.
+          for (const [sellerId, total] of esperado) {
+            expect(porId.get(sellerId)?.total).toBe(total);
+          }
+
+          // 2. Nadie que solo registró aparece como vendedor: es la forma que
+          //    toma un bug de agrupación por la columna equivocada.
+          for (const f of filas) expect(esperado.has(f.sellerId)).toBe(true);
+
+          // 3. No se pierde ni se inventa plata en el agrupamiento.
+          const totalSistema = round2(filas.reduce((a, f) => a + f.total, 0));
+          const totalModelo = round2([...esperado.values()].reduce((a, b) => a + b, 0));
+          expect(totalSistema).toBe(totalModelo);
+
+          // 4. El invariante de siempre sigue valiendo con registrador distinto.
+          for (const f of filas) expect(round2(f.normal + f.promo)).toBe(f.total);
+        },
+      ),
+      // Cada corrida arma una base entera contra PGlite: 25 alcanzan para
+      // recorrer los repartios que importan sin volver la suite incorrible.
+      { numRuns: 25 },
+    );
+  }, 120_000);
 });

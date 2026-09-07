@@ -135,6 +135,17 @@ async function main() {
   await db.insert(schema.productVariants)
     .values({ storeId: cartas.id, productId: remera.id, name: "", sku: "SOBRE-1", stock: 10 });
 
+  // Un empleado ademas del dueño: es lo que hace que el selector de vendedor
+  // exista en /vender (con un solo usuario no se renderiza). Un usuario no
+  // mueve plata, asi que no toca ningun arqueo que los specs afirmen.
+  await ctx.internalAdapter.createUser({
+    email: "empleado@test.local", name: "Empleado", emailVerified: true,
+  });
+  const [emp] = await db.select().from(schema.user)
+    .where(eq(schema.user.email, "empleado@test.local"));
+  await db.update(schema.user).set({ role: "employee", storeId: cartas.id })
+    .where(eq(schema.user.id, emp.id));
+
   await sembrarCatalogoDeCartas(db, schema, cartas.id);
 
   console.log("\nListo. Tiendas de prueba:");
