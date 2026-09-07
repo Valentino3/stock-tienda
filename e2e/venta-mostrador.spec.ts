@@ -62,3 +62,53 @@ test("no deja vender sin stock", async ({ page }) => {
   // El carrito se niega: es la guarda que impide sobrevender.
   await expect(page.getByText(/sin stock/i)).toBeVisible();
 });
+
+/**
+ * La cantidad se puede escribir con el teclado.
+ *
+ * Usa Pikachu y no "Sobre Pokémon" a propósito: el test de arriba deja el
+ * sobre en stock 0, y reponerlo cambiaría la foto de /productos que saca
+ * visual.spec.ts. Tampoco vende: los montos exactos del arqueo son de los dos
+ * tests de arriba y de cuenta-dividida.
+ */
+test("la cantidad se puede tipear, y se clampea al stock", async ({ page }) => {
+  await asegurarCajaAbierta(page);
+
+  await page.goto("/vender");
+  // Por SKU exacto: la búsqueda lo rankea primero, así que `.first()` es la
+  // variante que se quiere y no la otra edición de Pikachu.
+  await page.getByPlaceholder(/buscar producto o sku/i).fill("PKM-PIK-JU-NM-EN");
+  const opcion = page.getByRole("button", { name: /pikachu/i }).first();
+  await expect(opcion).toBeVisible();
+  await opcion.click();
+
+  const cantidad = page.getByLabel(/^cantidad de/i);
+  await expect(cantidad).toHaveValue("1");
+
+  // Tres a 12.000: el total se actualiza mientras se tipea.
+  await cantidad.fill("3");
+  await expect(page.getByText("$ 36.000,00").first()).toBeVisible();
+
+  // Pedir más de lo que hay muestra lo tipeado, avisa, y cobra el stock.
+  await cantidad.fill("99");
+  await expect(page.getByRole("alert").getByText(/solo hay 14/i)).toBeVisible();
+  await expect(page.getByText("$ 168.000,00").first()).toBeVisible();
+
+  // Vaciar el campo no colapsa la línea ni cambia el total: es un campo a
+  // medio escribir, no un pedido de vender cero.
+  await cantidad.fill("");
+  await expect(page.getByText("$ 168.000,00").first()).toBeVisible();
+  await cantidad.blur();
+  await expect(cantidad).toHaveValue("14");
+
+  // Los botones siguen siendo el camino de un toque: los usa el helper
+  // `pedir()` de servicio-gastronomico.spec.ts.
+  await page.getByRole("button", { name: /restar uno/i }).click();
+  await expect(cantidad).toHaveValue("13");
+  await page.getByRole("button", { name: /sumar uno/i }).click();
+  await expect(cantidad).toHaveValue("14");
+
+  // Se deja el carrito vacío: la pantalla la fotografía visual.spec.ts.
+  await page.getByRole("button", { name: /quitar/i }).click();
+  await expect(page.getByText(/el carrito está vacío/i)).toBeVisible();
+});
