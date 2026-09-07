@@ -23,6 +23,7 @@ import {
 } from "@/lib/offline/estado";
 import type { VentaEnCola } from "@/lib/offline/db";
 import { searchVariants, submitSale, createClientForSale } from "./actions";
+import { MAX_UNIDADES, sanitizarCantidad, cantidadTipeada } from "./cantidad";
 import { TicketOffline } from "./ticket-offline";
 
 type SearchResult = Awaited<ReturnType<typeof searchVariants>>[number];
@@ -96,8 +97,11 @@ function precioDe(i: CartItem): number {
 const listaDisponible = (i: CartItem, l: PriceList) =>
   l === "venta" || (l === "efectivo" ? i.priceCash != null : i.priceWholesale != null);
 
-/** Tope de cantidad de una línea. Sin stock trackeado no hay techo. */
-const topeDe = (i: CartItem) => (i.llevaStock ? i.stock : Number.POSITIVE_INFINITY);
+/**
+ * Tope de cantidad de una línea. Sin stock trackeado no hay existencias contra
+ * las que clampear, pero tampoco puede no haber techo: ver MAX_UNIDADES.
+ */
+const topeDe = (i: CartItem) => (i.llevaStock ? i.stock : MAX_UNIDADES);
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "efectivo", label: "Efectivo" },
@@ -266,6 +270,12 @@ export function SaleForm({
   const [terminoBuscado, setTerminoBuscado] = useState("");
   const [reintentandoConexion, setReintentandoConexion] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
+  // Lo que el cajero está tipeando en el campo de cantidad. Un solo slot:
+  // nada más una línea puede tener el foco, así que no hace falta un mapa
+  // paralelo al carrito. Es texto a medio escribir, no una cantidad —
+  // `item.quantity` sigue siendo la única fuente de verdad de la plata— y por
+  // eso no se persiste en localStorage.
+  const [qtyDraft, setQtyDraft] = useState<{ variantId: number; value: string } | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("efectivo");
   const [clients, setClients] = useState<ClientOption[]>(initialClients);
   const [clientId, setClientId] = useState<string>("");
@@ -580,6 +590,25 @@ export function SaleForm({
 
   function patchItem(variantId: number, patch: Partial<CartItem>) {
     setCart((prev) => prev.map((i) => (i.variantId === variantId ? { ...i, ...patch } : i)));
+  }
+
+  /**
+   * Cada tecla del campo de cantidad.
+   *
+   * Se comitea al carrito mientras se escribe, y no al salir del campo: el
+   * total es lo que el cajero le lee en voz alta al cliente, y con commit al
+   * salir el total va una cantidad atrás de lo que el cliente ve tipear.
+   * También saca del medio la carrera entre el blur del campo y el click en
+   * "Confirmar venta", que sin tests de componentes no habría cómo cubrir.
+   *
+   * Borrar el campo NO colapsa la línea: `cantidadTipeada` devuelve null y la
+   * cantidad anterior queda donde está. Por eso no hace falta deshabilitar el
+   * botón de cobrar — un campo a medio escribir no puede llegar al servidor.
+   */
+  function tipearCantidad(item: CartItem, raw: string) {
+    setQtyDraft({ variantId: item.variantId, value: sanitizarCantidad(raw) });
+    const n = cantidadTipeada(raw, topeDe(item));
+    if (n !== null) patchItem(item.variantId, { quantity: n });
   }
 
   function removeItem(variantId: number) {
@@ -930,7 +959,34 @@ export function SaleForm({
                       >
                         <Minus className="size-3" />
                       </Button>
-                      <span className="figure w-8 text-center text-sm font-medium">{item.quantity}</span>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        aria-label={`Cantidad de ${label(item)}`}
+                        className="figure h-7 w-14 px-1 text-center"
+                        // El draft tapa a la cantidad solo en la línea que se
+                        // está editando; al salir del campo vuelve a leer del
+                        // carrito, que es lo que se va a cobrar.
+                        value={
+                          qtyDraft?.variantId === item.variantId
+                            ? qtyDraft.value
+                            : String(item.quantity)
+                        }
+                        onChange={(e) => tipearCantidad(item, e.target.value)}
+                        // Sin esto la primera tecla arma "11" en vez de "1",
+                        // que es la molestia más frecuente del control.
+                        onFocus={(e) => e.currentTarget.select()}
+                        onBlur={() => setQtyDraft(null)}
+                        onKeyDown={(e) => {
+                          // Enter suelta el foco para poder seguir con el
+                          // lector de código de barras sin tocar el mouse.
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                      />
                       <Button
                         type="button"
                         variant="outline"
@@ -942,9 +998,25 @@ export function SaleForm({
                       >
                         <Plus className="size-3" />
                       </Button>
-                      {item.llevaStock && item.quantity >= item.stock && (
+                      {/*
+                        Dos avisos distintos, porque son dos situaciones
+                        distintas: llegar al tope con los botones es normal
+                        ("máx N"), pero tipear un número que no existe es un
+                        pedido que no se pudo cumplir y hay que decirlo —
+                        el campo muestra lo tipeado y el carrito quedó en el
+                        stock, así que sin este cartel los dos números no
+                        coinciden y nada lo explica.
+                      */}
+                      {qtyDraft?.variantId === item.variantId &&
+                      item.llevaStock &&
+                      qtyDraft.value !== "" &&
+                      Number(qtyDraft.value) > item.stock ? (
+                        <span role="alert" className="ledger-label ml-1 text-destructive">
+                          solo hay {number(item.stock)}
+                        </span>
+                      ) : item.llevaStock && item.quantity >= item.stock ? (
                         <span className="ledger-label ml-1 text-muted-foreground">máx {number(item.stock)}</span>
-                      )}
+                      ) : null}
                     </div>
                     {(item.priceCash != null || item.priceWholesale != null) && (
                       <div className="flex overflow-hidden rounded-md border border-border">
