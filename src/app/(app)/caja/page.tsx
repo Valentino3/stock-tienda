@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { clientAccountMovements, clients, sales, user } from "@/db/schema";
+import { clientAccountMovements, clients, sales, salePayments, user } from "@/db/schema";
 import { requireStore } from "@/lib/session";
 import { getOpenSession, getSessionCashMovements } from "@/domain/cash";
 import { PageHeader } from "@/components/ui/page-header";
@@ -24,14 +24,17 @@ export default async function CajaPage() {
 
   const [totals, movements] = await Promise.all([
     db
+      // Se suma de `sale_payments`: con pago dividido una venta aporta a mas
+      // de un medio. `count` pasa a contar PAGOS, no ventas — ver la etiqueta.
       .select({
-        method: sales.paymentMethod,
+        method: salePayments.method,
         count: sql<number>`count(*)`.mapWith(Number),
-        total: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number),
+        total: sql<number>`coalesce(sum(${salePayments.amount}), 0)`.mapWith(Number),
       })
-      .from(sales)
+      .from(salePayments)
+      .innerJoin(sales, eq(salePayments.saleId, sales.id))
       .where(and(eq(sales.cashSessionId, session.id), eq(sales.voided, false)))
-      .groupBy(sales.paymentMethod),
+      .groupBy(salePayments.method),
     getSessionCashMovements(db, session.id),
   ]);
 

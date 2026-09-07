@@ -1,5 +1,9 @@
 import { eq, inArray, and, isNull, sql } from "drizzle-orm";
-import { products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores, user, type Sale } from "@/db/schema";
+import { products, productVariants, sales, saleItems, salePayments, cashSessions, clients, clientAccountMovements, stores, user, type Sale } from "@/db/schema";
+import {
+  type Pago, type PaymentMethod, esMetodoValido, normalizarPagos, sumaPagos,
+  medioPrincipal, montoACuenta,
+} from "@/domain/pagos";
 import { applyStockMovement } from "@/domain/stock";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -96,7 +100,18 @@ export type SaleInput = {
    * mostrador. Mismo criterio que `priceList` ausente = "venta".
    */
   registeredBy?: string;
-  paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+  /**
+   * Un solo medio por el TOTAL. Es la forma de siempre, y la unica que puede
+   * usar un llamador que no conoce el total (pagarOrden, el replay offline).
+   * Excluyente con `pagos`.
+   */
+  paymentMethod?: PaymentMethod;
+  /**
+   * Pago dividido: varios medios sobre la misma venta. Los montos tienen que
+   * sumar EXACTAMENTE el total que calcula el servidor — un peso sin imputar
+   * es un arqueo que no cierra.
+   */
+  pagos?: Pago[];
   // `priceList` ausente = "venta", que resuelve exactamente lo que la app
   // cobró siempre. Esa es la propiedad de no-regresión: una venta que no
   // menciona listas da el mismo resultado que antes de esta feature, y es lo
@@ -155,6 +170,27 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
   const operador = input.registeredBy ?? input.sellerId;
   if (input.items.length === 0) throw new Error("EMPTY_SALE");
   if (input.items.some((i) => i.quantity <= 0 || !Number.isInteger(i.quantity))) throw new Error("INVALID_QUANTITY");
+
+  // Una forma o la otra, nunca las dos ni ninguna.
+  if ((input.paymentMethod == null) === (input.pagos == null)) throw new Error("PAYMENT_INPUT_INVALID");
+  if (input.pagos) {
+    if (input.pagos.length === 0) throw new Error("PAYMENT_INPUT_INVALID");
+    // La lista se valida aca y no se deja llegar al enum, por el mismo motivo
+    // que `priceList`: un medio basura daria un 22P02 adentro de la
+    // transaccion, abortando la venta con un mensaje ilegible.
+    if (input.pagos.some((p) => !esMetodoValido(p.method))) throw new Error("INVALID_PAYMENT_METHOD");
+    if (input.pagos.some((p) => !Number.isFinite(p.amount) || p.amount <= 0)) {
+      throw new Error("INVALID_PAYMENT_AMOUNT");
+    }
+  }
+  // Los pagos repetidos por medio se suman en vez de rechazarse: dos lineas de
+  // tarjeta son indistinguibles entre si y el cajero puede cargarlas asi.
+  const pagosPedidos = normalizarPagos(
+    input.pagos ?? [{ method: input.paymentMethod as PaymentMethod, amount: 0 }],
+  );
+  if (montoACuenta(pagosPedidos) > 0 && !input.clientId) throw new Error("CLIENT_REQUIRED");
+  // Con un solo medio el monto se completa con el total recien adentro, pero
+  // la exigencia de cliente no puede esperar.
   if (input.paymentMethod === "cuenta" && !input.clientId) throw new Error("CLIENT_REQUIRED");
 
   const uid = input.uid?.trim() || null;
@@ -211,8 +247,8 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         input.saleDiscount,
       );
 
-      // Venta a cuenta: el cliente debe ser de esta tienda.
-      if (input.paymentMethod === "cuenta") {
+      // Venta con parte a cuenta: el cliente debe ser de esta tienda.
+      if (input.paymentMethod === "cuenta" || montoACuenta(pagosPedidos) > 0) {
         const [client] = await tx.select({ id: clients.id }).from(clients)
           .where(and(eq(clients.id, input.clientId as number), eq(clients.storeId, input.storeId)));
         if (!client) throw new Error("CLIENT_NOT_FOUND");
@@ -239,6 +275,20 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
       if (!vendedor) throw new Error("SELLER_NOT_IN_STORE");
       if (vendedor.banned) throw new Error("SELLER_INACTIVE");
 
+      // Recien aca existe el total, que es lo unico contra lo que tiene sentido
+      // validar los pagos. Sale de `calcularTotales`, o sea del SERVIDOR: el
+      // cajero no puede inventar un total que le cierre con lo que reparte.
+      const pagos = input.pagos
+        ? pagosPedidos
+        : [{ method: input.paymentMethod as PaymentMethod, amount: total }];
+      if (input.pagos && sumaPagos(pagos) !== total) {
+        // Se adjunta el total para que el mensaje pueda decir el numero real:
+        // si un precio cambio con el carrito abierto, reintentar a ciegas con
+        // el total viejo falla siempre.
+        throw Object.assign(new Error("PAYMENT_TOTAL_MISMATCH"), { total });
+      }
+      const fiado = montoACuenta(pagos);
+
       const [sale] = await tx.insert(sales).values({
         storeId: input.storeId,
         uid,
@@ -247,19 +297,31 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         cashSessionId: session.id,
         total,
         discountAmount: saleDiscount,
-        paymentMethod: input.paymentMethod,
-        clientId: input.paymentMethod === "cuenta" ? input.clientId : null,
+        // El predominante. No se usa para sumar plata —para eso esta
+        // `sale_payments`— pero es lo que muestran el remito, el historial y
+        // los exports, y lo que hace que el camino offline no cambie.
+        paymentMethod: medioPrincipal(pagos),
+        clientId: fiado > 0 ? input.clientId : null,
         orderId: input.orderId ?? null,
         remitoNumero: await reservarNumeroDeRemito(tx, input.storeId),
       }).returning();
 
-      // Cargo en la cuenta corriente del cliente (queda como deuda).
-      if (input.paymentMethod === "cuenta") {
+      // Los medios con los que se cobro. Van en la MISMA transaccion que la
+      // venta: es lo que hace imposible una venta sin pagos, que es el estado
+      // que haria desaparecer plata del arqueo.
+      await tx.insert(salePayments).values(
+        pagos.map((p) => ({ saleId: sale.id, method: p.method, amount: p.amount })),
+      );
+
+      // Cargo en la cuenta corriente del cliente (queda como deuda). Por el
+      // monto FIADO, no por el total: si pago $8000 de $10000 en efectivo, debe
+      // $2000. Cargarle el total le cobraria dos veces lo que ya pago.
+      if (fiado > 0) {
         await tx.insert(clientAccountMovements).values({
           storeId: input.storeId,
           clientId: input.clientId as number,
           type: "cargo",
-          amount: total,
+          amount: fiado,
           saleId: sale.id,
           // El que ASENTÓ el cargo, no el acreditado: un cargo a cuenta
           // corriente es afirmar que un cliente debe plata, y por eso responde

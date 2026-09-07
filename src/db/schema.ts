@@ -1,8 +1,8 @@
 import {
   pgTable, text, timestamp, boolean, integer, smallint, numeric, jsonb, date, pgEnum, index,
-  uniqueIndex, primaryKey, type AnyPgColumn,
+  uniqueIndex, primaryKey, check, type AnyPgColumn,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 // Type-only: se borra al compilar, así que no crea ciclo con domain/import.ts
 // (que sí importa valores de este archivo).
 import type { ValidatedRow } from "@/domain/import";
@@ -649,6 +649,34 @@ export const orderItems = pgTable("order_items", {
   saleId: integer("sale_id").references(() => sales.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [index("order_items_order_idx").on(t.orderId)]);
+
+/**
+ * Los medios con los que se cobro una venta. Una fila por medio.
+ *
+ * Es la unica fuente de verdad de la plata por medio: el arqueo, la hoja de
+ * cierre y los reportes agrupan por aca. `sales.payment_method` guarda el
+ * PREDOMINANTE y sirve para mostrar, no para sumar.
+ *
+ * Toda venta tiene al menos una fila, incluidas las historicas (las backfilleo
+ * la migracion 0033). Sin esa garantia, una venta sin filas desaparece del
+ * esperado de su caja y aparece como un faltante que nadie explica.
+ */
+export const salePayments = pgTable("sale_payments", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  saleId: integer("sale_id").notNull().references(() => sales.id),
+  method: paymentMethodEnum("method").notNull(),
+  amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  index("sale_payments_sale_idx").on(t.saleId),
+  // Un pago por medio por venta. `normalizarPagos` ya suma los repetidos antes
+  // de insertar; esto es el backstop para que un doble insert falle ruidoso en
+  // vez de contar la plata del turno dos veces.
+  uniqueIndex("sale_payments_sale_method_idx").on(t.saleId, t.method),
+  // >= 0 y no > 0: una venta con 100% de descuento tiene total 0 y esas ya
+  // existen. Ver el comentario de la migracion 0033.
+  check("sale_payments_amount_no_negativo", sql`${t.amount} >= 0`),
+]);
 
 export const saleItems = pgTable("sale_items", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

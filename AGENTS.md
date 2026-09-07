@@ -28,6 +28,11 @@ remitos con número repetido, dos comandas en una mesa). Los índices no los
 puede ver ningún test, porque el schema no los modela: la única forma de saber
 si siguen ahí es mirar la base.
 
+Revisa además lo que ningún índice puede expresar: que toda venta tenga sus
+pagos y que sumen su total (`sale_payments`), y que la parte fiada coincida con
+el cargo en la cuenta del cliente. Una venta sin pagos no aporta al arqueo y
+aparece como un faltante que nadie explica.
+
 **Para probar contra producción está la tienda de prueba, no un local real.**
 `npm run seed:prueba OWNER_PASSWORD=…` la crea en la misma base, marcada con `stores.esPrueba`.
 Esa marca no es cosmética: `requireFiscalConfig` **rechaza emitir en ambiente
@@ -52,7 +57,23 @@ secuencias de operaciones al azar, y el prorrateo del descuento fiscal contra
 su post-condición `Σ = S − D`. Si agregás algo que suma o resta plata, la
 propiedad es más barata y más completa que veinte casos a mano.
 
+**La plata por medio de pago sale de `sale_payments`, no de
+`sales.paymentMethod`.** Una venta puede cobrarse con varios medios a la vez.
+`sales.paymentMethod` guarda el predominante y sirve para mostrar: si lo usás
+para sumar, la parte de tarjeta termina dentro del efectivo esperado. Las
+cuatro agrupaciones por medio (`cash.ts`, `cash-close.ts`, `caja/page.tsx`,
+`reports.ts`) ya leen de la tabla; el `aCuenta` de `getSellerSalesSummary` va
+en consulta aparte a propósito, porque esa query ya tiene un `leftJoin` a
+`sale_items` y otro join más multiplicaría filas e inflaría el total del
+vendedor.
+
+**`sales.sellerId` es a quién se le acredita; `registeredBy`, quién la anotó.**
+La comisión se paga sobre el primero y el vendedor se elige en el mostrador, así
+que `createSale` valida que sea un usuario activo de esa tienda. Los
+movimientos de stock y los asientos en cuenta corriente cuelgan del segundo: el
+libro de stock responde quién movió la mercadería.
+
 **Esto cobra plata de verdad.** Dos locales venden con esto todos los días.
-Antes de tocar `src/domain/sales.ts`, `cash.ts`, `fiscal-*.ts` o
+Antes de tocar `src/domain/sales.ts`, `cash.ts`, `pagos.ts`, `fiscal-*.ts` o
 `src/lib/offline/*`, mirá los tests que los cubren: un error ahí es un arqueo
 que no cuadra o un comprobante fiscal que no se puede anular.

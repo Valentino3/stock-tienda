@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   cashMovements, cashSessions, clientAccountMovements, clients, products, productVariants,
-  sales, saleItems, storeFiscalConfig, stores, user,
+  sales, saleItems, salePayments, storeFiscalConfig, stores, user,
 } from "@/db/schema";
 
 /**
@@ -53,7 +53,10 @@ export type Remito = {
   clientDoc: string | null;
   createdAt: Date;
   sellerName: string;
+  /** El medio PREDOMINANTE. Para la plata por medio estan `pagos`. */
   paymentMethod: string;
+  /** Los medios con los que se cobro. Una sola entrada en el caso comun. */
+  pagos: { method: string; amount: number }[];
   clientName: string | null;
   voided: boolean;
   voidedReason: string | null;
@@ -113,11 +116,18 @@ export async function getCashSessionClose(
   );
 
   const vivas = remitos.filter((r) => !r.voided);
-  const porMedio = [...vivas.reduce((m, r) => {
-    const acc = m.get(r.paymentMethod) ?? { method: r.paymentMethod, count: 0, total: 0 };
+  // Se reduce sobre los PAGOS y no sobre las ventas: una venta cobrada mitad
+  // en efectivo y mitad con tarjeta aporta a los dos medios.
+  //
+  // `count` pasa a contar pagos. Con pago dividido la suma de los `count` ya no
+  // es la cantidad de ventas del turno, y por eso la hoja los rotula "Pagos" y
+  // dice aparte cuantas ventas hubo: dejarlo como "Ventas" daria una cifra que
+  // no cuadra con nada, y el dueño la usa para controlar.
+  const porMedio = [...vivas.flatMap((r) => r.pagos).reduce((m, p) => {
+    const acc = m.get(p.method) ?? { method: p.method, count: 0, total: 0 };
     acc.count += 1;
-    acc.total = round2(acc.total + r.total);
-    return m.set(r.paymentMethod, acc);
+    acc.total = round2(acc.total + p.amount);
+    return m.set(p.method, acc);
   }, new Map<string, { method: string; count: number; total: number }>()).values()];
 
   const movs = await db
@@ -227,6 +237,22 @@ async function armarRemitos(db: any, condicion: any, cerradaEn: Date | null): Pr
         .orderBy(asc(saleItems.id))
     : [];
 
+  // Tercera consulta y no una por venta: mismo criterio que los items. Con
+  // pago dividido, la plata por medio de la hoja de cierre sale de aca.
+  const pagosFilas = saleIds.length
+    ? await db
+        .select({ saleId: salePayments.saleId, method: salePayments.method, amount: salePayments.amount })
+        .from(salePayments)
+        .where(inArray(salePayments.saleId, saleIds))
+        .orderBy(asc(salePayments.id))
+    : [];
+  const pagosPorVenta = new Map<number, { method: string; amount: number }[]>();
+  for (const p of pagosFilas as any[]) {
+    const lista = pagosPorVenta.get(p.saleId) ?? [];
+    lista.push({ method: p.method, amount: p.amount });
+    pagosPorVenta.set(p.saleId, lista);
+  }
+
   const porVenta = new Map<number, LineaRemito[]>();
   for (const i of items as any[]) {
     const lista = porVenta.get(i.saleId) ?? [];
@@ -251,6 +277,10 @@ async function armarRemitos(db: any, condicion: any, cerradaEn: Date | null): Pr
     createdAt: f.sale.createdAt,
     sellerName: f.sellerName,
     paymentMethod: f.sale.paymentMethod,
+    // Fallback al predominante por el total: solo alcanzable si alguien
+    // inserto una venta sin pagos a mano. La hoja muestra algo en vez de
+    // perder la plata en silencio; `check:prod` es quien lo reporta.
+    pagos: pagosPorVenta.get(f.sale.id) ?? [{ method: f.sale.paymentMethod, amount: f.sale.total }],
     clientName: f.clientName ?? null,
     voided: f.sale.voided,
     voidedReason: f.sale.voidedReason ?? null,

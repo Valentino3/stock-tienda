@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
+import { createTestDb, seedTestUser, seedTestStore, sembrarVentasCrudas } from "./helpers/db";
 import { products, productVariants, sales } from "@/db/schema";
 import { openCashSession, closeCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
@@ -54,7 +54,7 @@ describe("fiado / cuenta corriente", () => {
 
   it("la venta a cuenta NO entra al efectivo esperado de la caja", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
-    await db.insert(sales).values({ storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" });
+    await sembrarVentasCrudas(db, [{ storeId: store, sellerId: "u1", registeredBy: "u1", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" }]);
     await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId, items: [{ variantId, quantity: 4 }] });
     const closed = await closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 3000 });
     // 1000 apertura + 2000 efectivo; la venta a cuenta (4000) NO cuenta.

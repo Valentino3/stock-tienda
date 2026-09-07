@@ -59,6 +59,7 @@ const INDICES_CRITICOS: Record<string, string> = {
   comprobantes_reconciliar_idx: "comprobantes en error que nadie reconcilia",
   orders_una_abierta_por_mesa_idx: "dos comandas abiertas en la misma mesa",
   sales_store_remito_idx: "dos remitos con el mismo número",
+  sale_payments_sale_method_idx: "dos filas del mismo medio en una venta: la plata del turno se cuenta dos veces",
 };
 
 async function main() {
@@ -166,6 +167,26 @@ async function main() {
     "Dos papeles distintos con el mismo NRO circulando por el local."
   );
 
+  // Toda venta tiene que tener sus pagos, y tienen que sumar su total. Ningún
+  // índice puede expresar esto, así que la única forma de saberlo es mirar la
+  // base — igual que los duplicados de arriba.
+  await contar(
+    "Ventas sin ningún medio de pago",
+    sql`select count(*) as n from sales s
+        where not exists (select 1 from sale_payments p where p.sale_id = s.id)`,
+    "Esa plata no entra al arqueo: la caja aparece con un faltante que nadie puede explicar."
+  );
+
+  await contar(
+    "Ventas cuyos pagos no suman el total",
+    sql`select count(*) as n from (
+          select s.id from sales s
+          join sale_payments p on p.sale_id = s.id
+          group by s.id, s.total having round(sum(p.amount), 2) <> s.total
+        ) x`,
+    "Hay plata cobrada sin imputar a ningún medio. El arqueo de esa caja no puede cuadrar."
+  );
+
   await contar(
     "Mesas con más de una comanda abierta",
     sql`select count(*) as n from (
@@ -174,6 +195,34 @@ async function main() {
         ) x`,
     "Dos comandas sobre la misma mesa: lo que se cobra en una no descuenta de la otra."
   );
+
+  // La parte fiada de una venta tiene que coincidir con el cargo en la cuenta
+  // del cliente. Es el bug específico del pago dividido: cargar el total en vez
+  // de la parte deja al cliente debiendo lo que ya pagó en efectivo.
+  //
+  // Va como AVISO y acotado a 90 días: las ventas anteriores a la cuenta
+  // corriente no tienen cargo (ver voidSale en domain/sales.ts), y como error
+  // sonaría para siempre.
+  const fiados = await db.execute<{ n: string | number }>(
+    sql`select count(*) as n from (
+          select s.id,
+            coalesce(sum(p.amount) filter (where p.method = 'cuenta'), 0) as fiado,
+            coalesce((select sum(m.amount) from client_account_movements m
+                      where m.sale_id = s.id and m.type = 'cargo'), 0) as cargo
+          from sales s left join sale_payments p on p.sale_id = s.id
+          where s.created_at > now() - interval '90 days' and s.voided = false
+          group by s.id
+        ) x where fiado <> cargo`
+  );
+  const nFiados = Number(
+    (((Array.isArray(fiados) ? fiados : (fiados as any).rows) as any[])[0]?.n) ?? 0
+  );
+  if (nFiados > 0) {
+    aviso(
+      "Ventas donde lo fiado no coincide con el cargo en la cuenta",
+      `${nFiados}. El cliente puede estar debiendo algo que ya pagó, o al revés.`
+    );
+  }
 
   // Cajas abiertas hace mucho: no es corrupción, es un turno que nadie cerró, y
   // se nota recién cuando el arqueo del mes no cierra.

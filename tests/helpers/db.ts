@@ -71,9 +71,31 @@ export async function seedTestSale(
     storeId: opts.storeId, sellerId: userId, registeredBy: userId, cashSessionId: session.id,
     total, discountAmount: opts.discountAmount ?? 0, paymentMethod: "efectivo",
   }).returning();
+  // Toda venta tiene su pago: es la invariante que sostiene el arqueo.
+  await db.insert(schema.salePayments)
+    .values({ saleId: sale.id, method: "efectivo", amount: total });
   await db.insert(schema.saleItems)
     .values({ saleId: sale.id, variantId: v.id, quantity, unitPrice });
 
   return { sale, variantId: v.id, productId: p.id, cashSessionId: session.id };
 }
 
+
+/**
+ * Ventas insertadas a mano, con su fila de pago.
+ *
+ * Existe porque el arqueo suma de `sale_payments`: una venta insertada
+ * directamente en `sales` no aporta nada al esperado, y el test falla con un
+ * numero que no explica por que. Todo insert crudo a `sales` en los tests
+ * deberia pasar por aca.
+ */
+export async function sembrarVentasCrudas(
+  db: TestDb,
+  filas: (typeof schema.sales.$inferInsert)[],
+) {
+  const ventas = await db.insert(schema.sales).values(filas).returning();
+  await db.insert(schema.salePayments).values(
+    ventas.map((v) => ({ saleId: v.id, method: v.paymentMethod, amount: v.total })),
+  );
+  return ventas;
+}

@@ -192,7 +192,9 @@ export default async function ReportesPage({
               <TableHeader>
                 <TableRow>
                   <TableHead>Medio de pago</TableHead>
-                  <TableHead className="text-right">Cantidad</TableHead>
+                  {/* Pagos, no ventas: con pago dividido una venta aporta a
+                      varios medios. El total sigue siendo el total. */}
+                  <TableHead className="text-right">Pagos</TableHead>
                   <TableHead className="text-right">Total</TableHead>
                 </TableRow>
               </TableHeader>
