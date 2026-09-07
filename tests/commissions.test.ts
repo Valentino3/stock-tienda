@@ -52,10 +52,10 @@ describe("getSellerSalesSummary", () => {
   it("agrupa ventas no anuladas por vendedor", async () => {
     const s = await openCashSession(db, { storeId: store, userId: "owner", openingCash: 0 });
     await db.insert(sales).values([
-      { storeId: store, sellerId: "emp1", cashSessionId: s.id, total: 1000, paymentMethod: "efectivo" },
-      { storeId: store, sellerId: "emp1", cashSessionId: s.id, total: 500, paymentMethod: "tarjeta" },
-      { storeId: store, sellerId: "emp2", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
-      { storeId: store, sellerId: "emp2", cashSessionId: s.id, total: 999, paymentMethod: "efectivo", voided: true },
+      { storeId: store, sellerId: "emp1", registeredBy: "emp1", cashSessionId: s.id, total: 1000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "emp1", registeredBy: "emp1", cashSessionId: s.id, total: 500, paymentMethod: "tarjeta" },
+      { storeId: store, sellerId: "emp2", registeredBy: "emp2", cashSessionId: s.id, total: 2000, paymentMethod: "efectivo" },
+      { storeId: store, sellerId: "emp2", registeredBy: "emp2", cashSessionId: s.id, total: 999, paymentMethod: "efectivo", voided: true },
     ]);
     const from = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const to = new Date(Date.now() + 24 * 60 * 60 * 1000);

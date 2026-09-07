@@ -452,6 +452,10 @@ export async function replaySale(
         storeId,
         uid,
         sellerId,
+        // El vendedor de una venta offline es quien sincroniza (ver el
+        // comentario en /ventas/replay), asi que acreditado y operador son el
+        // mismo: no hay un tercero a quien atribuirla.
+        registeredBy: sellerId,
         cashSessionId: caja.id,
         createdAt: acotarFecha(venta.capturadoEn, avisos),
         total,

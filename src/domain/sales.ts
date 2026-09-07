@@ -1,5 +1,5 @@
 import { eq, inArray, and, isNull, sql } from "drizzle-orm";
-import { products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores, type Sale } from "@/db/schema";
+import { products, productVariants, sales, saleItems, cashSessions, clients, clientAccountMovements, stores, user, type Sale } from "@/db/schema";
 import { applyStockMovement } from "@/domain/stock";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -82,7 +82,20 @@ export function resolverPrecio(
 
 export type SaleInput = {
   storeId: number;
+  // A quién se le acredita la venta. Se valida contra la tienda: puede venir
+  // de un desplegable del navegador y es el eje de las comisiones.
   sellerId: string;
+  /**
+   * Quién operó la caja. Ausente = el vendedor se anotó la venta él mismo, que
+   * es lo único que podía pasar antes de esta feature.
+   *
+   * Opcional y no requerido a propósito: requerido obligaría a escribir el
+   * mismo valor que ya está en `sellerId` en decenas de llamadas (tests,
+   * seeds, `pagarOrden`, el replay offline) sin cambiar nada. Así, todo lo que
+   * existe queda idéntico a antes y el único camino que los separa es el
+   * mostrador. Mismo criterio que `priceList` ausente = "venta".
+   */
+  registeredBy?: string;
   paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
   // `priceList` ausente = "venta", que resuelve exactamente lo que la app
   // cobró siempre. Esa es la propiedad de no-regresión: una venta que no
@@ -137,6 +150,9 @@ async function buscarPorUid(db: any, storeId: number, uid: string): Promise<Sale
 }
 
 export async function createSale(db: any, input: SaleInput): Promise<SaleResult> {
+  // Quién operó. El eje operativo —los movimientos de stock y los asientos en
+  // la cuenta del cliente— cuelga de acá, no del acreditado: ver el insert.
+  const operador = input.registeredBy ?? input.sellerId;
   if (input.items.length === 0) throw new Error("EMPTY_SALE");
   if (input.items.some((i) => i.quantity <= 0 || !Number.isInteger(i.quantity))) throw new Error("INVALID_QUANTITY");
   if (input.paymentMethod === "cuenta" && !input.clientId) throw new Error("CLIENT_REQUIRED");
@@ -202,10 +218,32 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         if (!client) throw new Error("CLIENT_NOT_FOUND");
       }
 
+      // El vendedor acreditado tiene que ser un usuario activo de ESTA tienda.
+      // No alcanza con que el llamador lo haya sacado de un <select>: la server
+      // action recibe el id del navegador, y `sales.seller_id` es el eje sobre
+      // el que se pagan comisiones. Sin esta guarda, un POST a mano acredita
+      // una venta al empleado de otro comercio.
+      //
+      // Solo se valida `sellerId`. `registeredBy` sale siempre de la sesión,
+      // que `requireStore()` ya resolvió contra esta tienda.
+      //
+      // Va DESPUÉS del corto-circuito por uid: un reintento tras un corte de
+      // red tiene que devolver la venta original incluso si el vendedor fue
+      // desactivado en el medio. Esa venta ya está cobrada; rechazar el
+      // reintento haría cobrar dos veces.
+      const [vendedor] = await tx.select({ id: user.id, banned: user.banned }).from(user)
+        .where(and(eq(user.id, input.sellerId), eq(user.storeId, input.storeId)));
+      // Dos errores y no uno: "no es de esta tienda" es un bug o un ataque,
+      // "está desactivado" es que el compañero se fue del local. El cajero
+      // necesita saber cuál de las dos es.
+      if (!vendedor) throw new Error("SELLER_NOT_IN_STORE");
+      if (vendedor.banned) throw new Error("SELLER_INACTIVE");
+
       const [sale] = await tx.insert(sales).values({
         storeId: input.storeId,
         uid,
         sellerId: input.sellerId,
+        registeredBy: operador,
         cashSessionId: session.id,
         total,
         discountAmount: saleDiscount,
@@ -223,7 +261,10 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           type: "cargo",
           amount: total,
           saleId: sale.id,
-          createdBy: input.sellerId,
+          // El que ASENTÓ el cargo, no el acreditado: un cargo a cuenta
+          // corriente es afirmar que un cliente debe plata, y por eso responde
+          // quien lo tipeó.
+          createdBy: operador,
         });
       }
 
@@ -248,7 +289,12 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
             storeId: input.storeId,
             type: "venta",
             quantity: -line.quantity,
-            userId: input.sellerId,
+            // Quien movió la mercadería, no el acreditado. Es la misma columna
+            // que escriben los ajustes y las reposiciones, y la única pregunta
+            // que se le hace es cuando falta stock: la respuesta útil es quién
+            // estaba en el mostrador. Atribuirlo a un compañero ausente
+            // convertiría el libro de stock en una coartada.
+            userId: operador,
             saleId: sale.id,
           });
         }

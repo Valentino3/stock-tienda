@@ -98,12 +98,16 @@ export default async function VentasPage({
 
   const from = params.from ? new Date(`${params.from}T00:00:00`) : (params.all ? new Date(0) : undefined);
   const to = params.to ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined;
-  const sellerId = !isOwner ? currentUser.id : params.seller || undefined;
+  // El <select> de vendedor ahora lo tiene tambien el empleado: con vendedor
+  // elegible, "la venta que carge para Juan" es una busqueda real. Es seguro
+  // porque `visibleParaUserId` acota igual lo que puede ver.
+  const sellerId = params.seller || undefined;
+  const visibleParaUserId = isOwner ? undefined : currentUser.id;
 
   const facturacionFiltro = params.facturacion === "sin" || params.facturacion === "con" ? params.facturacion : undefined;
 
   const { sales: rows, itemRows, hasNextPage } = await getSalesHistory(db, {
-    storeId, from, to, sellerId, page, facturacion: facturacionFiltro,
+    storeId, from, to, sellerId, visibleParaUserId, page, facturacion: facturacionFiltro,
   });
 
   const itemsBySale = new Map<number, typeof itemRows>();
@@ -114,9 +118,8 @@ export default async function VentasPage({
   }
 
   // Solo vendedores de esta tienda.
-  const sellers = isOwner
-    ? await db.select({ id: user.id, name: user.name }).from(user).where(eq(user.storeId, storeId)).orderBy(user.name)
-    : [];
+  const sellers = await db.select({ id: user.id, name: user.name }).from(user)
+    .where(eq(user.storeId, storeId)).orderBy(user.name);
 
   // Facturación. Una sola consulta para toda la página, igual que itemsBySale.
   const fiscalConfig = await getFiscalConfig(db, storeId);
@@ -275,7 +278,7 @@ export default async function VentasPage({
             {facturacionActiva && <span className="ledger-label">Factura</span>}
           </div>
           <div className="divide-y divide-border">
-            {rows.map(({ sale, sellerName }: any) => {
+            {rows.map(({ sale, sellerName, registradaPorName }: any) => {
               const cbtes = comprobantesBySale.get(sale.id) ?? [];
               const estadoFactura = resolverEstadoFactura(cbtes, sale.voided);
               return (
@@ -290,7 +293,17 @@ export default async function VentasPage({
                       {sale.createdAt.toLocaleString("es-AR")}
                     </span>
                     <span className="figure font-medium">#{sale.id}</span>
-                    <span className="truncate">{sellerName}</span>
+                    {/* El que anoto solo se nombra cuando NO es el mismo que
+                        vendio: repetirlo en cada fila haria ruido justo donde
+                        el dueno esta leyendo plata. */}
+                    <span className="truncate">
+                      {sellerName}
+                      {registradaPorName && registradaPorName !== sellerName && (
+                        <span className="block text-xs text-muted-foreground">
+                          anotada por {registradaPorName}
+                        </span>
+                      )}
+                    </span>
                     <span className="text-muted-foreground">{PAYMENT_LABELS[sale.paymentMethod] ?? sale.paymentMethod}</span>
                     {/* En el teléfono el importe se va al extremo derecho con
                         `ml-auto`; en la grilla manda `text-right` y el margen

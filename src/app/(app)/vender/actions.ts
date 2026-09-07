@@ -62,6 +62,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   VARIANT_NOT_FOUND: "Producto no encontrado",
   CLIENT_REQUIRED: "Elegí un cliente para la venta a cuenta.",
   CLIENT_NOT_FOUND: "Cliente no encontrado.",
+  SELLER_NOT_IN_STORE: "Ese vendedor no es de esta tienda. Recargá la pantalla y elegilo de nuevo.",
+  SELLER_INACTIVE: "Ese vendedor está desactivado. Elegí otro.",
 };
 
 // Un uid válido es el crypto.randomUUID() que arma el carrito en el cliente.
@@ -74,10 +76,15 @@ export async function submitSale(input: {
   items: { variantId: number; quantity: number; discount?: Discount }[];
   saleDiscount?: Discount;
   clientId?: number | null;
+  // A quién se le acredita la venta. Ausente = quien está operando, que es lo
+  // que pasaba siempre. El servidor valida que sea de esta tienda: acá no se
+  // le cree al navegador, se le cree a la consulta.
+  sellerId?: string;
   // Clave de idempotencia del carrito. El cliente la conserva entre reintentos.
   uid?: string;
 }) {
-  const { id: sellerId, storeId } = await requireStore();
+  const { id: operador, storeId } = await requireStore();
+  const sellerId = input.sellerId?.trim() || operador;
   const invalid = input.items.some(
     (i) =>
       !Number.isInteger(i.variantId) ||
@@ -88,7 +95,11 @@ export async function submitSale(input: {
   if (invalid || !validDiscount(input.saleDiscount)) return { error: "Cantidad o descuento inválido" };
   if (input.uid !== undefined && !UUID_RE.test(input.uid)) return { error: "Identificador de venta inválido" };
   try {
-    const sale = await createSale(db, { storeId, sellerId, ...input });
+    // ⚠️ El orden importa: `sellerId` ahora también vive dentro de `input`, así
+    // que lo derivado del servidor va DESPUÉS del spread. Con el orden viejo
+    // (`{ storeId, sellerId, ...input }`) el cliente pisaba el vendedor ya
+    // resuelto y se salteaba el `|| operador`.
+    const sale = await createSale(db, { ...input, storeId, sellerId, registeredBy: operador });
     return { ok: true as const, saleId: sale.id, total: sale.total, duplicada: sale.duplicada === true };
   } catch (e) {
     // Un corte de red no dice si la venta entró: puede haberse perdido solo la

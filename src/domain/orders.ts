@@ -411,7 +411,13 @@ export async function pagarOrden(
     // exige caja abierta. Corre como savepoint dentro de esta transacción.
     const sale = await createSale(tx, {
       storeId: input.storeId,
+      // En una mesa el acreditado y el operador son el mismo: el que cobra.
+      // Elegir vendedor en el salón sería instalar una respuesta peor que la
+      // que la base ya tiene —quién abrió la orden y tomó los ítems— y dejaría
+      // dos fuentes compitiendo por "quién vendió esta mesa". Se escribe
+      // explícito para que el reparto quede a la vista en los dos caminos.
       sellerId: input.userId,
+      registeredBy: input.userId,
       paymentMethod: input.paymentMethod,
       clientId: input.clientId,
       saleDiscount: input.saleDiscount,
