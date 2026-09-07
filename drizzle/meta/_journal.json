@@ -239,6 +239,13 @@
       "when": 1788800556488,
       "tag": "0033_pago_dividido",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788808971726,
+      "tag": "0034_needy_maximus",
+      "breakpoints": true
     }
   ]
 }
