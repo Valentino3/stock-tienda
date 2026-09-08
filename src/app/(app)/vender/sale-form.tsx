@@ -832,7 +832,11 @@ export function SaleForm({
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[1fr_360px]">
-      <Card>
+      {/* overflow-visible: la lista de resultados del buscador es `absolute` y
+          el overflow-hidden que Card trae por defecto la cortaba en el borde de
+          la card. Se veían los primeros resultados y el resto no se dibujaba ni
+          se podía clickear, que desde el mostrador se reportó como "no scrollea". */}
+      <Card className="overflow-visible">
         <CardHeader className="flex flex-row items-start justify-between gap-4">
           <CardTitle className="text-base">Buscar producto</CardTitle>
           <div className="text-right">

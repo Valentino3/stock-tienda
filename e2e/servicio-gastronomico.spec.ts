@@ -24,6 +24,12 @@ test("mesa: abrir, pedir, imprimir la cuenta y cobrar", async ({ page }) => {
   await mesa.click();
   await page.waitForURL(/\/salon\/\d+/);
 
+  // La comanda tiene el mismo buscador `absolute` que /vender, y la Card que
+  // lo envuelve tiene que dejarlo dibujarse afuera: con el overflow-hidden que
+  // Card trae por defecto, los últimos resultados no se ven ni se clickean.
+  const comanda = page.locator('[data-slot="card"]').first();
+  expect(await comanda.evaluate((el) => getComputedStyle(el).overflowY)).not.toBe("hidden");
+
   // Dos milanesas y un vino: mezcla algo sin stock con algo que sí lo lleva.
   await pedir(page, "Milanesa", 2);
   await pedir(page, "Vino", 1);
