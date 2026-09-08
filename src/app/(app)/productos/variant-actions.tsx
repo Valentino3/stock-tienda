@@ -9,7 +9,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CONDITION_SUGGESTIONS, LANGUAGE_SUGGESTIONS } from "@/lib/card-conditions";
-import { saveVariant, restock, adjustStock, toggleVariantActive, notifyLowStock } from "./actions";
+import {
+  saveVariant, restock, adjustStock, toggleVariantActive, notifyLowStock, renameProduct,
+} from "./actions";
 
 /**
  * Acciones sobre una variante: editar, reponer, ajustar stock, activar y avisar
@@ -28,6 +30,8 @@ import { saveVariant, restock, adjustStock, toggleVariantActive, notifyLowStock 
 export type ActionableVariant = {
   id: number;
   productId: number;
+  /** El del producto padre, no el de la variante: el diálogo deja renombrarlo. */
+  productName: string;
   name: string;
   sku: string | null;
   stock: number;
@@ -112,6 +116,7 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
   const [error, setError] = useState("");
   const [pending, startTransition] = useTransition();
 
+  const [productName, setProductName] = useState(variant.productName);
   const [name, setName] = useState(variant.name);
   const [sku, setSku] = useState(variant.sku ?? "");
   const [price, setPrice] = useState(str(variant.ownPrice));
@@ -132,6 +137,18 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
   function submit(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
+      // El nombre del producto vive en otra tabla y se guarda con su propia
+      // action. Va primero y corta si falla: si se guardara después, un error
+      // acá dejaría la variante ya escrita y el diálogo abierto, y el segundo
+      // intento repetiría el guardado de la variante.
+      if (productName.trim() !== variant.productName) {
+        const renombrado = await renameProduct(variant.productId, productName);
+        if ("error" in renombrado && renombrado.error) {
+          setError(renombrado.error);
+          return;
+        }
+      }
+
       const res = await saveVariant({
         id: variant.id,
         productId: variant.productId,
@@ -168,9 +185,24 @@ function EditVariantDialog({ variant }: { variant: ActionableVariant }) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Editar variante</DialogTitle>
-          <DialogDescription>Editá el nombre, SKU o precio de la variante.</DialogDescription>
+          <DialogDescription>
+            Editá el nombre del producto, o el nombre, SKU y precio de esta variante.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="max-h-[70vh] space-y-3 overflow-y-auto">
+          <div className="space-y-2">
+            <Label htmlFor={id("product-name")}>Nombre del producto</Label>
+            <Input
+              id={id("product-name")}
+              value={productName}
+              onChange={(e) => setProductName(e.target.value)}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Es el nombre que se ve en el buscador de Vender, y lo comparten todas
+              las variantes de este producto.
+            </p>
+          </div>
           <div className="space-y-2">
             <Label htmlFor={id("name")}>Nombre variante</Label>
             <Input id={id("name")} value={name} onChange={(e) => setName(e.target.value)} />
