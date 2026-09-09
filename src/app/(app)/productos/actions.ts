@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { products, productVariants } from "@/db/schema";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import { applyStockMovement } from "@/domain/stock";
-import { crearProducto, crearVariante } from "@/domain/products";
+import { crearProducto, crearVariante, renombrarProducto } from "@/domain/products";
 import { createLowStockNotification } from "@/domain/notifications";
 
 // Aviso de stock bajo al dueño. Cualquier usuario de la tienda (empleado o dueño).
@@ -213,6 +213,24 @@ export async function adjustStock(variantId: number, newStock: number, reason: s
   }
   revalidatePath("/productos");
   return { ok: true };
+}
+
+/**
+ * Renombrar el producto desde la fila del inventario.
+ *
+ * Separado de `saveProduct` a propósito: ver `renombrarProducto`. Acá solo
+ * viaja el nombre, así que no hay forma de que corregir una letra pise el
+ * precio base o la estación de cocina.
+ */
+export async function renameProduct(productId: number, name: string) {
+  const { storeId } = await requireStoreOwner();
+  if (!(await renombrarProducto(db, { storeId, productId, name }))) {
+    return { error: "No se pudo cambiar el nombre" };
+  }
+  revalidatePath("/productos");
+  // El nombre viaja en el catálogo offline y sale en el buscador de Vender.
+  revalidatePath("/vender");
+  return { ok: true as const };
 }
 
 export async function toggleProductActive(productId: number, active: boolean) {

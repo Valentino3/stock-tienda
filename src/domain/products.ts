@@ -157,3 +157,38 @@ async function aplicarStockInicial(
     reason: MOTIVO_ALTA,
   });
 }
+
+export type RenombrarProductoInput = {
+  storeId: number;
+  productId: number;
+  name: string;
+};
+
+/**
+ * Cambia el nombre de un producto, y nada más.
+ *
+ * Existe aparte de `saveProduct` porque el renombrado se dispara desde la fila
+ * del inventario, y esa fila no tiene el precio base, el precio en dólares ni
+ * la estación de cocina: reusar `saveProduct` desde ahí escribiría esos tres
+ * campos con lo que la UI tuviera a mano y borraría la estación de un plato al
+ * corregirle una letra al nombre.
+ *
+ * Devuelve `false` si el nombre queda vacío o si el producto no es de esta
+ * tienda. El scope va en el mismo `where` que el UPDATE y no en un SELECT
+ * previo, por el mismo motivo que en `crearVariante`: entre el chequeo y la
+ * escritura hay una ventana.
+ */
+export async function renombrarProducto(
+  db: any,
+  input: RenombrarProductoInput
+): Promise<boolean> {
+  const name = input.name.trim();
+  if (!name) return false;
+
+  const tocadas = await db.update(products)
+    .set({ name })
+    .where(and(eq(products.id, input.productId), eq(products.storeId, input.storeId)))
+    .returning({ id: products.id });
+
+  return tocadas.length > 0;
+}

@@ -164,7 +164,10 @@ export function OrdenClient({
 
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[1fr_360px]">
-      <Card>
+      {/* overflow-visible por el mismo motivo que en vender/sale-form.tsx: el
+          dropdown del buscador es `absolute` y el overflow-hidden de Card lo
+          recortaba en el borde. */}
+      <Card className="overflow-visible">
         <CardHeader>
           <CardTitle className="text-base">Comanda</CardTitle>
         </CardHeader>

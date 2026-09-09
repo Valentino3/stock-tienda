@@ -103,3 +103,33 @@ test("cargado sin stock, el aviso se ve al lado del buscador", async ({ page }) 
   const arqueo = await cerrarCaja(page, 0);
   expect(arqueo.esperado).toBe(0);
 });
+
+test("renombrar el producto desde la fila cambia lo que se busca en Vender", async ({ page }) => {
+  // Reusa el "Deck Sin Stock" del test anterior: renombrarlo no le mueve el
+  // stock ni la caja a nadie.
+  await asegurarCajaAbierta(page);
+  await page.goto("/productos");
+
+  await page.getByRole("row", { name: /deck sin stock/i })
+    .getByRole("button", { name: /^editar$/i }).click();
+  const dialogo = page.getByRole("dialog");
+  await dialogo.getByLabel(/nombre del producto/i).fill("Mazo Rebautizado");
+  await dialogo.getByRole("button", { name: /guardar/i }).click();
+  await expect(dialogo).toBeHidden();
+
+  await expect(page.getByRole("row", { name: /mazo rebautizado/i })).toBeVisible();
+  await expect(page.getByRole("row", { name: /deck sin stock/i })).toBeHidden();
+
+  // Lo que importa del renombrado: es el nombre con el que el vendedor lo
+  // encuentra en el mostrador.
+  await page.goto("/vender");
+  const buscador = page.getByPlaceholder(/buscar producto o sku/i);
+  await buscador.fill("Mazo Rebautizado");
+  await expect(page.getByRole("button", { name: /mazo rebautizado/i }).first()).toBeVisible();
+
+  await buscador.fill("Deck Sin Stock");
+  await expect(page.getByText(/sin resultados para/i)).toBeVisible();
+
+  const arqueo = await cerrarCaja(page, 0);
+  expect(arqueo.esperado).toBe(0);
+});

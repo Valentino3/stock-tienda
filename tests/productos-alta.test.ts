@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants, stockMovements } from "@/db/schema";
-import { crearProducto, crearVariante } from "@/domain/products";
+import { crearProducto, crearVariante, renombrarProducto } from "@/domain/products";
 import { searchVariants } from "@/domain/catalog";
 import { eq } from "drizzle-orm";
 
@@ -139,5 +139,50 @@ describe("crearVariante", () => {
     const variantes = await db.select().from(productVariants)
       .where(eq(productVariants.productId, productId));
     expect(variantes).toHaveLength(1);
+  });
+});
+
+describe("renombrarProducto", () => {
+  it("cambia el nombre y no toca ningún otro campo", async () => {
+    const { productId } = await alta({ category: "Pokémon", station: "cocina", stockInicial: 4 });
+    const [antes] = await db.select().from(products).where(eq(products.id, productId));
+
+    expect(await renombrarProducto(db, { storeId: store, productId, name: "  Sobre Booster XY  " }))
+      .toBe(true);
+
+    const [despues] = await db.select().from(products).where(eq(products.id, productId));
+    // El nombre se guarda sin los espacios de los costados, como en el alta.
+    expect(despues.name).toBe("Sobre Booster XY");
+    // Lo demás queda igual: renombrar no puede borrar la estación de cocina ni
+    // mover el precio, que es lo que pasaría si esto reusara `saveProduct` con
+    // los campos que la fila del inventario no tiene.
+    expect({ ...despues, name: null }).toEqual({ ...antes, name: null });
+  });
+
+  it("el nombre nuevo se puede buscar y el viejo ya no", async () => {
+    const { productId } = await alta({ stockInicial: 2 });
+    await renombrarProducto(db, { storeId: store, productId, name: "Caja Sellada" });
+
+    expect(await searchVariants(db, store, "Caja")).toHaveLength(1);
+    expect(await searchVariants(db, store, "Booster")).toHaveLength(0);
+  });
+
+  it("rechaza un nombre vacío", async () => {
+    const { productId } = await alta();
+
+    expect(await renombrarProducto(db, { storeId: store, productId, name: "   " })).toBe(false);
+
+    const [p] = await db.select().from(products).where(eq(products.id, productId));
+    expect(p.name).toBe("Sobre Booster");
+  });
+
+  it("no renombra un producto de otra tienda", async () => {
+    await seedTestUser(db, "u2", "owner", otra);
+    const { productId } = await crearProducto(db, { storeId: otra, ...base, userId: "u2" });
+
+    expect(await renombrarProducto(db, { storeId: store, productId, name: "Robado" })).toBe(false);
+
+    const [p] = await db.select().from(products).where(eq(products.id, productId));
+    expect(p.name).toBe("Sobre Booster");
   });
 });

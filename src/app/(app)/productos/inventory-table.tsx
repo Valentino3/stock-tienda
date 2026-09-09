@@ -215,6 +215,7 @@ function InventoryTableRow({
           variant={{
             id: row.variantId,
             productId: row.productId,
+            productName: row.productName,
             name: row.variantName,
             sku: row.sku,
             stock: row.stock,
