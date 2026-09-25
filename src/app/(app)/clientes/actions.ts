@@ -2,7 +2,9 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
-import { createClient, recordAccountMovement, updateDatosFiscales, voidAccountMovement } from "@/domain/clients";
+import {
+  createClient, recordAccountAdjustment, recordAccountMovement, updateDatosFiscales, voidAccountMovement,
+} from "@/domain/clients";
 import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit, CONDICIONES_IVA_RECEPTOR } from "@/domain/fiscal-catalogs";
 
 // Tipo de retorno EXPLÍCITO: sin él, TypeScript infiere
@@ -107,6 +109,9 @@ const ERRORES_CUENTA: Record<string, string> = {
   CLIENT_NOT_FOUND: "Cliente no encontrado",
   NO_OPEN_SESSION:
     "No hay caja abierta. Abrila para cobrar en efectivo, o registralo con otro medio si la plata no entró al cajón.",
+  INVALID_METHOD: "Elegí un medio de pago válido.",
+  INVALID_KIND: "Tipo de movimiento inválido.",
+  MOTIVO_REQUIRED: "Escribí el motivo: es lo que va a explicar este cambio en la deuda.",
   VOID_REASON_REQUIRED: "Escribí por qué se anula.",
   MOVEMENT_NOT_FOUND: "Ese movimiento no existe.",
   ALREADY_VOIDED: "Ese movimiento ya está anulado.",
@@ -127,15 +132,18 @@ function revalidarCuenta(clientId: number) {
 }
 
 /**
- * Cobro de deuda o carga de crédito.
+ * Un movimiento en la cuenta de un cliente: cobro de deuda, carga de crédito,
+ * cargo manual o ajuste.
  *
- * `requireStore` y no owner: el cajero del mostrador del torneo tiene que
- * poder. Además esto METE plata, no la saca — es menos riesgoso que un egreso,
- * que sí es solo del dueño.
+ * `requireStore` y no owner, para los cuatro. Cobrar y cargar crédito METEN
+ * plata: el cajero del mostrador del torneo tiene que poder. Cargo manual y
+ * ajuste no mueven plata pero sí deuda, y el comercio decidió que también los
+ * pueda hacer cualquiera de la tienda: queda registrado quién, y el motivo es
+ * obligatorio. Ninguno de los dos toca la caja (ver recordAccountAdjustment).
  */
 export async function recordClientAccountMovement(input: {
   clientId: number;
-  kind: "pago" | "credito";
+  kind: "pago" | "credito" | "cargo" | "ajuste";
   amount: number;
   method?: string;
   note?: string;
@@ -144,15 +152,24 @@ export async function recordClientAccountMovement(input: {
   if (!(input.amount > 0)) return { error: ERRORES_CUENTA.INVALID_AMOUNT };
   let balance: number;
   try {
-    ({ balance } = await recordAccountMovement(db, {
-      storeId,
-      clientId: input.clientId,
-      kind: input.kind,
-      amount: input.amount,
-      method: input.method || null,
-      note: input.note,
-      userId,
-    }));
+    ({ balance } = input.kind === "cargo" || input.kind === "ajuste"
+      ? await recordAccountAdjustment(db, {
+          storeId,
+          clientId: input.clientId,
+          kind: input.kind,
+          amount: input.amount,
+          reason: input.note ?? "",
+          userId,
+        })
+      : await recordAccountMovement(db, {
+          storeId,
+          clientId: input.clientId,
+          kind: input.kind,
+          amount: input.amount,
+          method: input.method || null,
+          note: input.note,
+          userId,
+        }));
   } catch (e) {
     const clave = e instanceof Error ? e.message : "";
     return { error: ERRORES_CUENTA[clave] ?? "No se pudo registrar el movimiento" };

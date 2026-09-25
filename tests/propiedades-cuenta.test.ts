@@ -7,7 +7,7 @@ import { openCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
 import {
   createClient, recordAccountMovement, getClientBalance, getClientLedger, getClientSummary,
-  voidAccountMovement,
+  recordAccountAdjustment, voidAccountMovement,
 } from "@/domain/clients";
 
 /**
@@ -52,7 +52,9 @@ type Mov =
   // Anular el k-ésimo movimiento que exista hasta ese momento —cualquiera,
   // incluidos los cargos de venta y las reversiones automáticas, que el dominio
   // tiene que rechazar—, módulo la cantidad.
-  | { t: "anular"; k: number };
+  | { t: "anular"; k: number }
+  // Cargo manual (suma) o ajuste (resta), sin plata.
+  | { t: "manual"; kind: "cargo" | "ajuste"; monto: number };
 
 const mov: fc.Arbitrary<Mov> = fc.oneof(
   fc.record({
@@ -66,6 +68,11 @@ const mov: fc.Arbitrary<Mov> = fc.oneof(
     monto: fc.integer({ min: 1, max: 500_000 }).map((c) => c / 100),
   }),
   fc.record({ t: fc.constant("anular" as const), k: fc.nat({ max: 50 }) }),
+  fc.record({
+    t: fc.constant("manual" as const),
+    kind: fc.constantFrom("cargo" as const, "ajuste" as const),
+    monto: fc.integer({ min: 1, max: 500_000 }).map((c) => c / 100),
+  }),
 );
 
 /** Un asiento del modelo: lo mínimo para calcular el saldo y las reglas. */
@@ -118,6 +125,11 @@ describe("el saldo del cliente", () => {
               method: "transferencia", userId: "u1",
             });
             asientos.push({ id: movementId, suma: false, amount: m.monto, deVenta: false, reversion: false, voided: false });
+          } else if (m.t === "manual") {
+            const { movementId } = await recordAccountAdjustment(db, {
+              storeId: store, clientId, kind: m.kind, amount: m.monto, reason: "prueba", userId: "u1",
+            });
+            asientos.push({ id: movementId, suma: m.kind === "cargo", amount: m.monto, deVenta: false, reversion: false, voided: false });
           } else if (asientos.length > 0) {
             const a = asientos[m.k % asientos.length];
             const esperado = esperadoAlAnular(a);

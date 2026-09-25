@@ -7,7 +7,7 @@ import { getCashSessionClose } from "@/domain/cash-close";
 import { createSale, voidSale } from "@/domain/sales";
 import {
   createClient, getClientBalance, getClientLedger, getClientSummary, listClientsWithBalance,
-  motivoNoAnulable, recordAccountMovement, voidAccountMovement,
+  motivoNoAnulable, recordAccountAdjustment, recordAccountMovement, voidAccountMovement,
 } from "@/domain/clients";
 
 /**
@@ -224,5 +224,80 @@ describe("motivoNoAnulable", () => {
   it("atado a una caja: depende de si está cerrada", () => {
     expect(motivoNoAnulable({ ...base, cashSessionId: 1 }, false)).toBeNull();
     expect(motivoNoAnulable({ ...base, cashSessionId: 1 }, true)).toBe("CASH_SESSION_CLOSED");
+  });
+});
+
+describe("recordAccountAdjustment: sumar y restar deuda sin plata", () => {
+  const ajustar = (kind: "cargo" | "ajuste", amount: number, extra: Record<string, unknown> = {}) =>
+    recordAccountAdjustment(db, {
+      storeId: store, clientId, kind, amount, reason: "libreta de papel", userId: "ana", ...extra,
+    } as any);
+
+  it("un cargo manual suma y un ajuste resta, sin medio, sin caja y con el motivo como nota", async () => {
+    // Sin caja abierta a propósito: no la necesitan porque no mueven plata.
+    expect((await ajustar("cargo", 10000)).balance).toBe(10000);
+    expect((await ajustar("ajuste", 2500, { reason: "  descuento acordado  " })).balance).toBe(7500);
+
+    const filas = await db.select().from(clientAccountMovements).where(eq(clientAccountMovements.clientId, clientId));
+    for (const f of filas) {
+      expect(f).toMatchObject({ saleId: null, method: null, cashSessionId: null, createdBy: "ana" });
+    }
+    expect(filas.find((f: any) => f.type === "ajuste")!.note).toBe("descuento acordado");
+  });
+
+  it("exige motivo", async () => {
+    await expect(ajustar("cargo", 100, { reason: " " })).rejects.toThrow("MOTIVO_REQUIRED");
+    await expect(ajustar("ajuste", 100, { reason: "ok" })).rejects.toThrow("MOTIVO_REQUIRED");
+  });
+
+  it("rechaza montos no positivos, tipos que no son de ajuste y clientes de otra tienda", async () => {
+    await expect(ajustar("cargo", 0)).rejects.toThrow("INVALID_AMOUNT");
+    await expect(ajustar("pago" as any, 100)).rejects.toThrow("INVALID_KIND");
+    await expect(
+      recordAccountAdjustment(db, { storeId: otra, clientId, kind: "cargo", amount: 100, reason: "de otra", userId: "u2" })
+    ).rejects.toThrow("CLIENT_NOT_FOUND");
+  });
+
+  it("un ajuste mayor que la deuda deja saldo a favor: sin tope, por decisión del comercio", async () => {
+    await ajustar("cargo", 1000);
+    expect((await ajustar("ajuste", 1500)).balance).toBe(-500);
+  });
+
+  it("no toca la caja: el esperado sigue siendo solo la apertura", async () => {
+    const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 700 });
+    await ajustar("cargo", 5000);
+    await ajustar("ajuste", 2000);
+    const cerrada = await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 700 });
+    expect(cerrada.expectedCash).toBe(700);
+  });
+
+  it("el resumen separa los cargos manuales de lo comprado y los ajustes de lo pagado", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 3 }],
+    });
+    await ajustar("cargo", 800);
+    await ajustar("ajuste", 300);
+    await cobrar({ amount: 1000, method: "transferencia" });
+
+    expect(await getClientSummary(db, store, clientId)).toMatchObject({
+      charged: 3000, manualCharged: 800, adjusted: 300, paid: 1000, purchases: 1,
+      balance: 2500,
+    });
+    expect(await getClientBalance(db, store, clientId)).toBe(2500);
+  });
+
+  it("un cargo manual o un ajuste se pueden anular", async () => {
+    const { movementId } = await ajustar("ajuste", 400);
+    await voidAccountMovement(db, { storeId: store, movementId, userId: "u1", reason: "era a otro cliente" });
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+});
+
+describe("recordAccountMovement valida el medio", () => {
+  it("rechaza 'cuenta' y medios inventados", async () => {
+    await expect(cobrar({ method: "cuenta" })).rejects.toThrow("INVALID_METHOD");
+    await expect(cobrar({ method: "bitcoin" })).rejects.toThrow("INVALID_METHOD");
   });
 });

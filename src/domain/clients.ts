@@ -308,7 +308,13 @@ export async function getClientLedger(
 export async function getClientSummary(db: any, storeId: number, clientId: number) {
   const [row] = await db
     .select({
-      charged: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
+      // Cargos de VENTA y cargos manuales por separado: "Total comprado" no
+      // puede incluir una deuda de la libreta que no fue una compra acá.
+      charged: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' and ${clientAccountMovements.saleId} is not null then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
+      manualCharged: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' and ${clientAccountMovements.saleId} is null then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
+      // Deuda que bajó SIN plata. Aparte de `paid` por la misma razón que el
+      // crédito: "Total pagado" no puede incluir plata que nunca entró.
+      adjusted: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'ajuste' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
       paid: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'pago' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
       // Las anulaciones se cuentan aparte: si se sumaran a `paid` el historial
       // mostraría plata que nunca entró, y si se ignoraran el saldo no cerraría.
@@ -316,7 +322,7 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
       // Plata que el cliente dejo por adelantado. Va aparte de `paid` porque no
       // cancela ninguna deuda: sumarla ahi diria que pago algo que nunca debio.
       credited: sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'credito' then ${clientAccountMovements.amount} else 0 end), 0)`.mapWith(Number),
-      purchases: sql<number>`count(*) filter (where ${clientAccountMovements.type} = 'cargo') - count(*) filter (where ${clientAccountMovements.type} = 'anulacion')`.mapWith(Number),
+      purchases: sql<number>`count(*) filter (where ${clientAccountMovements.type} = 'cargo' and ${clientAccountMovements.saleId} is not null) - count(*) filter (where ${clientAccountMovements.type} = 'anulacion')`.mapWith(Number),
       // Un max() agregado no pasa por el mapeo de columna del driver: Neon
       // devuelve Date y PGlite string. Se normaliza abajo.
       lastMovementAt: sql<string | Date | null>`max(${clientAccountMovements.createdAt})`,
@@ -330,27 +336,36 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
     ));
 
   const charged = round2(row?.charged ?? 0);
+  const manualCharged = round2(row?.manualCharged ?? 0);
   const paid = round2(row?.paid ?? 0);
   const voided = round2(row?.voided ?? 0);
   const credited = round2(row?.credited ?? 0);
+  const adjusted = round2(row?.adjusted ?? 0);
   const last = row?.lastMovementAt ?? null;
   return {
-    /** Comprado neto: lo cargado menos lo que se anuló. */
+    /** Comprado neto: lo cargado por ventas menos lo que se anuló. */
     charged: round2(charged - voided),
+    /** Cargos manuales: deuda que no salió de una venta. */
+    manualCharged,
     paid,
     voided,
     purchases: row?.purchases ?? 0,
     credited,
+    /** Ajustes: deuda que bajó sin que entrara plata. */
+    adjusted,
     // ⚠️ Tiene que dar EXACTAMENTE lo mismo que `balanceExpr`. Son dos cuentas
     // distintas —una en SQL, otra en JS— y si divergen, /clientes y
     // /clientes/[id] muestran dos saldos distintos para el mismo cliente.
-    balance: round2(charged - paid - voided - credited),
+    balance: round2(charged + manualCharged - paid - voided - credited - adjusted),
     lastMovementAt: last ? new Date(last) : null,
   };
 }
 
 /** Cobro de una deuda, o carga de crédito por adelantado. */
 export type ClientAccountKind = "pago" | "credito";
+
+/** Con qué puede entrar plata a una cuenta. "cuenta" no: sería fiar un pago. */
+const MEDIOS_DE_COBRO: readonly string[] = ["efectivo", "transferencia", "tarjeta"] as const;
 
 /**
  * 🔴 CAMINO DE PLATA. Registra un movimiento de cuenta corriente que resta del
@@ -380,6 +395,9 @@ export async function recordAccountMovement(
   }
 ): Promise<{ movementId: number; balance: number }> {
   if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
+  // Validado acá y no solo en el <select>: un "cuenta" o un medio inventado
+  // llegaría al enum de la base. `null` sigue valiendo, como "sin medio".
+  if (input.method != null && !MEDIOS_DE_COBRO.includes(input.method)) throw new Error("INVALID_METHOD");
   // El cliente se valida ANTES que la caja: sin este orden, cobrarle a un
   // cliente de otra tienda sin caja abierta devolvería NO_OPEN_SESSION, que es
   // el menos informativo de los dos errores.
@@ -404,7 +422,8 @@ export async function recordAccountMovement(
       clientId: input.clientId,
       type: input.kind,
       amount: round2(input.amount),
-      method: (input.method as any) ?? null,
+      // Ya validado contra MEDIOS_DE_COBRO arriba.
+      method: (input.method ?? null) as "efectivo" | "transferencia" | "tarjeta" | null,
       cashSessionId,
       note: input.note?.trim() || null,
       createdBy: input.userId,
@@ -426,6 +445,58 @@ export async function recordAccountMovement(
 
 /** Mínimo de un motivo, ya recortado. Evita el "." y el "asd". */
 export const MOTIVO_MIN = 3;
+
+/** Lo que mueve el saldo sin que entre ni salga plata. */
+export type ClientAdjustmentKind = "cargo" | "ajuste";
+
+/**
+ * 🔴 CAMINO DE PLATA. Suma o resta deuda sin que se mueva plata.
+ *
+ *   - `cargo`: un cargo manual. Una deuda de la libreta de antes del sistema,
+ *     algo que se llevó sin pasar por la caja.
+ *   - `ajuste`: baja la deuda sin cobro. Un descuento, una deuda que se
+ *     perdona. Sin tope a propósito: si deja al cliente con saldo a favor, es
+ *     una decisión del comercio, y queda con quién la tomó y por qué.
+ *
+ * Función aparte de `recordAccountMovement` y no un `kind` más de aquella: así
+ * ninguno de los dos puede terminar atado a una caja. No hay medio, no hay
+ * `cashSessionId`, no se lee ni se bloquea la caja. Si entrara al arqueo, un
+ * ajuste "en efectivo" haría aparecer plata que no está en el cajón.
+ *
+ * El motivo es obligatorio por lo mismo que en una anulación: es lo único que
+ * va a explicar, dentro de tres meses, por qué cambió esa deuda.
+ */
+export async function recordAccountAdjustment(
+  db: any,
+  input: { storeId: number; clientId: number; kind: ClientAdjustmentKind; amount: number; reason: string; userId: string },
+): Promise<{ movementId: number; balance: number }> {
+  if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
+  if (input.kind !== "cargo" && input.kind !== "ajuste") throw new Error("INVALID_KIND");
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < MOTIVO_MIN) throw new Error("MOTIVO_REQUIRED");
+  const client = await getClient(db, input.storeId, input.clientId);
+  if (!client) throw new Error("CLIENT_NOT_FOUND");
+
+  return db.transaction(async (tx: any) => {
+    const [mov] = await tx.insert(clientAccountMovements).values({
+      storeId: input.storeId,
+      clientId: input.clientId,
+      type: input.kind,
+      amount: round2(input.amount),
+      saleId: null,
+      method: null,
+      cashSessionId: null,
+      note: reason,
+      createdBy: input.userId,
+    }).returning({ id: clientAccountMovements.id });
+
+    const [row] = await tx
+      .select({ balance: balanceExpr.mapWith(Number) })
+      .from(clientAccountMovements)
+      .where(and(eq(clientAccountMovements.storeId, input.storeId), eq(clientAccountMovements.clientId, input.clientId)));
+    return { movementId: mov.id, balance: round2(row?.balance ?? 0) };
+  });
+}
 
 export type MotivoNoAnulable =
   | "ALREADY_VOIDED"

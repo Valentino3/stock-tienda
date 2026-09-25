@@ -90,6 +90,15 @@ export default async function ClienteDetallePage({
         {summary.credited > 0 && (
           <StatTile label="Crédito cargado" value={money(summary.credited)} tone="brand" />
         )}
+        {/* Solo si hay: son correcciones, y en la mayoría de los clientes no
+            existen. Aparte de "comprado" y "pagado" porque no son ni una cosa
+            ni la otra. */}
+        {summary.manualCharged > 0 && (
+          <StatTile label="Cargos manuales" value={money(summary.manualCharged)} />
+        )}
+        {summary.adjusted > 0 && (
+          <StatTile label="Ajustes / descuentos" value={money(summary.adjusted)} />
+        )}
         <StatTile
           label="Compras a cuenta"
           value={number(summary.purchases)}
@@ -102,7 +111,8 @@ export default async function ClienteDetallePage({
           Hay {number(unreversed.length)} {unreversed.length === 1 ? "venta anulada" : "ventas anuladas"} por{" "}
           <strong>{money(unreversedTotal)}</strong> cuyo cargo quedó sumando a la deuda. Son
           anteriores a la corrección: hoy anular una venta a cuenta descuenta el cargo solo. Si
-          corresponde, registrá un ajuste por ese monto.
+          corresponde, registrá desde <strong>Cuenta</strong> un <strong>ajuste</strong> por ese
+          monto: el saldo queda bien, aunque este aviso va a seguir marcando esas ventas.
         </Notice>
       )}
 
