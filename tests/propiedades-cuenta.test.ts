@@ -7,7 +7,7 @@ import { openCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
 import {
   createClient, recordAccountMovement, getClientBalance, getClientLedger, getClientSummary,
-  recordAccountAdjustment, voidAccountMovement,
+  listAccountMovements, recordAccountAdjustment, voidAccountMovement,
 } from "@/domain/clients";
 
 /**
@@ -155,6 +155,12 @@ describe("el saldo del cliente", () => {
         expect(acumulado).toBe(enSql);
         // El ledger muestra TODO, también lo anulado: es el registro.
         expect(ledger).toHaveLength(asientos.length);
+
+        // Cuarta vía: el registro de movimientos de la tienda, filtrado a este
+        // cliente y a lo vigente, tiene que sumar el mismo saldo. Es lo que ata
+        // esa pantalla (y su Excel) al número de la ficha.
+        const { rows } = await listAccountMovements(db, { storeId: store, clientId, estado: "vigentes", page: null });
+        expect(round2(rows.reduce((s, r) => s + (r.type === "cargo" ? r.amount : -r.amount), 0))).toBe(enSql);
       }),
       { numRuns: 40 }
     );

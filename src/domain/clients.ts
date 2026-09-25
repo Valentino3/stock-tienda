@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   clients, clientAccountMovements, cashSessions, sales, saleItems, productVariants, products, user,
@@ -621,6 +621,135 @@ export async function voidAccountMovement(
       .where(and(eq(clientAccountMovements.storeId, input.storeId), eq(clientAccountMovements.clientId, mov.clientId)));
     return { clientId: mov.clientId, balance: round2(row?.balance ?? 0) };
   });
+}
+
+/** Filtro por tipo del registro. Separa los dos cargos, que en la base son uno. */
+export type FiltroTipoMovimiento = "venta" | "cargo_manual" | "pago" | "credito" | "ajuste" | "anulacion";
+
+export const FILTROS_TIPO_MOVIMIENTO: { value: FiltroTipoMovimiento; label: string }[] = [
+  { value: "venta", label: "Venta a cuenta" },
+  { value: "cargo_manual", label: "Cargo manual" },
+  { value: "pago", label: "Cobro" },
+  { value: "credito", label: "Carga de crédito" },
+  { value: "ajuste", label: "Ajuste" },
+  { value: "anulacion", label: "Anulación de venta" },
+];
+
+export type EstadoMovimiento = "todos" | "vigentes" | "anulados";
+
+export type AccountMovementRow = {
+  id: number;
+  createdAt: Date;
+  clientId: number;
+  clientName: string;
+  type: MovementType;
+  saleId: number | null;
+  method: string | null;
+  amount: number;
+  note: string | null;
+  createdByName: string | null;
+  voided: boolean;
+  voidedAt: Date | null;
+  voidedByName: string | null;
+  voidedReason: string | null;
+  anulable: boolean;
+};
+
+export const MOVIMIENTOS_POR_PAGINA = 50;
+/** Tope del Excel: uno más grande no lo abre nadie, y cuelga la función. */
+const MOVIMIENTOS_EXPORT_MAX = 20_000;
+
+const registrador = alias(user, "registrador");
+
+/**
+ * El registro de movimientos de TODA la tienda: quién anotó qué, a quién,
+ * cuándo, y quién anuló qué y por qué.
+ *
+ * Mismo molde que getSalesHistory: 30 días por defecto (un pedido sin rango no
+ * puede traer años), paginado con `limit + 1` para saber si hay otra página
+ * sin contar. Con `page: null` es el Excel: sin paginar, con tope.
+ *
+ * Sin `to`, no hay tope superior: "hasta ahora" comparado contra el reloj del
+ * servidor puede dejar afuera lo que se acaba de anotar si los relojes del
+ * servidor y la base no coinciden al segundo.
+ *
+ * El filtro por usuario matchea a quien lo anotó O a quien lo anuló: la
+ * pregunta que contesta es "¿qué hizo esta persona en las cuentas?".
+ */
+export async function listAccountMovements(
+  db: any,
+  o: {
+    storeId: number;
+    from?: Date;
+    to?: Date;
+    tipo?: FiltroTipoMovimiento;
+    clientId?: number;
+    userId?: string;
+    estado?: EstadoMovimiento;
+    page: number | null;
+  },
+): Promise<{ rows: AccountMovementRow[]; hasNextPage: boolean }> {
+  const cam = clientAccountMovements;
+  const from = o.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const condiciones: any[] = [eq(cam.storeId, o.storeId), gte(cam.createdAt, from)];
+  if (o.to) condiciones.push(lt(cam.createdAt, o.to));
+  if (o.tipo === "venta") condiciones.push(eq(cam.type, "cargo"), isNotNull(cam.saleId));
+  else if (o.tipo === "cargo_manual") condiciones.push(eq(cam.type, "cargo"), isNull(cam.saleId));
+  else if (o.tipo) condiciones.push(eq(cam.type, o.tipo));
+  if (o.clientId) condiciones.push(eq(cam.clientId, o.clientId));
+  if (o.userId) condiciones.push(or(eq(cam.createdBy, o.userId), eq(cam.voidedBy, o.userId)));
+  if (o.estado === "vigentes") condiciones.push(eq(cam.voided, false));
+  else if (o.estado === "anulados") condiciones.push(eq(cam.voided, true));
+
+  const limite = o.page == null ? MOVIMIENTOS_EXPORT_MAX : MOVIMIENTOS_POR_PAGINA + 1;
+  const filas: any[] = await db
+    .select({
+      id: cam.id,
+      createdAt: cam.createdAt,
+      clientId: cam.clientId,
+      clientName: clients.name,
+      type: cam.type,
+      saleId: cam.saleId,
+      method: cam.method,
+      amount: cam.amount,
+      note: cam.note,
+      cashSessionId: cam.cashSessionId,
+      createdByName: registrador.name,
+      voided: cam.voided,
+      voidedAt: cam.voidedAt,
+      voidedByName: anulador.name,
+      voidedReason: cam.voidedReason,
+      cajaCerradaEn: cashSessions.closedAt,
+    })
+    .from(cam)
+    .innerJoin(clients, eq(cam.clientId, clients.id))
+    .leftJoin(registrador, eq(cam.createdBy, registrador.id))
+    .leftJoin(anulador, eq(cam.voidedBy, anulador.id))
+    .leftJoin(cashSessions, eq(cam.cashSessionId, cashSessions.id))
+    .where(and(...condiciones))
+    .orderBy(desc(cam.createdAt), desc(cam.id))
+    .limit(limite)
+    .offset(o.page == null ? 0 : (Math.max(1, o.page) - 1) * MOVIMIENTOS_POR_PAGINA);
+
+  const hasNextPage = o.page != null && filas.length > MOVIMIENTOS_POR_PAGINA;
+  const rows = (hasNextPage ? filas.slice(0, MOVIMIENTOS_POR_PAGINA) : filas).map((f) => ({
+    id: f.id,
+    createdAt: f.createdAt,
+    clientId: f.clientId,
+    clientName: f.clientName,
+    type: f.type,
+    saleId: f.saleId ?? null,
+    method: f.method ?? null,
+    amount: f.amount,
+    note: f.note ?? null,
+    createdByName: f.createdByName ?? null,
+    voided: f.voided,
+    voidedAt: f.voidedAt ?? null,
+    voidedByName: f.voidedByName ?? null,
+    voidedReason: f.voidedReason ?? null,
+    anulable: motivoNoAnulable(f, f.cajaCerradaEn != null) == null,
+  }));
+  return { rows, hasNextPage };
 }
 
 /**

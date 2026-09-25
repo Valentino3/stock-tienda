@@ -33,13 +33,18 @@ export default async function ClientesPage() {
         title="Clientes"
         description="Cuenta corriente y fiado."
         actions={
-          <Button asChild size="sm">
-            {/* `<a>` y no `<Link>` a propósito: /clientes/export es un route
-                handler que devuelve un .xlsx. Con Link, Next lo prefetchea y
-                lo navega del lado cliente, y la descarga no se dispara. */}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
-            <a href="/clientes/export">Exportar Excel</a>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/clientes/movimientos">Movimientos</Link>
+            </Button>
+            <Button asChild size="sm">
+              {/* `<a>` y no `<Link>` a propósito: /clientes/export es un route
+                  handler que devuelve un .xlsx. Con Link, Next lo prefetchea y
+                  lo navega del lado cliente, y la descarga no se dispara. */}
+              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+              <a href="/clientes/export">Exportar Excel</a>
+            </Button>
+          </div>
         }
       />
 

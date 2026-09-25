@@ -6,7 +6,7 @@ import { openCashSession, closeCashSession } from "@/domain/cash";
 import { getCashSessionClose } from "@/domain/cash-close";
 import { createSale, voidSale } from "@/domain/sales";
 import {
-  createClient, getClientBalance, getClientLedger, getClientSummary, listClientsWithBalance,
+  createClient, getClientBalance, getClientLedger, getClientSummary, listAccountMovements, listClientsWithBalance,
   motivoNoAnulable, recordAccountAdjustment, recordAccountMovement, voidAccountMovement,
 } from "@/domain/clients";
 
@@ -292,6 +292,73 @@ describe("recordAccountAdjustment: sumar y restar deuda sin plata", () => {
     const { movementId } = await ajustar("ajuste", 400);
     await voidAccountMovement(db, { storeId: store, movementId, userId: "u1", reason: "era a otro cliente" });
     expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+});
+
+describe("listAccountMovements: el registro de toda la tienda", () => {
+  const ajustar = (kind: "cargo" | "ajuste", amount: number, userId = "u1") =>
+    recordAccountAdjustment(db, { storeId: store, clientId, kind, amount, reason: "libreta", userId });
+
+  it("trae lo de todos los clientes de la tienda, del más nuevo al más viejo, y nada de otra", async () => {
+    const otro = (await createClient(db, { storeId: store, name: "Otro" })).id;
+    await ajustar("cargo", 100);
+    await recordAccountAdjustment(db, { storeId: store, clientId: otro, kind: "cargo", amount: 200, reason: "libreta", userId: "u1" });
+    const ajeno = (await createClient(db, { storeId: otra, name: "Ajeno" })).id;
+    await recordAccountAdjustment(db, { storeId: otra, clientId: ajeno, kind: "cargo", amount: 999, reason: "libreta", userId: "u2" });
+
+    const { rows, hasNextPage } = await listAccountMovements(db, { storeId: store, page: 1 });
+    expect(rows.map((r) => r.amount)).toEqual([200, 100]);
+    expect(rows.map((r) => r.clientName)).toEqual(["Otro", "Juan"]);
+    expect(hasNextPage).toBe(false);
+  });
+
+  it("filtra por tipo, separando la venta a cuenta del cargo manual", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId, items: [{ variantId, quantity: 1 }] });
+    await ajustar("cargo", 50);
+    await ajustar("ajuste", 20);
+
+    const tipos = async (tipo: any) =>
+      (await listAccountMovements(db, { storeId: store, tipo, page: 1 })).rows.map((r) => [r.type, r.saleId != null]);
+    expect(await tipos("venta")).toEqual([["cargo", true]]);
+    expect(await tipos("cargo_manual")).toEqual([["cargo", false]]);
+    expect(await tipos("ajuste")).toEqual([["ajuste", false]]);
+  });
+
+  it("filtra por estado, y por usuario tanto a quien anotó como a quien anuló", async () => {
+    const a = await ajustar("cargo", 10, "u1");
+    await ajustar("cargo", 20, "u1");
+    await voidAccountMovement(db, { storeId: store, movementId: a.movementId, userId: "ana", reason: "no era" });
+
+    const anulados = await listAccountMovements(db, { storeId: store, estado: "anulados", page: 1 });
+    expect(anulados.rows).toEqual([expect.objectContaining({ id: a.movementId, voided: true, voidedReason: "no era" })]);
+    expect((await listAccountMovements(db, { storeId: store, estado: "vigentes", page: 1 })).rows).toHaveLength(1);
+
+    // ana no anotó nada, pero anuló uno: aparece en "lo que hizo ana".
+    const deAna = await listAccountMovements(db, { storeId: store, userId: "ana", page: 1 });
+    expect(deAna.rows.map((r) => r.id)).toEqual([a.movementId]);
+  });
+
+  it("filtra por cliente y por rango de fechas", async () => {
+    const otro = (await createClient(db, { storeId: store, name: "Otro" })).id;
+    await ajustar("cargo", 10);
+    await recordAccountAdjustment(db, { storeId: store, clientId: otro, kind: "cargo", amount: 20, reason: "libreta", userId: "u1" });
+
+    expect((await listAccountMovements(db, { storeId: store, clientId: otro, page: 1 })).rows.map((r) => r.amount)).toEqual([20]);
+    const manana = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    expect((await listAccountMovements(db, { storeId: store, from: manana, page: 1 })).rows).toEqual([]);
+  });
+
+  it("pagina de a 50 y avisa si hay otra página", async () => {
+    for (let i = 0; i < 51; i++) await ajustar("cargo", 1);
+    const p1 = await listAccountMovements(db, { storeId: store, page: 1 });
+    expect(p1.rows).toHaveLength(50);
+    expect(p1.hasNextPage).toBe(true);
+    const p2 = await listAccountMovements(db, { storeId: store, page: 2 });
+    expect(p2.rows).toHaveLength(1);
+    expect(p2.hasNextPage).toBe(false);
+    // El Excel no pagina.
+    expect((await listAccountMovements(db, { storeId: store, page: null })).rows).toHaveLength(51);
   });
 });
 

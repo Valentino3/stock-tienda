@@ -141,7 +141,10 @@ export default async function ClienteDetallePage({
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground">
               Del más reciente al más antiguo. Solo aparecen las ventas a cuenta — las compras
-              pagadas en el momento no quedan asociadas a un cliente.
+              pagadas en el momento no quedan asociadas a un cliente.{" "}
+              <Link href={`/clientes/movimientos?cliente=${client.id}`} className="text-brand underline underline-offset-4">
+                Filtrar y exportar
+              </Link>
             </p>
             {ledger.map((entry) => (
               <LedgerRow key={`${entry.type}-${entry.id}`} entry={entry} />
