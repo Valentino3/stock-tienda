@@ -78,7 +78,6 @@ export default async function MovimientosPage({ searchParams }: { searchParams: 
             </Button>
             <Button asChild size="sm">
               {/* `<a>`: es un route handler que devuelve un .xlsx, ver /clientes. */}
-              {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
               <a href={`/clientes/movimientos/export${querystring(params)}`}>Exportar Excel</a>
             </Button>
           </div>
