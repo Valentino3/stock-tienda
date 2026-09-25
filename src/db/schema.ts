@@ -143,7 +143,9 @@ export const accountRelations = relations(account, ({ one }) => ({
 // ---- dominio ----
 export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transferencia", "tarjeta", "cuenta"]);
 // Movimientos de cuenta corriente de un cliente.
-//   cargo     — venta a cuenta: suma deuda.
+//   cargo     — suma deuda. Con `saleId`, es una venta a cuenta. Sin `saleId`,
+//               un cargo manual (una deuda de la libreta, algo que se llevó sin
+//               pasar por la caja) y `note` es el motivo.
 //   pago      — el cliente cancela: resta deuda.
 //   anulacion — se anuló la venta que originó un cargo: lo revierte. Es un
 //               movimiento propio y no un pago, para que el historial muestre
@@ -153,7 +155,15 @@ export const paymentMethodEnum = pgEnum("payment_method", ["efectivo", "transfer
 //               NO cancela una deuda: por eso es un tipo propio. Con `pago`,
 //               "Total pagado" diría que canceló algo que nunca debió, y no
 //               habría forma de reportar cuánto se cobró por adelantado.
-export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion", "credito"]);
+//   ajuste    — baja deuda SIN que entre plata: un descuento, una deuda que se
+//               perdona, un error de carga. Nunca tiene medio ni caja, y `note`
+//               es el motivo. Es un tipo propio y no un `pago` por la misma
+//               razón que `credito`: "Total pagado" no puede incluir plata que
+//               nunca entró.
+//
+// Un movimiento mal cargado no se borra ni se edita: se ANULA (`voided`) y
+// deja de contar, pero queda en el historial con quién, cuándo y por qué.
+export const clientMovementTypeEnum = pgEnum("client_movement_type", ["cargo", "pago", "anulacion", "credito", "ajuste"]);
 export const movementTypeEnum = pgEnum("movement_type", ["venta", "reposicion", "ajuste", "anulacion"]);
 // Movimientos de efectivo que SALEN de la caja (restan del esperado al cerrar):
 // gasto = compra/pago operativo (empleado); egreso = retiro de efectivo (dueño).
@@ -796,8 +806,8 @@ export const clients = pgTable("clients", {
   uniqueIndex("clients_store_uid_idx").on(t.storeId, t.uid),
 ]);
 
-// Movimientos de cuenta: cargo (venta a cuenta) suma deuda, pago la baja.
-// Saldo del cliente = Σcargo − Σpago.
+// Movimientos de cuenta corriente. Saldo del cliente = Σcargo − Σ(todo lo
+// demás), contando SOLO los no anulados. Ver `clientMovementTypeEnum`.
 export const clientAccountMovements = pgTable("client_account_movements", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   storeId: integer("store_id").notNull().references(() => stores.id),
@@ -823,9 +833,31 @@ export const clientAccountMovements = pgTable("client_account_movements", {
   note: text("note"),
   createdBy: text("created_by").notNull().references(() => user.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  /**
+   * Anulado: el movimiento sigue en el historial, tachado, y deja de contar en
+   * el saldo y en la caja. Mismo criterio que `sales.voided`: una corrección
+   * nunca borra lo que pasó, y el motivo va en el mismo UPDATE.
+   *
+   * ⚠️ Toda suma sobre esta tabla tiene que excluir los anulados. Ver
+   * `balanceExpr` (domain/clients.ts) y `efectivoDeCuentaEnCaja` (domain/cash.ts).
+   */
+  voided: boolean("voided").notNull().default(false),
+  voidedAt: timestamp("voided_at"),
+  voidedBy: text("voided_by").references(() => user.id),
+  voidedReason: text("voided_reason"),
 }, (t) => [
   index("client_movements_client_idx").on(t.clientId),
   index("client_movements_cash_session_idx").on(t.cashSessionId),
+  // El registro de movimientos de toda la tienda filtra por fecha. Sin esto,
+  // abrirlo recorre los movimientos de todas las tiendas.
+  index("client_movements_store_created_idx").on(t.storeId, t.createdAt),
+  // Una anulación a medias —anulado sin motivo, o sin quién— es justo el
+  // registro que después no se puede explicar. Todo o nada.
+  check(
+    "client_movements_anulacion_completa",
+    sql`(${t.voided} = false and ${t.voidedAt} is null and ${t.voidedBy} is null and ${t.voidedReason} is null)
+      or (${t.voided} = true and ${t.voidedAt} is not null and ${t.voidedBy} is not null and ${t.voidedReason} is not null)`,
+  ),
 ]);
 
 // Avisos internos de la tienda (ej: stock bajo que el empleado reporta al dueño).

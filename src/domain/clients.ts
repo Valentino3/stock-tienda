@@ -111,7 +111,7 @@ export type LedgerSale = {
   items: LedgerItem[];
 };
 
-export type MovementType = "cargo" | "pago" | "anulacion" | "credito";
+export type MovementType = "cargo" | "pago" | "anulacion" | "credito" | "ajuste";
 
 export type LedgerEntry = {
   id: number;
