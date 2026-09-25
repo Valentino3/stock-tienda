@@ -239,6 +239,13 @@
       "when": 1788800556488,
       "tag": "0033_pago_dividido",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790357594617,
+      "tag": "0034_indices_ventas_del_turno",
+      "breakpoints": true
     }
   ]
 }

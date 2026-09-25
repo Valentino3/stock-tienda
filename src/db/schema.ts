@@ -519,6 +519,10 @@ export const sales = pgTable("sales", {
   // índice ese OR se resuelve con un seq scan sobre todas las ventas de la
   // tienda, y /ventas es una pantalla que se abre todo el día.
   index("sales_store_registered_by_idx").on(t.storeId, t.registeredBy),
+  // /caja lista las ventas del turno en cada carga (y en cada refresh después
+  // de anotar un gasto). Sin este índice, cada una recorre todas las ventas de
+  // la tienda para quedarse con las de una sola sesión.
+  index("sales_cash_session_idx").on(t.cashSessionId),
 ]);
 
 // ---- gastronomía: mesas y órdenes ----
@@ -707,7 +711,12 @@ export const saleItems = pgTable("sale_items", {
    * una persona.
    */
   isPromo: boolean("is_promo").notNull().default(false),
-});
+}, (t) => [
+  // Postgres no indexa las FK solo. Sin esto, todo `inArray(saleItems.saleId,
+  // …)` —remitos, cierre, historial— lee la tabla entera, que es la que más
+  // crece de toda la base.
+  index("sale_items_sale_idx").on(t.saleId),
+]);
 
 export const stockMovements = pgTable("stock_movements", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
