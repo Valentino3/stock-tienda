@@ -3,7 +3,10 @@ import { createTestDb, seedTestUser, seedTestStore, sembrarVentasCrudas } from "
 import { products, productVariants, sales } from "@/db/schema";
 import { openCashSession, closeCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
-import { createClient, listClientsWithBalance, getClientBalance, recordPayment, getClientLedger, getClientSummary } from "@/domain/clients";
+import {
+  createClient, listClientsWithBalance, getClientBalance, recordPayment, getClientLedger, getClientSummary,
+  setClientActive, updateClient,
+} from "@/domain/clients";
 import { eq } from "drizzle-orm";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
@@ -213,5 +216,37 @@ describe("getClientLedger / getClientSummary", () => {
     expect(s.balance).toBe(3000);
     expect(s.purchases).toBe(1); // el pago no cuenta como compra
     expect(s.lastMovementAt).toBeInstanceOf(Date);
+  });
+});
+
+describe("editar y desactivar un cliente", () => {
+  it("corrige nombre, teléfono y nota, recortados, sin tocar la cuenta", async () => {
+    await recordPayment(db, { storeId: store, clientId, amount: 500, method: "transferencia", userId: "u1" });
+    const c = await updateClient(db, { storeId: store, clientId, name: "  Juan Pérez ", phone: " 11 5555 ", note: "" });
+    expect(c).toMatchObject({ name: "Juan Pérez", phone: "11 5555", note: null });
+    expect(await getClientBalance(db, store, clientId)).toBe(-500);
+  });
+
+  it("no acepta nombre vacío ni un cliente de otra tienda", async () => {
+    await expect(updateClient(db, { storeId: store, clientId, name: "   " })).rejects.toThrow("EMPTY_NAME");
+    const otra = await seedTestStore(db, "t3");
+    await expect(updateClient(db, { storeId: otra, clientId, name: "X" })).rejects.toThrow("CLIENT_NOT_FOUND");
+    await expect(setClientActive(db, { storeId: otra, clientId, active: false })).rejects.toThrow("CLIENT_NOT_FOUND");
+  });
+
+  it("desactivado sigue en la lista con su saldo, y se puede reactivar", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId, items: [{ variantId, quantity: 2 }] });
+
+    await setClientActive(db, { storeId: store, clientId, active: false });
+    // La deuda no desaparece por desactivar: sigue contando en /clientes.
+    expect(await listClientsWithBalance(db, store)).toEqual([
+      expect.objectContaining({ id: clientId, active: false, balance: 2000 }),
+    ]);
+    // Y se le puede seguir cobrando.
+    await recordPayment(db, { storeId: store, clientId, amount: 2000, method: "transferencia", userId: "u1" });
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+
+    expect((await setClientActive(db, { storeId: store, clientId, active: true })).active).toBe(true);
   });
 });

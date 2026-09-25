@@ -73,6 +73,40 @@ export async function updateDatosFiscales(
   return row;
 }
 
+/**
+ * Nombre, teléfono y nota. Los datos fiscales y el mail van por
+ * `updateDatosFiscales`, que es del dueño: cambiar la condición frente al IVA
+ * cambia la factura que le corresponde, y esto no.
+ */
+export async function updateClient(
+  db: any,
+  input: { storeId: number; clientId: number; name: string; phone?: string | null; note?: string | null },
+): Promise<Client> {
+  if (!input.name.trim()) throw new Error("EMPTY_NAME");
+  const [row] = await db.update(clients).set({
+    name: input.name.trim(),
+    phone: input.phone?.trim() || null,
+    note: input.note?.trim() || null,
+  }).where(and(eq(clients.id, input.clientId), eq(clients.storeId, input.storeId))).returning();
+  if (!row) throw new Error("CLIENT_NOT_FOUND");
+  return row;
+}
+
+/**
+ * Desactivar un cliente lo saca del selector del mostrador, nada más: su
+ * cuenta sigue viva, su saldo sigue contando en la deuda total, y se le puede
+ * seguir cobrando. No se borra nunca: sus ventas y movimientos lo referencian.
+ */
+export async function setClientActive(
+  db: any,
+  input: { storeId: number; clientId: number; active: boolean },
+): Promise<Client> {
+  const [row] = await db.update(clients).set({ active: input.active })
+    .where(and(eq(clients.id, input.clientId), eq(clients.storeId, input.storeId))).returning();
+  if (!row) throw new Error("CLIENT_NOT_FOUND");
+  return row;
+}
+
 export async function listClientsWithBalance(db: any, storeId: number) {
   return db
     .select({

@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
-  createClient, recordAccountAdjustment, recordAccountMovement, updateDatosFiscales, voidAccountMovement,
+  createClient, recordAccountAdjustment, recordAccountMovement, setClientActive, updateClient,
+  updateDatosFiscales, voidAccountMovement,
 } from "@/domain/clients";
 import { DOC_CUIT, DOC_DNI, normalizarDoc, validarCuit, CONDICIONES_IVA_RECEPTOR } from "@/domain/fiscal-catalogs";
 
@@ -101,6 +102,42 @@ export async function saveDatosFiscalesAction(input: {
   revalidatePath("/clientes");
   revalidatePath(`/clientes/${input.clientId}`);
   revalidatePath("/ventas");
+  return { ok: true as const };
+}
+
+/**
+ * Nombre, teléfono y nota. `requireStore` igual que al darlo de alta: el que
+ * lo creó en el mostrador tiene que poder corregirle un typo.
+ */
+export async function updateClientAction(input: {
+  clientId: number; name: string; phone?: string; note?: string;
+}): Promise<Resultado> {
+  const { storeId } = await requireStore();
+  if (!input.name.trim()) return { error: "Nombre requerido" };
+  try {
+    await updateClient(db, { storeId, ...input });
+  } catch (e) {
+    return { error: e instanceof Error && e.message === "CLIENT_NOT_FOUND" ? "Cliente no encontrado" : "No se pudo guardar" };
+  }
+  revalidatePath("/clientes");
+  revalidatePath(`/clientes/${input.clientId}`);
+  revalidatePath("/vender");
+  return { ok: true as const };
+}
+
+/** Desactivar o reactivar. No toca la cuenta: ver `setClientActive`. */
+export async function setClientActiveAction(clientId: number, active: boolean): Promise<Resultado> {
+  const { storeId } = await requireStore();
+  try {
+    await setClientActive(db, { storeId, clientId, active });
+  } catch {
+    return { error: "Cliente no encontrado" };
+  }
+  revalidatePath("/clientes");
+  revalidatePath(`/clientes/${clientId}`);
+  // El selector del mostrador y el salón lo muestran o lo esconden.
+  revalidatePath("/vender");
+  revalidatePath("/salon");
   return { ok: true as const };
 }
 

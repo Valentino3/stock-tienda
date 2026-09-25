@@ -13,6 +13,7 @@ import { StatTile } from "@/components/ui/stat-tile";
 import { MovimientoCuentaButton } from "../clientes-client";
 import { DatosFiscalesCard } from "./datos-fiscales-card";
 import { AnularMovimientoButton } from "./anular-movimiento";
+import { ActivoClienteButton, EditarClienteButton } from "./editar-cliente";
 
 const METHOD_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -71,10 +72,19 @@ export default async function ClienteDetallePage({
             <Button asChild variant="outline" size="sm">
               <Link href="/clientes">Volver</Link>
             </Button>
+            <ActivoClienteButton clientId={client.id} active={client.active} balance={summary.balance} />
+            <EditarClienteButton cliente={client} />
             <MovimientoCuentaButton clientId={client.id} clientName={client.name} balance={summary.balance} />
           </>
         }
       />
+
+      {!client.active && (
+        <Notice tone="warn">
+          <strong>Cliente desactivado.</strong> No aparece para elegirlo al vender. Su cuenta
+          sigue igual y se le puede cobrar.
+        </Notice>
+      )}
 
       <div className="grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
         {/* Valor absoluto y el signo en el hint: un titular grande entre

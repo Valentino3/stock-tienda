@@ -14,7 +14,10 @@ import { NewClientForm, MovimientoCuentaButton } from "./clientes-client";
 
 export default async function ClientesPage() {
   const { storeId } = await requireStore();
-  const rows = await listClientsWithBalance(db, storeId);
+  // Activos primero, cada grupo por nombre. El orden se arma acá y no en
+  // `listClientsWithBalance`, que también alimenta el selector del mostrador.
+  const rows = [...await listClientsWithBalance(db, storeId)]
+    .sort((a: { active: boolean }, b: { active: boolean }) => Number(b.active) - Number(a.active));
 
   const totalDeuda = rows.reduce((acc: number, c: { balance: number }) => acc + Math.max(0, c.balance), 0);
   const conDeuda = rows.filter((c: { balance: number }) => c.balance > 0).length;
@@ -73,11 +76,12 @@ export default async function ClientesPage() {
               </TableHeader>
               <TableBody>
                 {rows.map((c: { id: number; name: string; phone: string | null; active: boolean; balance: number }) => (
-                  <TableRow key={c.id}>
+                  <TableRow key={c.id} className={c.active ? "" : "opacity-60"}>
                     <TableCell className="font-medium">
                       <Link href={`/clientes/${c.id}`} className="hover:text-brand hover:underline">
                         {c.name}
                       </Link>
+                      {!c.active && <Badge variant="outline" className="ml-2">Inactivo</Badge>}
                     </TableCell>
                     <TableCell className="figure text-muted-foreground">{c.phone ?? "—"}</TableCell>
                     <TableCell>
