@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import {
   clients, clientAccountMovements, cashSessions, sales, saleItems, productVariants, products, user,
   type Client,
@@ -6,12 +7,20 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-// Saldo = Σcargo − Σpago − Σanulación − Σcrédito.
+// Segunda vuelta sobre `user`: quien anuló un movimiento, al lado de quien lo
+// anotó.
+const anulador = alias(user, "anulador");
+
+// Saldo = Σcargo − Σpago − Σanulación − Σcrédito − Σajuste, solo lo NO anulado.
 //   positivo = el cliente debe;  negativo = tiene saldo A FAVOR.
-// `cargo` suma; los otros tres restan, y por eso caen todos en el else. Un
-// crédito cargado por adelantado entra acá sin código extra, y una venta a
-// cuenta posterior lo consume sola.
-const balanceExpr = sql<number>`coalesce(sum(case when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else -${clientAccountMovements.amount} end), 0)`;
+// `cargo` suma; todo lo demás resta, y por eso cae en el else. Un crédito
+// cargado por adelantado entra acá sin código extra, y una venta a cuenta
+// posterior lo consume sola.
+//
+// El anulado se descarta DENTRO del CASE y no con un WHERE: `listClientsWithBalance`
+// hace leftJoin, y un `WHERE voided = false` sacaría de la lista a los
+// clientes sin movimientos (ahí `voided` es NULL).
+const balanceExpr = sql<number>`coalesce(sum(case when ${clientAccountMovements.voided} then 0 when ${clientAccountMovements.type} = 'cargo' then ${clientAccountMovements.amount} else -${clientAccountMovements.amount} end), 0)`;
 
 /** Datos fiscales del cliente. Todos opcionales: ver el comentario en schema.ts. */
 export type DatosFiscalesCliente = {
@@ -123,8 +132,15 @@ export type LedgerEntry = {
   createdByName: string | null;
   /** La venta que originó el cargo. null en pagos y en cargos manuales. */
   sale: LedgerSale | null;
-  /** Saldo del cliente después de aplicar este movimiento. */
+  /**
+   * Saldo del cliente después de aplicar este movimiento. En un anulado es el
+   * mismo que dejó el anterior: está en la lista pero no aporta.
+   */
   balanceAfter: number;
+  voided: boolean;
+  voidedAt: Date | null;
+  voidedByName: string | null;
+  voidedReason: string | null;
 };
 
 /**
@@ -154,6 +170,10 @@ export async function getClientLedger(
     note: string | null;
     saleId: number | null;
     createdByName: string | null;
+    voided: boolean;
+    voidedAt: Date | null;
+    voidedByName: string | null;
+    voidedReason: string | null;
   };
   type SaleRow = {
     id: number;
@@ -174,9 +194,14 @@ export async function getClientLedger(
       note: clientAccountMovements.note,
       saleId: clientAccountMovements.saleId,
       createdByName: user.name,
+      voided: clientAccountMovements.voided,
+      voidedAt: clientAccountMovements.voidedAt,
+      voidedByName: anulador.name,
+      voidedReason: clientAccountMovements.voidedReason,
     })
     .from(clientAccountMovements)
     .leftJoin(user, eq(clientAccountMovements.createdBy, user.id))
+    .leftJoin(anulador, eq(clientAccountMovements.voidedBy, anulador.id))
     .where(and(
       eq(clientAccountMovements.storeId, storeId),
       eq(clientAccountMovements.clientId, clientId),
@@ -247,7 +272,10 @@ export async function getClientLedger(
 
   let running = 0;
   const entries: LedgerEntry[] = movements.map((m) => {
-    running = round2(running + (m.type === "cargo" ? m.amount : -m.amount));
+    // El anulado queda en su lugar, en orden, pero no mueve el saldo. Así
+    // `ledger[0].balanceAfter` sigue siendo el saldo aunque lo último que se
+    // hizo haya sido anular.
+    if (!m.voided) running = round2(running + (m.type === "cargo" ? m.amount : -m.amount));
     return {
       id: m.id,
       type: m.type,
@@ -258,6 +286,10 @@ export async function getClientLedger(
       createdByName: m.createdByName,
       sale: m.saleId != null ? saleById.get(m.saleId) ?? null : null,
       balanceAfter: running,
+      voided: m.voided,
+      voidedAt: m.voidedAt ?? null,
+      voidedByName: m.voidedByName ?? null,
+      voidedReason: m.voidedReason ?? null,
     };
   });
 
@@ -285,6 +317,8 @@ export async function getClientSummary(db: any, storeId: number, clientId: numbe
     .where(and(
       eq(clientAccountMovements.storeId, storeId),
       eq(clientAccountMovements.clientId, clientId),
+      // Acá sí va en el WHERE: no hay leftJoin que pueda perder al cliente.
+      eq(clientAccountMovements.voided, false),
     ));
 
   const charged = round2(row?.charged ?? 0);

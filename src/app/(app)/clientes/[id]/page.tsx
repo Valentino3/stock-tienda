@@ -50,10 +50,10 @@ export default async function ClienteDetallePage({
   // así que se detectan por ausencia del movimiento y se avisan: su cargo sigue
   // sumando a la deuda y hay que ajustarlo a mano.
   const reversedSaleIds = new Set(
-    ledger.filter((e) => e.type === "anulacion" && e.sale).map((e) => e.sale!.id)
+    ledger.filter((e) => e.type === "anulacion" && !e.voided && e.sale).map((e) => e.sale!.id)
   );
   const unreversed = ledger.filter(
-    (e) => e.type === "cargo" && e.sale?.voided && !reversedSaleIds.has(e.sale.id)
+    (e) => e.type === "cargo" && !e.voided && e.sale?.voided && !reversedSaleIds.has(e.sale.id)
   );
   const unreversedTotal = unreversed.reduce((acc, e) => acc + e.amount, 0);
 

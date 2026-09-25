@@ -445,10 +445,15 @@ export async function voidSale(
     // No hace falta guarda de doble reversión: el UPDATE de arriba filtra por
     // `voided = false`, así que esta transacción corre una sola vez por venta.
     if (voided.clientId != null) {
+      // `voided = false` es defensivo: el cargo de una venta no se puede anular
+      // suelto (ver voidAccountMovement), pero si alguna vez lo estuviera,
+      // revertirlo otra vez restaría una deuda que ya no cuenta.
       const [cargo] = await tx.select().from(clientAccountMovements)
         .where(and(
+          eq(clientAccountMovements.storeId, input.storeId),
           eq(clientAccountMovements.saleId, input.saleId),
           eq(clientAccountMovements.type, "cargo"),
+          eq(clientAccountMovements.voided, false),
         ));
       // Puede no haber cargo si la venta es anterior a la cuenta corriente.
       if (cargo) {
