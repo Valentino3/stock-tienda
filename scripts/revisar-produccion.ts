@@ -203,12 +203,24 @@ async function main() {
   // Va como AVISO y acotado a 90 días: las ventas anteriores a la cuenta
   // corriente no tienen cargo (ver voidSale en domain/sales.ts), y como error
   // sonaría para siempre.
+  //
+  // Los movimientos anulados no cuentan: se chequea si la columna existe y no
+  // si la migración figura aplicada, porque contra una base sin migrar este
+  // script tiene que llegar vivo hasta el final para reportar justamente eso.
+  const colVoided = await db.execute<{ n: string | number }>(
+    sql`select count(*) as n from information_schema.columns
+        where table_name = 'client_account_movements' and column_name = 'voided'`
+  );
+  const hayAnulacion = Number(
+    (((Array.isArray(colVoided) ? colVoided : (colVoided as any).rows) as any[])[0]?.n) ?? 0
+  ) > 0;
+  const soloVigentes = hayAnulacion ? sql`and m.voided = false` : sql``;
   const fiados = await db.execute<{ n: string | number }>(
     sql`select count(*) as n from (
           select s.id,
             coalesce(sum(p.amount) filter (where p.method = 'cuenta'), 0) as fiado,
             coalesce((select sum(m.amount) from client_account_movements m
-                      where m.sale_id = s.id and m.type = 'cargo'), 0) as cargo
+                      where m.sale_id = s.id and m.type = 'cargo' ${soloVigentes}), 0) as cargo
           from sales s left join sale_payments p on p.sale_id = s.id
           where s.created_at > now() - interval '90 days' and s.voided = false
           group by s.id
@@ -221,6 +233,41 @@ async function main() {
     aviso(
       "Ventas donde lo fiado no coincide con el cargo en la cuenta",
       `${nFiados}. El cliente puede estar debiendo algo que ya pagó, o al revés.`
+    );
+  }
+
+  // Solo los cobros y créditos en efectivo meten billetes al cajón, así que son
+  // los únicos que pueden estar atados a una caja. Un cargo manual o un ajuste
+  // con `cash_session_id` haría aparecer en el arqueo plata que no existe.
+  await contar(
+    "Movimientos de cuenta atados a una caja que no son cobros en efectivo",
+    sql`select count(*) as n from client_account_movements
+        where cash_session_id is not null
+          and (method is distinct from 'efectivo' or type not in ('pago', 'credito'))`,
+    "Suman al esperado de esa caja plata que nunca entró al cajón."
+  );
+
+  // Las reglas de anular (ver motivoNoAnulable en domain/clients.ts). Si alguno
+  // de estos aparece, alguien anuló por fuera de la app.
+  if (hayAnulacion) {
+    await contar(
+      "Cargos de venta anulados sueltos",
+      sql`select count(*) as n from client_account_movements
+          where voided and type = 'cargo' and sale_id is not null`,
+      "La venta sigue viva pero el cliente ya no la debe. Se anula la venta, no el cargo."
+    );
+    await contar(
+      "Reversiones de venta anuladas",
+      sql`select count(*) as n from client_account_movements
+          where voided and type = 'anulacion'`,
+      "El cliente vuelve a deber una venta que ya se anuló."
+    );
+    await contar(
+      "Cobros en efectivo anulados después de cerrar su caja",
+      sql`select count(*) as n from client_account_movements m
+          join cash_sessions cs on cs.id = m.cash_session_id
+          where m.voided and cs.closed_at is not null and m.voided_at > cs.closed_at`,
+      "El arqueo de esa caja ya no cuadra con lo que se contó al cerrarla."
     );
   }
 
