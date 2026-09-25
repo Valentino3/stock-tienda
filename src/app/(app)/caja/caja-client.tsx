@@ -33,9 +33,15 @@ type Props = {
   /** Cobros de fiado y cargas de credito en efectivo imputados a esta caja. */
   cobrosCuenta: { id: number; clientName: string; type: string; amount: number }[];
   isOwner: boolean;
+  /**
+   * La lista de ventas del turno, ya renderizada en el servidor. Llega como
+   * nodo y no como datos para no serializar cada remito con sus líneas al
+   * navegador en cada carga de la caja.
+   */
+  ventasDelTurno?: React.ReactNode;
 };
 
-export function CajaClient({ session, openedByName, totals, movements, cobrosCuenta, isOwner }: Props) {
+export function CajaClient({ session, openedByName, totals, movements, cobrosCuenta, isOwner, ventasDelTurno }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { pendientes } = useEstadoOffline();
@@ -140,10 +146,14 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
             hint={matches ? "La caja cuadra." : "Revisar el conteo."}
           />
           {/* El momento en que se quiere el papel del turno es este, no tres
-              pantallas más adelante. */}
-          <Button asChild className="w-full">
-            <a href={`/caja/${closedResult.sessionId}/cierre`}>Descargar cierre con los remitos</a>
-          </Button>
+              pantallas más adelante. Solo al dueño: la hoja lo redirige al
+              empleado, y un botón que no lleva a ningún lado es peor que
+              ninguno. */}
+          {isOwner && (
+            <Button asChild className="w-full">
+              <a href={`/caja/${closedResult.sessionId}/cierre`}>Descargar cierre con los remitos</a>
+            </Button>
+          )}
           {/* Sin esto la pantalla de cierre es un callejón: el arqueo queda
               a la vista y no hay forma de volver a abrir sin navegar afuera y
               entrar de nuevo. Pasa cuando se cierra por error, o cuando hay
@@ -213,7 +223,7 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Ventas de la sesión</CardTitle>
+            <CardTitle className="text-base">Cobrado por medio de pago</CardTitle>
           </CardHeader>
           <CardContent>
             {totals.length === 0 ? (
@@ -383,6 +393,9 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
           </form>
         </CardContent>
       </Card>
+
+      {/* A lo ancho: son siete columnas y en media pantalla no entran. */}
+      {ventasDelTurno && <div className="lg:col-span-2">{ventasDelTurno}</div>}
     </div>
   );
 }

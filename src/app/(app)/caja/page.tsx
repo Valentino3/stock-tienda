@@ -3,6 +3,8 @@ import { db } from "@/db";
 import { clientAccountMovements, clients, sales, salePayments, user } from "@/db/schema";
 import { requireStore } from "@/lib/session";
 import { getOpenSession, getSessionCashMovements } from "@/domain/cash";
+import { getVentasDelTurno } from "@/domain/cash-close";
+import { VentasDelTurno } from "@/components/caja/ventas-del-turno";
 import { PageHeader } from "@/components/ui/page-header";
 import { CajaClient } from "./caja-client";
 
@@ -22,7 +24,7 @@ export default async function CajaPage() {
 
   const [openedByUser] = await db.select({ name: user.name }).from(user).where(eq(user.id, session.openedBy));
 
-  const [totals, movements] = await Promise.all([
+  const [totals, movements, ventas] = await Promise.all([
     db
       // Se suma de `sale_payments`: con pago dividido una venta aporta a mas
       // de un medio. `count` pasa a contar PAGOS, no ventas — ver la etiqueta.
@@ -36,6 +38,12 @@ export default async function CajaPage() {
       .where(and(eq(sales.cashSessionId, session.id), eq(sales.voided, false)))
       .groupBy(salePayments.method),
     getSessionCashMovements(db, session.id),
+    // La lista SÍ se recorta al empleado; los totales de arriba no. Un empleado
+    // ya veía el total de la caja entera y lo sigue viendo: lo que no ve son
+    // las ventas de otro, igual que en /ventas.
+    getVentasDelTurno(db, currentUser.storeId, session.id, {
+      visibleParaUserId: isOwner ? undefined : currentUser.id,
+    }),
   ]);
 
   // Cobros de cuenta corriente en efectivo imputados a esta caja. Van a la
@@ -73,6 +81,13 @@ export default async function CajaPage() {
         }))}
         cobrosCuenta={cobrosCuenta as any[]}
         isOwner={isOwner}
+        ventasDelTurno={
+          <VentasDelTurno
+            remitos={ventas ?? []}
+            soloPropias={!isOwner}
+            hojaHref={isOwner ? `/caja/${session.id}/cierre` : undefined}
+          />
+        }
       />
     </div>
   );

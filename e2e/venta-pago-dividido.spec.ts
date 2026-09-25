@@ -48,6 +48,23 @@ test("una venta cobrada en dos medios suma al arqueo solo la parte en efectivo",
   await page.getByRole("button", { name: /confirmar venta/i }).click();
   await expect(page.getByText(/venta #\d+ registrada/i)).toBeVisible();
 
+  // En la caja, la venta aparece en su fila con cada medio y su monto: es lo
+  // que el agrupado por medio no puede decir ("con qué se pagó cada cosa").
+  await page.goto("/caja");
+  // Filtrado también por "Tarjeta": otro spec puede haber vendido un Pikachu
+  // en efectivo en la misma caja, y la lista va de la más nueva a la más vieja.
+  const fila = page.locator("details")
+    .filter({ hasText: /1× Pikachu/i })
+    .filter({ hasText: /Tarjeta/ })
+    .first();
+  await expect(fila).toBeVisible();
+  // `\s` y no un espacio: `money()` separa el signo con un espacio duro.
+  await expect(fila).toContainText(/Efectivo\s*\$\s5\.000,00/);
+  await expect(fila).toContainText(/Tarjeta\s*\$\s7\.000,00/);
+  // Desplegada, trae el detalle de la línea.
+  await fila.locator("summary").click();
+  await expect(fila.getByRole("link", { name: /^remito$/i })).toBeVisible();
+
   // Lo que importa: al cajón entró solo lo cobrado en efectivo.
   const arqueo = await cerrarCaja(page, EN_EFECTIVO);
   expect(arqueo.esperado).toBe(EN_EFECTIVO);
