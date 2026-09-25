@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import fc from "fast-check";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
-import { products, productVariants } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { clientAccountMovements, products, productVariants } from "@/db/schema";
 import { openCashSession } from "@/domain/cash";
 import { createSale, voidSale } from "@/domain/sales";
 import {
   createClient, recordAccountMovement, getClientBalance, getClientLedger, getClientSummary,
+  voidAccountMovement,
 } from "@/domain/clients";
 
 /**
@@ -46,7 +48,11 @@ beforeAll(async () => {
 
 type Mov =
   | { t: "compra"; cantidad: number; anular: boolean }
-  | { t: "movimiento"; kind: "pago" | "credito"; monto: number };
+  | { t: "movimiento"; kind: "pago" | "credito"; monto: number }
+  // Anular el k-ésimo movimiento que exista hasta ese momento —cualquiera,
+  // incluidos los cargos de venta y las reversiones automáticas, que el dominio
+  // tiene que rechazar—, módulo la cantidad.
+  | { t: "anular"; k: number };
 
 const mov: fc.Arbitrary<Mov> = fc.oneof(
   fc.record({
@@ -58,8 +64,27 @@ const mov: fc.Arbitrary<Mov> = fc.oneof(
     t: fc.constant("movimiento" as const),
     kind: fc.constantFrom("pago" as const, "credito" as const),
     monto: fc.integer({ min: 1, max: 500_000 }).map((c) => c / 100),
-  })
+  }),
+  fc.record({ t: fc.constant("anular" as const), k: fc.nat({ max: 50 }) }),
 );
+
+/** Un asiento del modelo: lo mínimo para calcular el saldo y las reglas. */
+type Asiento = { id: number; suma: boolean; amount: number; deVenta: boolean; reversion: boolean; voided: boolean };
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Qué tiene que contestar el dominio al anular, escrito acá y sin mirar
+ * `motivoNoAnulable`: el modelo tiene que ser independiente de lo que verifica.
+ * Sin caja en este test (todo va por transferencia), así que la regla de caja
+ * cerrada no aplica.
+ */
+function esperadoAlAnular(a: Asiento): string | null {
+  if (a.voided) return "ALREADY_VOIDED";
+  if (a.reversion) return "ANULACION_NOT_VOIDABLE";
+  if (a.deVenta) return "SALE_CHARGE_NOT_VOIDABLE";
+  return null;
+}
 
 describe("el saldo del cliente", () => {
   it("da lo mismo por las tres vías, con cualquier historia de movimientos", async () => {
@@ -67,6 +92,10 @@ describe("el saldo del cliente", () => {
       fc.asyncProperty(fc.array(mov, { minLength: 1, maxLength: 8 }), async (movs) => {
         // Cliente nuevo por corrida: la historia tiene que ser independiente.
         const { id: clientId } = await createClient(db, { storeId: store, name: `C${Math.random()}` });
+        const asientos: Asiento[] = [];
+        const idsDeVenta = async (saleId: number) =>
+          db.select({ id: clientAccountMovements.id, type: clientAccountMovements.type })
+            .from(clientAccountMovements).where(eq(clientAccountMovements.saleId, saleId));
 
         for (const m of movs) {
           if (m.t === "compra") {
@@ -74,27 +103,46 @@ describe("el saldo del cliente", () => {
               storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
               items: [{ variantId, quantity: m.cantidad }],
             });
+            const [cargo] = await idsDeVenta(venta.id);
+            asientos.push({ id: cargo.id, suma: true, amount: venta.total, deVenta: true, reversion: false, voided: false });
             if (m.anular) {
               await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1", reason: "prueba" });
+              const rev = (await idsDeVenta(venta.id)).find((x: any) => x.type === "anulacion")!;
+              asientos.push({ id: rev.id, suma: false, amount: venta.total, deVenta: true, reversion: true, voided: false });
             }
-          } else {
-            await recordAccountMovement(db, {
+          } else if (m.t === "movimiento") {
+            const { movementId } = await recordAccountMovement(db, {
               storeId: store, clientId, kind: m.kind, amount: m.monto,
               // Transferencia para no arrastrar la caja a este test: acá lo que
               // se prueba es el saldo, no el arqueo.
               method: "transferencia", userId: "u1",
             });
+            asientos.push({ id: movementId, suma: false, amount: m.monto, deVenta: false, reversion: false, voided: false });
+          } else if (asientos.length > 0) {
+            const a = asientos[m.k % asientos.length];
+            const esperado = esperadoAlAnular(a);
+            const r = await voidAccountMovement(db, {
+              storeId: store, movementId: a.id, userId: "u1", reason: "prueba",
+            }).then(() => null, (e: Error) => e.message);
+            // Lo que el dominio rechaza, lo rechaza con el motivo correcto y
+            // sin tocar nada; lo que acepta, deja de contar.
+            expect(r).toBe(esperado);
+            if (esperado == null) a.voided = true;
           }
         }
 
+        const modelo = round2(asientos.filter((a) => !a.voided).reduce((s, a) => s + (a.suma ? a.amount : -a.amount), 0));
         const enSql = await getClientBalance(db, store, clientId);
         const enJs = (await getClientSummary(db, store, clientId)).balance;
         const ledger = await getClientLedger(db, store, clientId);
         // El ledger vuelve del más nuevo al más viejo.
-        const acumulado = ledger[0].balanceAfter;
+        const acumulado = ledger[0]?.balanceAfter ?? 0;
 
+        expect(enSql).toBe(modelo);
         expect(enJs).toBe(enSql);
         expect(acumulado).toBe(enSql);
+        // El ledger muestra TODO, también lo anulado: es el registro.
+        expect(ledger).toHaveLength(asientos.length);
       }),
       { numRuns: 40 }
     );

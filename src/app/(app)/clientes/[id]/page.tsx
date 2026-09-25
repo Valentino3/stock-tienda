@@ -12,6 +12,7 @@ import { Section } from "@/components/ui/section";
 import { StatTile } from "@/components/ui/stat-tile";
 import { MovimientoCuentaButton } from "../clientes-client";
 import { DatosFiscalesCard } from "./datos-fiscales-card";
+import { AnularMovimientoButton } from "./anular-movimiento";
 
 const METHOD_LABELS: Record<string, string> = {
   efectivo: "Efectivo",
@@ -132,26 +133,37 @@ export default async function ClienteDetallePage({
   );
 }
 
+/** Cómo se nombra el movimiento en el título del diálogo de anular. */
+const DESCRIPCION: Record<string, string> = {
+  cargo: "el cargo manual",
+  pago: "el cobro",
+  credito: "la carga de crédito",
+  ajuste: "el ajuste",
+};
+
 function LedgerRow({ entry }: { entry: LedgerEntry }) {
   const isCharge = entry.type === "cargo";
   const sale = entry.sale;
+  const tachado = entry.voided ? "line-through" : "";
 
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <div className={`overflow-hidden rounded-xl border border-border bg-card ${entry.voided ? "opacity-70" : ""}`}>
       <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-border/60 px-4 py-3">
         <span className="text-sm text-muted-foreground">{dateTime(entry.createdAt)}</span>
 
         {entry.type === "cargo" && (
-          <Badge variant="destructive">{sale ? `Venta #${sale.id}` : "Cargo"}</Badge>
+          <Badge variant="destructive">{sale ? `Venta #${sale.id}` : "Cargo manual"}</Badge>
         )}
         {entry.type === "pago" && <Badge variant="success">Pago</Badge>}
         {entry.type === "credito" && <Badge variant="brand">Carga de crédito</Badge>}
+        {entry.type === "ajuste" && <Badge variant="secondary">Ajuste</Badge>}
         {entry.type === "anulacion" && (
           <Badge variant="outline">{sale ? `Anulación venta #${sale.id}` : "Anulación"}</Badge>
         )}
 
         {/* Solo en el cargo: en la fila de anulación el badge ya lo dice. */}
-        {entry.type === "cargo" && sale?.voided && <Badge variant="outline">Anulada</Badge>}
+        {entry.type === "cargo" && sale?.voided && <Badge variant="outline">Venta anulada</Badge>}
+        {entry.voided && <Badge variant="destructive">Anulado</Badge>}
         {entry.method && (
           <span className="text-xs text-muted-foreground">
             {METHOD_LABELS[entry.method] ?? entry.method}
@@ -164,25 +176,47 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
         )}
 
         <span
-          className={`figure ml-auto font-medium ${
-            isCharge
-              ? "text-destructive"
-              : entry.type === "pago"
-                ? "text-success"
-                : entry.type === "credito"
-                  ? "text-brand"
-                  : "text-muted-foreground"
+          className={`figure ml-auto font-medium ${tachado} ${
+            entry.voided
+              ? "text-muted-foreground"
+              : isCharge
+                ? "text-destructive"
+                : entry.type === "pago"
+                  ? "text-success"
+                  : entry.type === "credito"
+                    ? "text-brand"
+                    : "text-muted-foreground"
           }`}
         >
           {isCharge ? "+" : "−"}{money(entry.amount)}
         </span>
+        {/* Un anulado no deja saldo: repetir el del anterior haría creer que
+            este movimiento lo produjo. */}
         <span className="figure w-32 text-right text-sm text-muted-foreground">
-          Saldo {moneyDiff(entry.balanceAfter)}
+          {entry.voided ? "No cuenta" : `Saldo ${moneyDiff(entry.balanceAfter)}`}
         </span>
+        {entry.anulable && (
+          <AnularMovimientoButton
+            movementId={entry.id}
+            descripcion={DESCRIPCION[entry.type] ?? "el movimiento"}
+            monto={entry.amount}
+            enEfectivo={entry.method === "efectivo"}
+          />
+        )}
       </div>
 
       {entry.note && (
         <p className="px-4 pt-2 text-sm text-muted-foreground">{entry.note}</p>
+      )}
+      {entry.voided && (
+        <p className="px-4 pt-2 text-sm">
+          <span className="ledger-label">Anulado</span>{" "}
+          <span className="text-muted-foreground">
+            {entry.voidedByName ? `por ${entry.voidedByName} ` : ""}
+            {entry.voidedAt ? `el ${dateTime(entry.voidedAt)}` : ""}
+            {entry.voidedReason ? `: ${entry.voidedReason}` : ""}
+          </span>
+        </p>
       )}
 
       {/* El detalle va solo en el cargo: la anulación apunta a la misma venta y

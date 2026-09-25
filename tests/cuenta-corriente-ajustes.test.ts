@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { clientAccountMovements, products, productVariants } from "@/db/schema";
 import { openCashSession, closeCashSession } from "@/domain/cash";
 import { getCashSessionClose } from "@/domain/cash-close";
-import { createSale } from "@/domain/sales";
+import { createSale, voidSale } from "@/domain/sales";
 import {
   createClient, getClientBalance, getClientLedger, getClientSummary, listClientsWithBalance,
-  recordAccountMovement,
+  motivoNoAnulable, recordAccountMovement, voidAccountMovement,
 } from "@/domain/clients";
 
 /**
@@ -110,5 +110,119 @@ describe("un movimiento anulado no cuenta en ningún lado", () => {
         .set({ voided: true, voidedAt: new Date(), voidedBy: "u1" })
         .where(eq(clientAccountMovements.id, movementId))
     ).rejects.toThrow();
+  });
+});
+
+describe("voidAccountMovement", () => {
+  const anular = (movementId: number, extra: Record<string, unknown> = {}) =>
+    voidAccountMovement(db, { storeId: store, movementId, userId: "ana", reason: "se cargó dos veces", ...extra } as any);
+
+  it("anula un cobro por transferencia: queda con quién, cuándo y por qué, y el saldo vuelve", async () => {
+    const { movementId } = await cobrar({ kind: "credito", method: "transferencia", amount: 5000 });
+    expect(await getClientBalance(db, store, clientId)).toBe(-5000);
+
+    const res = await anular(movementId);
+    expect(res).toEqual({ clientId, balance: 0 });
+
+    const [mov] = await db.select().from(clientAccountMovements).where(eq(clientAccountMovements.id, movementId));
+    expect(mov).toMatchObject({ voided: true, voidedBy: "ana", voidedReason: "se cargó dos veces" });
+    expect(mov.voidedAt).toBeInstanceOf(Date);
+  });
+
+  it("exige motivo, recortado", async () => {
+    const { movementId } = await cobrar({ method: "transferencia" });
+    await expect(anular(movementId, { reason: "  a " })).rejects.toThrow("VOID_REASON_REQUIRED");
+  });
+
+  it("no encuentra un movimiento de otra tienda", async () => {
+    const { movementId } = await cobrar({ method: "transferencia" });
+    await expect(
+      voidAccountMovement(db, { storeId: otra, movementId, userId: "u2", reason: "de otra tienda" })
+    ).rejects.toThrow("MOVEMENT_NOT_FOUND");
+  });
+
+  it("no anula dos veces, ni aunque las dos corran a la vez", async () => {
+    const { movementId } = await cobrar({ method: "transferencia" });
+    const r = await Promise.allSettled([anular(movementId), anular(movementId)]);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    await expect(anular(movementId)).rejects.toThrow("ALREADY_VOIDED");
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+
+  it("el cargo de una venta no se anula suelto, ni la reversión automática de una venta anulada", async () => {
+    await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const venta = await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 2 }],
+    });
+    const [cargo] = await db.select().from(clientAccountMovements).where(eq(clientAccountMovements.saleId, venta.id));
+    await expect(anular(cargo.id)).rejects.toThrow("SALE_CHARGE_NOT_VOIDABLE");
+
+    await voidSale(db, { saleId: venta.id, storeId: store, userId: "u1", reason: "devolución" });
+    const [reversion] = await db.select().from(clientAccountMovements)
+      .where(and(eq(clientAccountMovements.saleId, venta.id), eq(clientAccountMovements.type, "anulacion")));
+    await expect(anular(reversion.id)).rejects.toThrow("ANULACION_NOT_VOIDABLE");
+    expect(await getClientBalance(db, store, clientId)).toBe(0);
+  });
+
+  it("un cobro en efectivo se anula con la caja abierta y baja el esperado", async () => {
+    const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 1000 });
+    const { movementId } = await cobrar();
+    await anular(movementId);
+
+    const cerrada = await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 1000 });
+    expect(cerrada.expectedCash).toBe(1000);
+    expect(cerrada.difference).toBe(0);
+  });
+
+  it("un cobro en efectivo de una caja ya cerrada no se anula: el arqueo firmado no cambia", async () => {
+    const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const { movementId } = await cobrar();
+    const cerrada = await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 3000 });
+
+    await expect(anular(movementId)).rejects.toThrow("CASH_SESSION_CLOSED");
+    expect((await getCashSessionClose(db, store, caja.id))!.efectivoEsperado).toBe(cerrada.expectedCash);
+  });
+
+  it("una transferencia se anula aunque la caja de ese día ya esté cerrada: nunca estuvo en el cajón", async () => {
+    const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const { movementId } = await cobrar({ method: "transferencia" });
+    await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 0 });
+    await expect(anular(movementId)).resolves.toMatchObject({ clientId });
+  });
+
+  it("el ledger ofrece anular solo lo que el dominio acepta", async () => {
+    const caja = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await createSale(db, {
+      storeId: store, sellerId: "u1", paymentMethod: "cuenta", clientId,
+      items: [{ variantId, quantity: 1 }],
+    });
+    const efectivo = await cobrar({ amount: 100 });
+    const transferencia = await cobrar({ amount: 200, method: "transferencia" });
+    await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 100 });
+
+    const porId = new Map((await getClientLedger(db, store, clientId)).map((e) => [e.id, e]));
+    expect(porId.get(efectivo.movementId)!.anulable).toBe(false);      // caja cerrada
+    expect(porId.get(transferencia.movementId)!.anulable).toBe(true);
+    const cargo = [...porId.values()].find((e) => e.type === "cargo")!;
+    expect(cargo.anulable).toBe(false);                                  // es de una venta
+  });
+});
+
+describe("motivoNoAnulable", () => {
+  const base = { type: "pago" as const, saleId: null, cashSessionId: null, voided: false };
+  it("un cobro sin caja siempre se puede", () => {
+    expect(motivoNoAnulable(base, true)).toBeNull();
+  });
+  it("el orden de los motivos: primero lo ya anulado", () => {
+    expect(motivoNoAnulable({ ...base, voided: true, cashSessionId: 1 }, true)).toBe("ALREADY_VOIDED");
+  });
+  it("un cargo manual se puede; el de una venta no", () => {
+    expect(motivoNoAnulable({ ...base, type: "cargo" }, false)).toBeNull();
+    expect(motivoNoAnulable({ ...base, type: "cargo", saleId: 7 }, false)).toBe("SALE_CHARGE_NOT_VOIDABLE");
+  });
+  it("atado a una caja: depende de si está cerrada", () => {
+    expect(motivoNoAnulable({ ...base, cashSessionId: 1 }, false)).toBeNull();
+    expect(motivoNoAnulable({ ...base, cashSessionId: 1 }, true)).toBe("CASH_SESSION_CLOSED");
   });
 });

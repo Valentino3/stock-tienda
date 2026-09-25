@@ -5,6 +5,8 @@ import {
   medioPrincipal, montoACuenta,
 } from "@/domain/pagos";
 import { applyStockMovement } from "@/domain/stock";
+// El mismo mínimo para anular una venta que un movimiento de cuenta.
+import { MOTIVO_MIN } from "@/domain/clients";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -382,8 +384,6 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
   }
 }
 
-/** Mínimo de un motivo de anulación, ya recortado. Evita el "." y el "asd". */
-const MOTIVO_MIN = 3;
 
 export async function voidSale(
   db: any,

@@ -6,7 +6,7 @@ import { products, productVariants } from "@/db/schema";
 import { openCashSession, closeCashSession, createCashMovement, getOpenSession } from "@/domain/cash";
 import { getCashSessionClose, getVentasDelTurno } from "@/domain/cash-close";
 import { createSale, voidSale } from "@/domain/sales";
-import { createClient, recordAccountMovement } from "@/domain/clients";
+import { createClient, recordAccountMovement, voidAccountMovement } from "@/domain/clients";
 
 /**
  * 🔴 El arqueo, contra un modelo independiente.
@@ -64,7 +64,10 @@ type Metodo = "efectivo" | "transferencia" | "tarjeta" | "cuenta";
 type Op =
   | { t: "venta"; medios: Metodo[]; pesos: number[]; cantidad: number; anular: boolean }
   | { t: "salida"; kind: "gasto" | "egreso"; monto: number }
-  | { t: "cuenta"; kind: "pago" | "credito"; metodo: "efectivo" | "transferencia"; monto: number };
+  | { t: "cuenta"; kind: "pago" | "credito"; metodo: "efectivo" | "transferencia"; monto: number }
+  // Anular el k-ésimo cobro de cuenta de este turno (módulo la cantidad). Con
+  // la caja abierta siempre se puede, y si fue en efectivo sale del esperado.
+  | { t: "anularCuenta"; k: number };
 
 const op: fc.Arbitrary<Op> = fc.oneof(
   fc.record({
@@ -92,7 +95,8 @@ const op: fc.Arbitrary<Op> = fc.oneof(
     kind: fc.constantFrom("pago" as const, "credito" as const),
     metodo: fc.constantFrom("efectivo" as const, "transferencia" as const),
     monto: fc.integer({ min: 1, max: 500_000 }).map((c) => c / 100),
-  })
+  }),
+  fc.record({ t: fc.constant("anularCuenta" as const), k: fc.nat({ max: 20 }) }),
 );
 
 const turno = fc.record({
@@ -135,6 +139,7 @@ describe("el esperado de la caja", () => {
           efectivo: 0, transferencia: 0, tarjeta: 0, cuenta: 0,
         };
         let cobrosEfectivo = 0, salidas = 0;
+        const cobros: { id: number; efectivo: boolean; monto: number; anulado: boolean }[] = [];
 
         for (const o of ops) {
           if (o.t === "venta") {
@@ -155,12 +160,20 @@ describe("el esperado de la caja", () => {
               amount: o.monto, description: "prueba", userId: "u1",
             });
             salidas += o.monto;
-          } else {
-            await recordAccountMovement(db, {
+          } else if (o.t === "cuenta") {
+            const { movementId } = await recordAccountMovement(db, {
               storeId: store, clientId, kind: o.kind, amount: o.monto,
               method: o.metodo, userId: "u1",
             });
             if (o.metodo === "efectivo") cobrosEfectivo += o.monto;
+            cobros.push({ id: movementId, efectivo: o.metodo === "efectivo", monto: o.monto, anulado: false });
+          } else {
+            const vivos = cobros.filter((c) => !c.anulado);
+            if (vivos.length === 0) continue;
+            const c = vivos[o.k % vivos.length];
+            await voidAccountMovement(db, { storeId: store, movementId: c.id, userId: "u1", reason: "prueba" });
+            c.anulado = true;
+            if (c.efectivo) cobrosEfectivo -= c.monto;
           }
         }
 
@@ -209,6 +222,16 @@ describe("el esperado de la caja", () => {
           having coalesce(round(sum(p.amount), 2), -1) <> s.total`);
         const filas = Array.isArray(descuadres) ? descuadres : (descuadres as any).rows;
         expect(filas).toEqual([]);
+
+        // Con la caja ya cerrada, un cobro en efectivo de ese turno no se
+        // puede anular, y la hoja sigue diciendo lo mismo que el cierre.
+        const enCaja = cobros.find((c) => c.efectivo && !c.anulado);
+        if (enCaja) {
+          await expect(
+            voidAccountMovement(db, { storeId: store, movementId: enCaja.id, userId: "u1", reason: "prueba" })
+          ).rejects.toThrow("CASH_SESSION_CLOSED");
+          expect((await getCashSessionClose(db, store, caja.id))!.efectivoEsperado).toBe(cerrada.expectedCash);
+        }
       }),
       // Cada corrida abre, opera y cierra una caja real contra PGlite. 60 son
       // ~450 secuencias distintas de operaciones y la suite sigue siendo

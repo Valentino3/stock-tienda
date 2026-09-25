@@ -141,6 +141,8 @@ export type LedgerEntry = {
   voidedAt: Date | null;
   voidedByName: string | null;
   voidedReason: string | null;
+  /** Si se le puede ofrecer el botón Anular. Ver `motivoNoAnulable`. */
+  anulable: boolean;
 };
 
 /**
@@ -174,6 +176,8 @@ export async function getClientLedger(
     voidedAt: Date | null;
     voidedByName: string | null;
     voidedReason: string | null;
+    cashSessionId: number | null;
+    cajaCerradaEn: Date | null;
   };
   type SaleRow = {
     id: number;
@@ -198,10 +202,13 @@ export async function getClientLedger(
       voidedAt: clientAccountMovements.voidedAt,
       voidedByName: anulador.name,
       voidedReason: clientAccountMovements.voidedReason,
+      cashSessionId: clientAccountMovements.cashSessionId,
+      cajaCerradaEn: cashSessions.closedAt,
     })
     .from(clientAccountMovements)
     .leftJoin(user, eq(clientAccountMovements.createdBy, user.id))
     .leftJoin(anulador, eq(clientAccountMovements.voidedBy, anulador.id))
+    .leftJoin(cashSessions, eq(clientAccountMovements.cashSessionId, cashSessions.id))
     .where(and(
       eq(clientAccountMovements.storeId, storeId),
       eq(clientAccountMovements.clientId, clientId),
@@ -290,6 +297,7 @@ export async function getClientLedger(
       voidedAt: m.voidedAt ?? null,
       voidedByName: m.voidedByName ?? null,
       voidedReason: m.voidedReason ?? null,
+      anulable: motivoNoAnulable(m, m.cajaCerradaEn != null) == null,
     };
   });
 
@@ -413,6 +421,100 @@ export async function recordAccountMovement(
       ));
 
     return { movementId: mov.id, balance: round2(row?.balance ?? 0) };
+  });
+}
+
+/** Mínimo de un motivo, ya recortado. Evita el "." y el "asd". */
+export const MOTIVO_MIN = 3;
+
+export type MotivoNoAnulable =
+  | "ALREADY_VOIDED"
+  | "ANULACION_NOT_VOIDABLE"
+  | "SALE_CHARGE_NOT_VOIDABLE"
+  | "CASH_SESSION_CLOSED";
+
+/**
+ * Por qué un movimiento NO se puede anular, o `null` si se puede.
+ *
+ * Pura y compartida: la usa el ledger para decidir si muestra el botón y
+ * `voidAccountMovement` para rechazar. Si fueran dos reglas, el botón podría
+ * ofrecer algo que el servidor rechaza, o al revés.
+ *
+ *   - El cargo de una VENTA no se anula suelto: se anula la venta, que además
+ *     devuelve el stock y emite la nota de crédito. Anular solo el cargo
+ *     dejaría una venta viva que el cliente ya no debe.
+ *   - La `anulacion` es la reversión automática de una venta anulada. Anularla
+ *     resucitaría una deuda de una venta que no existe.
+ *   - Un cobro en efectivo de una caja YA CERRADA no se toca: su plata está en
+ *     un arqueo firmado, y anularlo cambiaría el esperado de un cierre que ya
+ *     se contó. Se corrige con un cargo manual, que no toca ninguna caja.
+ */
+export function motivoNoAnulable(
+  m: { type: MovementType; saleId: number | null; cashSessionId: number | null; voided: boolean },
+  cajaCerrada: boolean,
+): MotivoNoAnulable | null {
+  if (m.voided) return "ALREADY_VOIDED";
+  if (m.type === "anulacion") return "ANULACION_NOT_VOIDABLE";
+  if (m.type === "cargo" && m.saleId != null) return "SALE_CHARGE_NOT_VOIDABLE";
+  if (m.cashSessionId != null && cajaCerrada) return "CASH_SESSION_CLOSED";
+  return null;
+}
+
+/**
+ * 🔴 CAMINO DE PLATA. Anula un movimiento de cuenta corriente mal cargado.
+ *
+ * No lo borra ni lo edita: lo marca, con quién, cuándo y por qué, y deja de
+ * contar en el saldo y en la caja (ver `balanceExpr` y `efectivoDeCuentaEnCaja`).
+ *
+ * Locks, en este orden: la fila del movimiento y después su caja.
+ * `closeCashSession` toma la caja y lee los movimientos SIN lock, así que no
+ * hay ciclo. Si el cierre gana, esto ve `closedAt` y rechaza; si gana esto, el
+ * cierre ya no lo suma. En ningún orden una caja cerrada cambia de número.
+ */
+export async function voidAccountMovement(
+  db: any,
+  input: { storeId: number; movementId: number; userId: string; reason: string },
+): Promise<{ clientId: number; balance: number }> {
+  // En el dominio y no solo en el diálogo: si la guarda viviera en la UI, la
+  // server action sería un bypass.
+  const reason = input.reason?.trim() ?? "";
+  if (reason.length < MOTIVO_MIN) throw new Error("VOID_REASON_REQUIRED");
+
+  return db.transaction(async (tx: any) => {
+    // Scope por tienda: los ids son secuenciales.
+    const [mov] = await tx.select().from(clientAccountMovements)
+      .where(and(eq(clientAccountMovements.id, input.movementId), eq(clientAccountMovements.storeId, input.storeId)))
+      .for("update");
+    if (!mov) throw new Error("MOVEMENT_NOT_FOUND");
+
+    let cajaCerrada = false;
+    if (mov.cashSessionId != null) {
+      const [caja] = await tx.select({ closedAt: cashSessions.closedAt }).from(cashSessions)
+        .where(and(eq(cashSessions.id, mov.cashSessionId), eq(cashSessions.storeId, input.storeId)))
+        .for("update");
+      cajaCerrada = !caja || caja.closedAt != null;
+    }
+
+    const motivo = motivoNoAnulable(mov, cajaCerrada);
+    if (motivo) throw new Error(motivo);
+
+    // `voided = false` en el WHERE, igual que voidSale: dos anulaciones
+    // simultáneas del mismo movimiento dejan pasar una sola.
+    const [anulado] = await tx.update(clientAccountMovements)
+      .set({ voided: true, voidedAt: new Date(), voidedBy: input.userId, voidedReason: reason })
+      .where(and(
+        eq(clientAccountMovements.id, mov.id),
+        eq(clientAccountMovements.storeId, input.storeId),
+        eq(clientAccountMovements.voided, false),
+      ))
+      .returning({ id: clientAccountMovements.id });
+    if (!anulado) throw new Error("ALREADY_VOIDED");
+
+    const [row] = await tx
+      .select({ balance: balanceExpr.mapWith(Number) })
+      .from(clientAccountMovements)
+      .where(and(eq(clientAccountMovements.storeId, input.storeId), eq(clientAccountMovements.clientId, mov.clientId)));
+    return { clientId: mov.clientId, balance: round2(row?.balance ?? 0) };
   });
 }
 
