@@ -5,6 +5,8 @@ import {
   medioPrincipal, montoACuenta,
 } from "@/domain/pagos";
 import { applyStockMovement } from "@/domain/stock";
+// El mismo mínimo para anular una venta que un movimiento de cuenta.
+import { MOTIVO_MIN } from "@/domain/clients";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -382,8 +384,6 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
   }
 }
 
-/** Mínimo de un motivo de anulación, ya recortado. Evita el "." y el "asd". */
-const MOTIVO_MIN = 3;
 
 export async function voidSale(
   db: any,
@@ -445,10 +445,15 @@ export async function voidSale(
     // No hace falta guarda de doble reversión: el UPDATE de arriba filtra por
     // `voided = false`, así que esta transacción corre una sola vez por venta.
     if (voided.clientId != null) {
+      // `voided = false` es defensivo: el cargo de una venta no se puede anular
+      // suelto (ver voidAccountMovement), pero si alguna vez lo estuviera,
+      // revertirlo otra vez restaría una deuda que ya no cuenta.
       const [cargo] = await tx.select().from(clientAccountMovements)
         .where(and(
+          eq(clientAccountMovements.storeId, input.storeId),
           eq(clientAccountMovements.saleId, input.saleId),
           eq(clientAccountMovements.type, "cargo"),
+          eq(clientAccountMovements.voided, false),
         ));
       // Puede no haber cargo si la venta es anterior a la cuenta corriente.
       if (cargo) {

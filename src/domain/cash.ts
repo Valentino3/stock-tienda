@@ -6,6 +6,29 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+/**
+ * Los movimientos de cuenta corriente que metieron billetes en el cajón de una
+ * caja: cobros y créditos en efectivo, NO anulados.
+ *
+ * Es la única definición. La usan el cierre (`closeCashSession`), la hoja
+ * impresa y la pantalla de la caja; si cada uno la escribiera a mano, el
+ * primero que se olvide de `voided` hace que la pantalla y el arqueo digan dos
+ * números distintos, y un cobro anulado siga sumando al esperado.
+ *
+ * El filtro por `method` es redundante con la invariante de la columna
+ * (`cashSessionId` solo se completa si el movimiento fue en efectivo). Va
+ * igual, como segunda guarda: mismo criterio de cinturón-y-tirantes que usa
+ * openCashSession con su pre-check más el índice único.
+ */
+export function efectivoDeCuentaEnCaja(sessionId: number) {
+  return and(
+    eq(clientAccountMovements.cashSessionId, sessionId),
+    eq(clientAccountMovements.method, "efectivo"),
+    inArray(clientAccountMovements.type, ["pago", "credito"]),
+    eq(clientAccountMovements.voided, false),
+  );
+}
+
 export async function getOpenSession(db: any, storeId: number): Promise<CashSession | null> {
   const rows = await db.select().from(cashSessions)
     .where(and(eq(cashSessions.storeId, storeId), isNull(cashSessions.closedAt))).limit(1);
@@ -101,19 +124,10 @@ export async function closeCashSession(
     // Cobros de cuenta corriente en efectivo: plata que entró al cajón sin ser
     // una venta de este turno —un cliente que salda su fiado, una inscripción
     // cobrada por adelantado— y que por eso el `sales` de arriba no ve.
-    //
-    // El filtro por `method` es redundante con la invariante de la columna
-    // (`cashSessionId` solo se completa si el movimiento fue en efectivo). Va
-    // igual, como segunda guarda: es el mismo criterio de cinturón-y-tirantes
-    // que usa openCashSession con su pre-check más el índice único.
     const [{ inflow }] = await tx
       .select({ inflow: sql<number>`coalesce(sum(${clientAccountMovements.amount}), 0)`.mapWith(Number) })
       .from(clientAccountMovements)
-      .where(and(
-        eq(clientAccountMovements.cashSessionId, input.sessionId),
-        eq(clientAccountMovements.method, "efectivo"),
-        inArray(clientAccountMovements.type, ["pago", "credito"]),
-      ));
+      .where(efectivoDeCuentaEnCaja(input.sessionId));
 
     const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
     const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0) + inflow - out);

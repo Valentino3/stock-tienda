@@ -1,8 +1,8 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { clientAccountMovements, clients, sales, salePayments, user } from "@/db/schema";
 import { requireStore } from "@/lib/session";
-import { getOpenSession, getSessionCashMovements } from "@/domain/cash";
+import { efectivoDeCuentaEnCaja, getOpenSession, getSessionCashMovements } from "@/domain/cash";
 import { getVentasDelTurno } from "@/domain/cash-close";
 import { VentasDelTurno } from "@/components/caja/ventas-del-turno";
 import { PageHeader } from "@/components/ui/page-header";
@@ -58,11 +58,7 @@ export default async function CajaPage() {
     })
     .from(clientAccountMovements)
     .innerJoin(clients, eq(clientAccountMovements.clientId, clients.id))
-    .where(and(
-      eq(clientAccountMovements.cashSessionId, session.id),
-      eq(clientAccountMovements.method, "efectivo"),
-      inArray(clientAccountMovements.type, ["pago", "credito"]),
-    ))
+    .where(efectivoDeCuentaEnCaja(session.id))
     .orderBy(clientAccountMovements.createdAt);
 
   return (

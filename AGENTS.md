@@ -67,6 +67,15 @@ en consulta aparte a propósito, porque esa query ya tiene un `leftJoin` a
 `sale_items` y otro join más multiplicaría filas e inflaría el total del
 vendedor.
 
+**Toda suma sobre `client_account_movements` excluye los anulados (`voided`).**
+Un movimiento mal cargado no se borra: se anula y queda en el historial. Para
+el saldo usá `balanceExpr` (`clients.ts`); para el efectivo de cuenta que entró
+a una caja, `efectivoDeCuentaEnCaja` (`cash.ts`). Filtrar a mano es cómo una
+pantalla termina mostrando un cobro anulado y el arqueo esperando plata que no
+está. Ojo con `listClientsWithBalance`: hace `leftJoin`, así que el filtro va
+dentro del `CASE`, no en el `WHERE`. Un cobro en efectivo de una caja ya cerrada
+no se puede anular (ver `motivoNoAnulable`): cambiaría un arqueo firmado.
+
 **`sales.sellerId` es a quién se le acredita; `registeredBy`, quién la anotó.**
 La comisión se paga sobre el primero y el vendedor se elige en el mostrador, así
 que `createSale` valida que sea un usuario activo de esa tienda. Los

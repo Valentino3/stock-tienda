@@ -219,7 +219,11 @@ export async function getClientAccountReport(db: any, storeId: number, range: { 
     .from(clientAccountMovements)
     .where(and(
       eq(clientAccountMovements.storeId, storeId),
+      // Solo lo que entró: un cobro anulado no se cobró. Y sin `ajuste` a
+      // propósito: el reporte rotula todo esto como cobros, y un ajuste es
+      // deuda que baja SIN plata.
       inArray(clientAccountMovements.type, ["pago", "credito"]),
+      eq(clientAccountMovements.voided, false),
       between(clientAccountMovements.createdAt, range.from, range.to),
     ))
     .groupBy(clientAccountMovements.type, clientAccountMovements.method);

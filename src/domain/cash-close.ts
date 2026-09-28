@@ -4,6 +4,7 @@ import {
   cashMovements, cashSessions, clientAccountMovements, clients, products, productVariants,
   sales, saleItems, salePayments, storeFiscalConfig, stores, user,
 } from "@/db/schema";
+import { efectivoDeCuentaEnCaja } from "./cash";
 
 /**
  * El cierre de caja como documento: el arqueo más el remito de cada venta del
@@ -150,11 +151,7 @@ export async function getCashSessionClose(
     })
     .from(clientAccountMovements)
     .innerJoin(clients, eq(clientAccountMovements.clientId, clients.id))
-    .where(and(
-      eq(clientAccountMovements.cashSessionId, sessionId),
-      eq(clientAccountMovements.method, "efectivo"),
-      inArray(clientAccountMovements.type, ["pago", "credito"]),
-    ))
+    .where(efectivoDeCuentaEnCaja(sessionId))
     .orderBy(asc(clientAccountMovements.createdAt));
 
   const totalSalidas = round2((movs as any[]).reduce((a, m) => a + m.amount, 0));

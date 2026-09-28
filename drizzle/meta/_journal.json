@@ -246,6 +246,13 @@
       "when": 1790357594617,
       "tag": "0034_indices_ventas_del_turno",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790358871185,
+      "tag": "0035_ajustes_cuenta_corriente",
+      "breakpoints": true
     }
   ]
 }

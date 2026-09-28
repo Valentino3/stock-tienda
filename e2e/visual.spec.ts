@@ -45,6 +45,7 @@ const RUTAS_CARTAS = [
   "/vender/revision",
   "/caja",
   "/clientes",
+  "/clientes/movimientos",
   "/productos",
   "/ventas",
   "/reportes",
