@@ -10,6 +10,7 @@ import { getCashSessionClose, getEmisorRemito } from "@/domain/cash-close";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { RemitoImprimible } from "@/components/remito/remito-imprimible";
+import { TablaVentasDelTurno } from "@/components/caja/ventas-del-turno";
 import { PrintButton } from "@/app/(app)/comprobantes/[id]/print-button";
 
 /**
@@ -211,10 +212,28 @@ export default async function CierrePage({ params }: { params: Promise<{ session
                 sincronizaron DESPUÉS del cierre.</strong> Se cobraron sin conexión contra
                 esta caja y llegaron tarde, así que el arqueo que se guardó al cerrar no
                 las contempla.
-                {descuadre && ` Por eso el esperado de esta hoja (${money(cierre.efectivoEsperado)}) no coincide con el que quedó guardado (${money(s.expectedCash)}).`}
+              </p>
+            )}
+            {/* Aparte de las tardías y no adentro: si el descuadre viniera de
+                otra causa, dentro de ese bloque quedaría mudo. La hoja no puede
+                tener un esperado distinto del guardado sin decirlo. */}
+            {descuadre && (
+              <p className="border border-destructive/40 bg-destructive/10 px-2 py-1">
+                <strong>El esperado de esta hoja ({money(cierre.efectivoEsperado)}) no coincide con el
+                que quedó guardado al cerrar ({money(s.expectedCash)}).</strong>
+                {cierre.tardias.count > 0 && " Lo explican las ventas sincronizadas después del cierre."}
               </p>
             )}
           </div>
+        </section>
+
+        {/* Una fila por venta, antes del paquete de remitos: es lo que responde
+            "con qué se pagó cada cosa" sin tener que hojear una página por
+            venta. Va siempre, aunque el turno pase el tope de remitos: es
+            liviana. */}
+        <section className="break-after-page">
+          <h2 className="ledger-label">Ventas del turno ({number(cierre.remitos.length)})</h2>
+          <TablaVentasDelTurno remitos={cierre.remitos} />
         </section>
 
         <section>

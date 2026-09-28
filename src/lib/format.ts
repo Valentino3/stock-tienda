@@ -20,6 +20,36 @@ export function number(n: number | null | undefined): string {
   return decimal.format(n ?? 0);
 }
 
+const horaAr = new Intl.DateTimeFormat("es-AR", {
+  timeZone: "America/Argentina/Buenos_Aires",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/**
+ * "14:05", siempre en hora argentina. La zona va explícita porque esto se
+ * formatea en el servidor, que corre en UTC: sin ella, una venta de las 14 se
+ * mostraría a las 17.
+ */
+export function hora(d: Date | string | number): string {
+  return horaAr.format(new Date(d));
+}
+
+const diaHoraAr = new Intl.DateTimeFormat("es-AR", {
+  timeZone: "America/Argentina/Buenos_Aires",
+  day: "2-digit",
+  month: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** "25/09, 14:05" en hora argentina. Para cuando la hora sola es ambigua. */
+export function diaHora(d: Date | string | number): string {
+  return diaHoraAr.format(new Date(d));
+}
+
 /**
  * Diferencia contable: el negativo va entre paréntesis, como en un arqueo en
  * papel. `money(-1300)` da "-$ 1.300,00", que en una columna de números mete

@@ -109,11 +109,7 @@ export async function getCashSessionClose(
     .leftJoin(cerrador, eq(cashSessions.closedBy, cerrador.id))
     .where(eq(cashSessions.id, sessionId));
 
-  const remitos = await armarRemitos(
-    db,
-    and(eq(sales.storeId, storeId), eq(sales.cashSessionId, sessionId)),
-    session.closedAt ?? null,
-  );
+  const remitos = await armarRemitos(db, condicionDelTurno(storeId, sessionId), session.closedAt ?? null);
 
   const vivas = remitos.filter((r) => !r.voided);
   // Se reduce sobre los PAGOS y no sobre las ventas: una venta cobrada mitad
@@ -188,6 +184,40 @@ export async function getCashSessionClose(
     },
     efectivoEsperado: round2(session.openingCash + efectivo + efectivoCuenta - totalSalidas),
   };
+}
+
+/**
+ * Las ventas de un turno, una por fila, para la lista de `/caja`.
+ *
+ * Mismos remitos que el cierre —misma consulta, mismos `pagos`— para que la
+ * lista de la pantalla y la hoja impresa no puedan decir cosas distintas de la
+ * misma venta.
+ *
+ * NO devuelve totales a propósito. Con `visibleParaUserId` la lista es solo lo
+ * del empleado, y un total armado sobre eso contradiría el de la caja entera
+ * que ya ve arriba. Los totales siguen saliendo de su propia consulta.
+ */
+export async function getVentasDelTurno(
+  db: any, storeId: number, sessionId: number,
+  opts: { visibleParaUserId?: string } = {},
+): Promise<Remito[] | null> {
+  const [session] = await db.select({ closedAt: cashSessions.closedAt }).from(cashSessions)
+    .where(and(eq(cashSessions.id, sessionId), eq(cashSessions.storeId, storeId)));
+  if (!session) return null;
+  return armarRemitos(db, condicionDelTurno(storeId, sessionId, opts.visibleParaUserId), session.closedAt ?? null);
+}
+
+function condicionDelTurno(storeId: number, sessionId: number, visibleParaUserId?: string) {
+  const condiciones = [eq(sales.storeId, storeId), eq(sales.cashSessionId, sessionId)];
+  if (visibleParaUserId) condiciones.push(visiblePara(visibleParaUserId));
+  return and(...condiciones);
+}
+
+// Empleado: lo que vendio O lo que anoto, misma regla que /ventas. Se filtra en
+// la CONSULTA y no despues: filtrar en memoria cargaria las ventas de todos
+// para descartarlas, y un error en ese filtro las mostraria.
+function visiblePara(userId: string) {
+  return or(eq(sales.sellerId, userId), eq(sales.registeredBy, userId))!;
 }
 
 /**
@@ -302,20 +332,15 @@ export async function getRemito(
   db: any,
   storeId: number,
   saleId: number,
-  // Empleado: lo que vendio O lo que anoto, misma regla que /ventas. Se filtra
-  // en la CONSULTA y no despues, para que el resultado sea indistinguible de
-  // una venta que no existe — un 404 no confirma que el id sea de otro.
+  // Filtrado en la consulta (ver `visiblePara`): el resultado es
+  // indistinguible de una venta que no existe — un 404 no confirma que el id
+  // sea de otro.
   opts: { visibleParaUserId?: string } = {},
 ): Promise<Remito | null> {
   // Scope por tienda: los ids son secuenciales y un `eq(id)` pelado imprimiria
   // la venta de otro comercio.
   const condiciones = [eq(sales.storeId, storeId), eq(sales.id, saleId)];
-  if (opts.visibleParaUserId) {
-    condiciones.push(or(
-      eq(sales.sellerId, opts.visibleParaUserId),
-      eq(sales.registeredBy, opts.visibleParaUserId),
-    )!);
-  }
+  if (opts.visibleParaUserId) condiciones.push(visiblePara(opts.visibleParaUserId));
 
   const [remito] = await armarRemitos(db, and(...condiciones), null);
   return remito ?? null;

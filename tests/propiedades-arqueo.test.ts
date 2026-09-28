@@ -4,7 +4,7 @@ import { sql as sqlRaw } from "drizzle-orm";
 import { createTestDb, seedTestUser, seedTestStore } from "./helpers/db";
 import { products, productVariants } from "@/db/schema";
 import { openCashSession, closeCashSession, createCashMovement, getOpenSession } from "@/domain/cash";
-import { getCashSessionClose } from "@/domain/cash-close";
+import { getCashSessionClose, getVentasDelTurno } from "@/domain/cash-close";
 import { createSale, voidSale } from "@/domain/sales";
 import { createClient, recordAccountMovement } from "@/domain/clients";
 
@@ -187,6 +187,17 @@ describe("el esperado de la caja", () => {
         for (const m of ["efectivo", "transferencia", "tarjeta", "cuenta"] as Metodo[]) {
           expect(hoja.porMedio.find((x) => x.method === m)?.total ?? 0).toBe(round2(ventas[m]));
         }
+
+        // La lista de ventas del turno —la que muestra /caja fila por fila—
+        // tiene que poder sumarse y dar lo mismo que el agrupado. Cada fila
+        // dice "con qué se pagó": si sus pagos no suman su total, o si todas
+        // juntas no dan el arqueo, la lista contradice a la caja.
+        const vivas = (await getVentasDelTurno(db, store, caja.id))!.filter((r) => !r.voided);
+        for (const r of vivas) {
+          expect(round2(r.pagos.reduce((a, p) => a + p.amount, 0))).toBe(r.total);
+        }
+        expect(round2(vivas.reduce((a, r) => a + r.total, 0)))
+          .toBe(round2(Object.values(ventas).reduce((a, b) => a + b, 0)));
 
         // Ninguna venta puede quedar con pagos que no sumen su total, ni sin
         // pagos. Es lo que hace que `sales.payment_method` pueda ser un dato

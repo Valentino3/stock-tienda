@@ -119,6 +119,26 @@ describe("getCashSessionClose", () => {
     expect(linea.neto).toBe(1400);
   });
 
+  it("una venta con pago dividido aporta a los dos medios y solo su efectivo al esperado", async () => {
+    await vender(12, {
+      paymentMethod: undefined,
+      pagos: [{ method: "efectivo", amount: 5000 }, { method: "tarjeta", amount: 7000 }],
+    });
+    const cerrada = await closeCashSession(db, { storeId: store, sessionId, userId: "u1", countedCash: 10000 });
+
+    const c = (await getCashSessionClose(db, store, sessionId))!;
+    // `count` cuenta PAGOS: una venta, dos pagos.
+    expect(c.porMedio).toEqual(expect.arrayContaining([
+      { method: "efectivo", count: 1, total: 5000 },
+      { method: "tarjeta", count: 1, total: 7000 },
+    ]));
+    expect(c.remitos).toHaveLength(1);
+    expect(c.remitos[0].pagos).toHaveLength(2);
+    // 5000 de apertura + solo la parte en efectivo.
+    expect(c.efectivoEsperado).toBe(10000);
+    expect(c.efectivoEsperado).toBe(cerrada.expectedCash);
+  });
+
   it("una caja sin ventas devuelve el documento igual, vacío", async () => {
     const c = (await getCashSessionClose(db, store, sessionId))!;
     expect(c.remitos).toEqual([]);

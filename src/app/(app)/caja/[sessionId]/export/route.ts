@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { requireStoreOwner } from "@/lib/session";
 import { getCashSessionClose } from "@/domain/cash-close";
+import { METODO_LABEL, PAYMENT_METHODS, type PaymentMethod } from "@/domain/pagos";
+import { montosPorMedio, resumirLineas, totalesDelListado } from "@/domain/resumen-venta";
 import { xlsxResponse } from "@/lib/xlsx";
 
 /**
@@ -15,9 +17,7 @@ import { xlsxResponse } from "@/lib/xlsx";
  * Misma guarda que la vista: `requireStoreOwner` y scope por tienda.
  */
 
-const METODO: Record<string, string> = {
-  efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta", cuenta: "Cuenta",
-};
+const metodo = (m: string) => METODO_LABEL[m as PaymentMethod] ?? m;
 
 export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: string }> }) {
   let storeId: number;
@@ -43,7 +43,11 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: str
   arqueo.addRow(["Cerrada", s.closedAt?.toLocaleString("es-AR") ?? "sigue abierta", c.cerradaPor ?? ""]);
   arqueo.addRow([]);
   arqueo.addRow(["Monto inicial", s.openingCash]);
-  for (const m of c.porMedio) arqueo.addRow([METODO[m.method] ?? m.method, m.total, `${m.count} venta(s)`]);
+  // PAGOS y no ventas: con pago dividido una venta cuenta en dos medios. La
+  // cantidad de ventas va en su propia fila, que es la que se puede contrastar.
+  const listado = totalesDelListado(c.remitos);
+  for (const m of c.porMedio) arqueo.addRow([metodo(m.method), m.total, `${m.count} pago(s)`]);
+  arqueo.addRow(["Ventas del turno", listado.ventas]);
   if (c.efectivoCuenta > 0) {
     arqueo.addRow(["Cobros de cuenta corriente (efectivo)", c.efectivoCuenta]);
   }
@@ -73,15 +77,27 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: str
     }
   }
 
+  // Una columna fija por medio, siempre en el mismo orden: el contador filtra y
+  // suma por columna, y si las columnas cambiaran según el día no podría pegar
+  // una planilla abajo de la otra. Antes había una sola columna con el medio
+  // predominante, y la parte con tarjeta de un pago dividido no aparecía.
   const ventas = wb.addWorksheet("Ventas");
-  ventas.addRow(["N°", "Fecha", "Vendedor", "Medio", "Cliente", "Descuento", "Total", "Estado", "Motivo de anulación", "Tardía"]);
+  ventas.addRow([
+    "N° venta", "Remito", "Fecha", "Vendedor", "Cliente", "Productos", "Medio(s)",
+    ...PAYMENT_METHODS.map((m) => m.label),
+    "Descuento", "Total", "Estado", "Motivo de anulación", "Tardía",
+  ]);
   for (const r of c.remitos) {
+    const montos = montosPorMedio(r.pagos);
     ventas.addRow([
       r.saleId,
+      r.numero ?? "",
       r.createdAt.toLocaleString("es-AR"),
       r.sellerName,
-      METODO[r.paymentMethod] ?? r.paymentMethod,
       r.clientName ?? "",
+      resumirLineas(r.lineas, Infinity).texto,
+      r.pagos.map((p) => metodo(p.method)).join(" + "),
+      ...PAYMENT_METHODS.map((m) => montos[m.value] ?? ""),
       r.discountAmount,
       r.total,
       r.voided ? "Anulada" : "Activa",
@@ -89,6 +105,16 @@ export async function GET(_req: Request, ctx: { params: Promise<{ sessionId: str
       r.posteriorAlCierre ? "Sí" : "",
     ]);
   }
+  // Las anuladas están arriba con sus montos pero no suman. Esta fila sale del
+  // mismo agrupado que la hoja "Arqueo", así que tiene que dar igual: si no da,
+  // el problema está en los datos, no en la planilla.
+  const porMedio = new Map(c.porMedio.map((m) => [m.method, m.total]));
+  ventas.addRow([]);
+  ventas.addRow([
+    "Total activas (cuadra con Arqueo)", "", "", "", "", "", "",
+    ...PAYMENT_METHODS.map((m) => porMedio.get(m.value) ?? 0),
+    "", listado.total,
+  ]);
 
   const items = wb.addWorksheet("Ítems");
   items.addRow(["Venta", "Producto", "Variante", "Cantidad", "P. unitario", "Lista", "Descuento", "Neto", "Estado"]);
