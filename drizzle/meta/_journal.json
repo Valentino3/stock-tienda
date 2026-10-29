@@ -260,6 +260,13 @@
       "when": 1793296034079,
       "tag": "0036_anulacion_items_enviados",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793299490825,
+      "tag": "0037_cocina_listo_agotado",
+      "breakpoints": true
     }
   ]
 }

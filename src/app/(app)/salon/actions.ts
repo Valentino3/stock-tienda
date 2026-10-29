@@ -10,7 +10,8 @@ import {
   acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
 } from "@/domain/floor-plan";
 import {
-  comandasPendientes, mandarACocina, marcarCorreccionesVistas, marcarImpresas,
+  comandasPendientes, deshacerListo, mandarACocina, marcarAgotado, marcarCorreccionesVistas,
+  marcarImpresas, marcarListo, platosParaAgotar, variantesAgotadas,
 } from "@/domain/kitchen";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import type { Discount } from "@/domain/sales";
@@ -42,6 +43,8 @@ const MENSAJES: Record<string, string> = {
   CANTIDAD_NO_DIVISIBLE: "Elegí una cantidad menor a la de la línea.",
   ITEMS_NO_ENCONTRADOS: "No quedan ítems por cobrar de los que elegiste.",
   VARIANT_NOT_FOUND: "Ese producto no existe.",
+  PRODUCTO_AGOTADO: "La cocina lo marcó agotado por hoy.",
+  PRODUCTO_NO_ENCONTRADO: "Ese plato no existe.",
   INVALID_QUANTITY: "Cantidad inválida.",
   NO_OPEN_SESSION: "No hay caja abierta. Abrí la caja antes de cobrar.",
   INSUFFICIENT_STOCK: "No hay stock suficiente de uno de los productos.",
@@ -66,7 +69,11 @@ export async function abrirMesa(tableId: number | null, guests?: number) {
 
 export async function buscarParaComanda(term: string) {
   const { storeId } = await requireStore();
-  return searchVariantsQuery(db, storeId, term);
+  const resultados = await searchVariantsQuery(db, storeId, term);
+  // Lo agotado se muestra igual, tachado: que el mozo vea que existe y que hoy
+  // no hay, en vez de pensar que lo buscó mal.
+  const agotadas = await variantesAgotadas(db, storeId, resultados.map((r) => r.variantId));
+  return resultados.map((r) => ({ ...r, agotado: agotadas.has(r.variantId) }));
 }
 
 export async function agregarALaComanda(orderId: number, variantId: number, quantity: number, notes?: string) {
@@ -308,6 +315,51 @@ export async function confirmarImpresion(itemIds: number[]) {
   try {
     const n = await marcarImpresas(db, { storeId, itemIds });
     return { ok: true as const, impresas: n };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** La cocina sacó estas líneas. */
+export async function marcarListos(itemIds: number[]) {
+  const { storeId } = await requireStore();
+  try {
+    const n = await marcarListo(db, { storeId, itemIds });
+    revalidatePath("/salon", "layout");
+    return { ok: true as const, listos: n };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Un «Listo» tocado por error. */
+export async function deshacerListos(itemIds: number[]) {
+  const { storeId } = await requireStore();
+  try {
+    const n = await deshacerListo(db, { storeId, itemIds });
+    revalidatePath("/salon", "layout");
+    return { ok: true as const, deshechos: n };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** La carta, para marcar lo que se acabó. */
+export async function traerPlatosParaAgotar(estacion?: string | null) {
+  const { storeId } = await requireStore();
+  return platosParaAgotar(db, storeId, { estacion });
+}
+
+/**
+ * Agotado por hoy. Lo marca la cocina, no el dueño: es quien se entera
+ * primero, y no puede esperar a que alguien con permisos entre a Menú.
+ */
+export async function cambiarAgotado(productId: number, agotado: boolean) {
+  const { storeId } = await requireStore();
+  try {
+    await marcarAgotado(db, { storeId, productId, agotado: agotado === true });
+    revalidatePath("/cocina");
+    return { ok: true as const };
   } catch (e) {
     return { error: traducir(e) };
   }

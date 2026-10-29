@@ -5,6 +5,7 @@ import {
 } from "@/db/schema";
 import { createSale, type Discount } from "@/domain/sales";
 import { MOTIVO_MIN } from "@/domain/clients";
+import { diaOperativo } from "@/lib/dates";
 
 /**
  * Órdenes del salón: la mesa abierta que se cobra al final.
@@ -123,11 +124,15 @@ export async function agregarItem(
         productName: products.name,
         price: productVariants.price,
         basePrice: products.basePrice,
+        soldOutOn: products.soldOutOn,
       })
       .from(productVariants)
       .innerJoin(products, eq(productVariants.productId, products.id))
       .where(and(eq(productVariants.id, input.variantId), eq(productVariants.storeId, input.storeId)));
     if (!v) throw new Error("VARIANT_NOT_FOUND");
+    // La cocina avisó que se acabó: tomarlo igual es un plato que vuelve a la
+    // mesa como «no hay», con el cliente esperando.
+    if (v.soldOutOn === diaOperativo()) throw new Error("PRODUCTO_AGOTADO");
 
     await tx.insert(orderItems).values({
       orderId: input.orderId,
@@ -234,6 +239,7 @@ export async function dividirItem(
       printedAt: item.printedAt,
       modifiedAt: item.modifiedAt,
       correccionVistaAt: item.correccionVistaAt,
+      readyAt: item.readyAt,
     });
 
     // El total no cambia —es la misma plata en dos renglones— pero se recalcula
@@ -389,6 +395,7 @@ export async function anularItem(
         notes: item.notes,
         sentAt: item.sentAt,
         printedAt: item.printedAt,
+        readyAt: item.readyAt,
         ...anulacion,
       });
     }

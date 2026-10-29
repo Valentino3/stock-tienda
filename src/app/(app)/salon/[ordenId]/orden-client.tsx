@@ -233,16 +233,23 @@ export function OrdenClient({
                     <li key={r.variantId} className="border-b border-border last:border-0">
                       <button
                         type="button"
-                        disabled={pending}
-                        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent"
+                        disabled={pending || r.agotado}
+                        className={cn(
+                          "flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent",
+                          r.agotado && "cursor-not-allowed opacity-60 hover:bg-transparent",
+                        )}
                         onClick={() => agregar(r)}
                       >
-                        <span className="min-w-0 truncate">
+                        <span className={cn("min-w-0 truncate", r.agotado && "line-through")}>
                           {r.productName}{r.variantName ? ` — ${r.variantName}` : ""}
                         </span>
-                        <span className="figure shrink-0 font-medium">
-                          {money(r.price ?? r.basePrice)}
-                        </span>
+                        {r.agotado ? (
+                          <span className="shrink-0 text-xs font-semibold text-destructive">Agotado</span>
+                        ) : (
+                          <span className="figure shrink-0 font-medium">
+                            {money(r.price ?? r.basePrice)}
+                          </span>
+                        )}
                       </button>
                     </li>
                   ))}
@@ -304,7 +311,10 @@ export function OrdenClient({
                       <div className="truncate text-sm font-medium">{i.nameSnapshot}</div>
                       <div className="ledger-label text-muted-foreground">
                         {number(i.quantity)} × {money(i.unitPrice)}
-                        {enviado && !cobrado && " · en cocina"}
+                        {enviado && !cobrado && i.readyAt == null && " · en cocina"}
+                        {enviado && !cobrado && i.readyAt != null && (
+                          <span className="font-semibold text-success"> · listo</span>
+                        )}
                         {cobrado && " · cobrado"}
                         {i.notes && ` · ${i.notes}`}
                       </div>

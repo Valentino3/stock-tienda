@@ -2,8 +2,10 @@ import Link from "next/link";
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
 import { listInventory, getInventoryFacets, PAGE_SIZE } from "@/domain/inventory";
+import { sinEstacion } from "@/domain/kitchen";
 import { verticalDe } from "@/lib/verticals";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/ui/page-header";
 import { ProductForm } from "./product-form";
 import { InventoryFilters } from "./inventory-filters";
@@ -24,9 +26,11 @@ export default async function ProductosPage({
   // se compró cada producto.
   const filters = forRole(parseFilters(await searchParams), isOwner);
 
-  const [{ rows, total, hasNextPage }, facets] = await Promise.all([
+  const usaEstaciones = vertical.key === "gastronomia";
+  const [{ rows, total, hasNextPage }, facets, sinCocina] = await Promise.all([
     listInventory(db, user.storeId, filters),
     getInventoryFacets(db, user.storeId),
+    usaEstaciones && isOwner ? sinEstacion(db, user.storeId) : Promise.resolve([] as string[]),
   ]);
 
   const hasFilters = buildQuery(filters, { sort: filters.sort, dir: filters.dir, page: 1 }) !== "/productos";
@@ -45,10 +49,21 @@ export default async function ProductosPage({
             atributos={vertical.atributosCatalogo}
             ejemploCategoria={vertical.etiquetas.ejemploCategoria}
             tracksStockPorDefecto={vertical.defaultsProducto.tracksStock}
-            usaEstaciones={vertical.key === "gastronomia"}
+            usaEstaciones={usaEstaciones}
           />
         ) : undefined}
       />
+
+      {sinCocina.length > 0 && (
+        // Sin estación, un plato no aparece en ninguna pantalla de cocina: sale
+        // «listo» apenas el mozo lo manda. Bien para una gaseosa; un plato acá
+        // es uno que nadie va a preparar.
+        <Notice tone="info">
+          No llegan a la cocina, salen listos al mandarlos ({sinCocina.length}):{" "}
+          {sinCocina.slice(0, 8).join(", ")}{sinCocina.length > 8 ? "…" : ""}.
+          Si alguno se prepara, asignale una estación.
+        </Notice>
+      )}
 
       <InventoryFilters
         filters={filters}
