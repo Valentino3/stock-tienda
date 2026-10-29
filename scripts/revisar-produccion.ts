@@ -292,6 +292,17 @@ async function main() {
     aviso("Cajas abiertas hace más de dos días", `${nViejas}. Puede ser un turno que nadie cerró.`);
   }
 
+  // Un superadmin con tienda no lo crea ningún camino legítimo:
+  // seed-superadmin lo deja sin tienda, y los dueños se crean con la suya.
+  // Es la huella de un dueño que se subió el rol cuando el plugin de auth
+  // todavía le daba permisos admin (ver src/lib/auth.ts). Se escalaba solo
+  // con pegarle a una ruta, así que no hay otra forma de saber si pasó.
+  await contar(
+    "Superadmin con tienda asignada",
+    sql`select count(*) as n from "user" where role = 'superadmin' and store_id is not null`,
+    "Nadie crea así un superadmin. Revisá quién es y devolvelo a owner."
+  );
+
   // Que el operador sepa que hay tiendas de prueba mezcladas: los conteos de
   // arriba las incluyen, y sin esta línea un duplicado "raro" manda a buscar
   // en el local equivocado.
