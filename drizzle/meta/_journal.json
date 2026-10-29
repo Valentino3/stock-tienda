@@ -253,6 +253,13 @@
       "when": 1790358871185,
       "tag": "0035_ajustes_cuenta_corriente",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793296034079,
+      "tag": "0036_anulacion_items_enviados",
+      "breakpoints": true
     }
   ]
 }

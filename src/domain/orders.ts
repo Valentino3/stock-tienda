@@ -1,9 +1,10 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   diningTables, orderItems, orders, products, productVariants, sales,
   type DiningTable, type Order, type Sale,
 } from "@/db/schema";
 import { createSale, type Discount } from "@/domain/sales";
+import { MOTIVO_MIN } from "@/domain/clients";
 
 /**
  * Órdenes del salón: la mesa abierta que se cobra al final.
@@ -46,7 +47,8 @@ async function recalcularTotales(tx: any, orderId: number): Promise<Order> {
   const [agg] = await tx
     .select({ subtotal: sql<number>`coalesce(sum(${orderItems.quantity} * ${orderItems.unitPrice}), 0)`.mapWith(Number) })
     .from(orderItems)
-    .where(eq(orderItems.orderId, orderId));
+    // Lo anulado sigue en la orden como historia, pero no se cobra.
+    .where(and(eq(orderItems.orderId, orderId), isNull(orderItems.voidedAt)));
 
   const subtotal = Math.round((agg?.subtotal ?? 0) * 100) / 100;
   const [orden] = await tx.update(orders)
@@ -163,6 +165,11 @@ export async function cambiarCantidad(
     if (!item) throw new Error("ITEM_NO_ENCONTRADO");
     // Un ítem ya cobrado es historia: cambiarlo desajustaría la venta que lo pagó.
     if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+    if (item.voidedAt != null) throw new Error("ITEM_ANULADO");
+    // Lo que ya está en la cocina no se toca en el lugar: bajarlo es anularlo,
+    // con motivo (ver anularItem), y subirlo es pedir otro, que va en una línea
+    // nueva para que la cocina lo reciba como pedido nuevo.
+    if (item.sentAt != null) throw new Error("ITEM_ENVIADO");
 
     if (input.quantity === 0) {
       await tx.delete(orderItems).where(eq(orderItems.id, input.itemId));
@@ -204,6 +211,7 @@ export async function dividirItem(
       ));
     if (!item) throw new Error("ITEM_NO_ENCONTRADO");
     if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+    if (item.voidedAt != null) throw new Error("ITEM_ANULADO");
     // Partir "todo" o "más de lo que hay" no parte nada: sería dejar una línea
     // en cero, que es peor que no hacer nada.
     if (input.cantidad >= item.quantity) throw new Error("CANTIDAD_NO_DIVISIBLE");
@@ -224,6 +232,8 @@ export async function dividirItem(
       // preparar algo que ya salió.
       sentAt: item.sentAt,
       printedAt: item.printedAt,
+      modifiedAt: item.modifiedAt,
+      correccionVistaAt: item.correccionVistaAt,
     });
 
     // El total no cambia —es la misma plata en dos renglones— pero se recalcula
@@ -255,7 +265,8 @@ export async function resumenDeCuenta(
     .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)));
   if (!orden) return null;
 
-  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const items = await db.select().from(orderItems)
+    .where(and(eq(orderItems.orderId, orderId), isNull(orderItems.voidedAt)));
   const importe = (i: { quantity: number; unitPrice: number }) => i.quantity * i.unitPrice;
 
   const ventas = await db.select().from(sales)
@@ -300,10 +311,89 @@ export async function cambiarNota(
       ));
     if (!item) throw new Error("ITEM_NO_ENCONTRADO");
     if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+    if (item.voidedAt != null) throw new Error("ITEM_ANULADO");
 
     await tx.update(orderItems)
-      .set({ notes: input.notes?.trim() || null })
+      .set({
+        notes: input.notes?.trim() || null,
+        // Si ya estaba en la cocina, el cambio es una corrección que la cocina
+        // tiene que recibir: el papel que tiene en la mano dice otra cosa.
+        ...(item.sentAt != null ? { modifiedAt: new Date() } : {}),
+      })
       .where(eq(orderItems.id, input.itemId));
+  });
+}
+
+/**
+ * Anula una línea que ya estaba en la cocina, entera o una parte.
+ *
+ * No se borra: queda en la orden con quién, por qué y si se llegó a preparar,
+ * y deja de sumar en la cuenta. La cocina la recibe como «ANULADO» (ver
+ * comandasPendientes). Anular una parte parte la línea, igual que dividirItem,
+ * y anula la parte nueva: la que sigue viva conserva su id y su estado.
+ *
+ * Lo que todavía no salió no pasa por acá: se borra con cambiarCantidad.
+ */
+export async function anularItem(
+  db: any,
+  input: {
+    storeId: number; orderId: number; itemId: number; userId: string;
+    cantidad?: number; motivo: string; wasted?: boolean;
+  },
+): Promise<Order> {
+  const motivo = input.motivo?.trim() ?? "";
+  if (motivo.length < MOTIVO_MIN) throw new Error("MOTIVO_REQUERIDO");
+
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+
+    // FOR UPDATE: dos anulaciones parciales simultáneas de la misma línea
+    // podrían anular entre las dos más unidades de las que había.
+    const [item] = await tx.select().from(orderItems)
+      .where(and(
+        eq(orderItems.id, input.itemId),
+        eq(orderItems.orderId, input.orderId),
+        eq(orderItems.storeId, input.storeId),
+      ))
+      .for("update");
+    if (!item) throw new Error("ITEM_NO_ENCONTRADO");
+    if (item.saleId != null) throw new Error("ITEM_YA_COBRADO");
+    if (item.voidedAt != null) throw new Error("ITEM_ANULADO");
+    if (item.sentAt == null) throw new Error("ITEM_NO_ENVIADO");
+
+    const cantidad = input.cantidad ?? item.quantity;
+    if (!Number.isInteger(cantidad) || cantidad <= 0 || cantidad > item.quantity) {
+      throw new Error("INVALID_QUANTITY");
+    }
+
+    const anulacion = {
+      voidedAt: new Date(),
+      voidedBy: input.userId,
+      voidReason: motivo,
+      wasted: input.wasted ?? false,
+    };
+
+    if (cantidad === item.quantity) {
+      await tx.update(orderItems).set(anulacion).where(eq(orderItems.id, item.id));
+    } else {
+      await tx.update(orderItems)
+        .set({ quantity: item.quantity - cantidad })
+        .where(eq(orderItems.id, item.id));
+      await tx.insert(orderItems).values({
+        orderId: item.orderId,
+        storeId: item.storeId,
+        variantId: item.variantId,
+        quantity: cantidad,
+        unitPrice: item.unitPrice,
+        nameSnapshot: item.nameSnapshot,
+        notes: item.notes,
+        sentAt: item.sentAt,
+        printedAt: item.printedAt,
+        ...anulacion,
+      });
+    }
+
+    return recalcularTotales(tx, input.orderId);
   });
 }
 
@@ -325,9 +415,16 @@ export async function cambiarComensales(
   });
 }
 
+/**
+ * Cancela una mesa que no se cobró.
+ *
+ * Si ya había algo en la cocina, exige motivo y anula esas líneas con él: la
+ * cocina se entera (las recibe como «ANULADO») y queda registrado qué se había
+ * pedido. Una mesa vacía o sin nada enviado se cancela sin preguntas.
+ */
 export async function cancelarOrden(
   db: any,
-  input: { storeId: number; orderId: number },
+  input: { storeId: number; orderId: number; userId: string; motivo?: string | null; wasted?: boolean },
 ): Promise<void> {
   await db.transaction(async (tx: any) => {
     const orden = await traerOrdenEditable(tx, input.storeId, input.orderId);
@@ -340,8 +437,27 @@ export async function cancelarOrden(
       .where(and(eq(orderItems.orderId, orden.id), sql`${orderItems.saleId} is not null`));
     if ((pagados?.n ?? 0) > 0) throw new Error("ORDEN_CON_PAGOS");
 
+    const enviados = await tx.select({ id: orderItems.id }).from(orderItems)
+      .where(and(
+        eq(orderItems.orderId, orden.id),
+        isNotNull(orderItems.sentAt),
+        isNull(orderItems.voidedAt),
+      ));
+
+    const motivo = input.motivo?.trim() || null;
+    if (enviados.length > 0 && (motivo == null || motivo.length < MOTIVO_MIN)) {
+      throw new Error("MOTIVO_REQUERIDO");
+    }
+
+    const ahora = new Date();
+    if (enviados.length > 0) {
+      await tx.update(orderItems)
+        .set({ voidedAt: ahora, voidedBy: input.userId, voidReason: motivo, wasted: input.wasted ?? false })
+        .where(inArray(orderItems.id, enviados.map((i: { id: number }) => i.id)));
+    }
+
     await tx.update(orders)
-      .set({ status: "cancelada", closedAt: new Date() })
+      .set({ status: "cancelada", closedAt: ahora, cancelledBy: input.userId, cancelReason: motivo })
       .where(eq(orders.id, orden.id));
   });
 }
@@ -386,7 +502,11 @@ export async function pagarOrden(
     const orden = await traerOrdenEditable(tx, input.storeId, input.orderId);
 
     const impagos = await tx.select().from(orderItems)
-      .where(and(eq(orderItems.orderId, orden.id), isNull(orderItems.saleId)));
+      .where(and(
+        eq(orderItems.orderId, orden.id),
+        isNull(orderItems.saleId),
+        isNull(orderItems.voidedAt),
+      ));
     if (impagos.length === 0) throw new Error("ORDEN_SIN_ITEMS");
 
     const aCobrar = input.itemIds?.length
@@ -433,7 +553,11 @@ export async function pagarOrden(
     const [restantes] = await tx
       .select({ n: sql<number>`count(*)`.mapWith(Number) })
       .from(orderItems)
-      .where(and(eq(orderItems.orderId, orden.id), isNull(orderItems.saleId)));
+      .where(and(
+        eq(orderItems.orderId, orden.id),
+        isNull(orderItems.saleId),
+        isNull(orderItems.voidedAt),
+      ));
     const parcial = (restantes?.n ?? 0) > 0;
 
     const [ordenFinal] = await tx.update(orders)

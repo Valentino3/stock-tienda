@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { createTestDb, seedTestStore, seedTestUser } from "./helpers/db";
 import {
   cashSessions, clients, clientAccountMovements, diningTables, orderItems, orders,
@@ -7,7 +7,7 @@ import {
 } from "@/db/schema";
 import { closeCashSession, openCashSession } from "@/domain/cash";
 import {
-  abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
+  abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   crearMesa, dividirItem, getOrden,
   listarMesas, listarOrdenesAbiertas, pagarOrden, resumenDeCuenta,
 } from "@/domain/orders";
@@ -90,7 +90,7 @@ describe("abrirOrden", () => {
 
   it("cancelar también libera la mesa", async () => {
     const primera = await abrir();
-    await cancelarOrden(db, { storeId: store, orderId: primera.id });
+    await cancelarOrden(db, { storeId: store, userId: "u1", orderId: primera.id });
     await expect(abrir()).resolves.toBeDefined();
   });
 
@@ -369,7 +369,7 @@ describe("pagos parciales — la base de dividir la cuenta", () => {
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
     await cobrar(o.id, { itemIds: [items[0].id] });
 
-    await expect(cancelarOrden(db, { storeId: store, orderId: o.id })).rejects.toThrow("ORDEN_CON_PAGOS");
+    await expect(cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id })).rejects.toThrow("ORDEN_CON_PAGOS");
   });
 });
 
@@ -612,7 +612,7 @@ describe("cancelarOrden", () => {
   it("no deja venta ni movimiento de stock", async () => {
     const o = await abrir();
     await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 2 });
-    await cancelarOrden(db, { storeId: store, orderId: o.id });
+    await cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id });
 
     const [despues] = await db.select().from(orders).where(eq(orders.id, o.id));
     expect(despues.status).toBe("cancelada");
@@ -674,5 +674,169 @@ describe("lecturas del salón", () => {
 
   it("el mismo nombre en otro sector sí se puede", async () => {
     await expect(crearMesa(db, { storeId: store, name: "1", sector: "Terraza" })).resolves.toBeDefined();
+  });
+});
+
+describe("anular lo que ya está en la cocina", () => {
+  const anular = (orderId: number, itemId: number, over: Record<string, unknown> = {}) =>
+    anularItem(db, {
+      storeId: store, orderId, itemId, userId: "u1", motivo: "Error de carga", ...over,
+    });
+
+  const conItemEnviado = async (quantity = 1) => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    return { o, item };
+  };
+
+  const sinMandarDe = async (orderId: number) =>
+    (await db.select().from(orderItems)
+      .where(and(eq(orderItems.orderId, orderId), isNull(orderItems.sentAt))))[0];
+
+  it("lo enviado no se borra ni se cambia la cantidad en el lugar", async () => {
+    const { o, item } = await conItemEnviado(2);
+    for (const quantity of [0, 1, 3]) {
+      await expect(cambiarCantidad(db, { storeId: store, orderId: o.id, itemId: item.id, quantity }))
+        .rejects.toThrow("ITEM_ENVIADO");
+    }
+    const [sigue] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(sigue.quantity).toBe(2);
+  });
+
+  it("anular entero deja la línea con quién y por qué, y fuera de la cuenta", async () => {
+    const { o, item } = await conItemEnviado(1);
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+
+    const orden = await anular(o.id, item.id, { wasted: true });
+    expect(orden.total).toBe(5000);
+
+    const [anulada] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(anulada.voidedAt).not.toBeNull();
+    expect(anulada.voidedBy).toBe("u1");
+    expect(anulada.voidReason).toBe("Error de carga");
+    expect(anulada.wasted).toBe(true);
+
+    // Al cobrar, lo anulado no entra en la venta.
+    const r = await cobrar(o.id);
+    expect(r.sale.total).toBe(5000);
+    expect(r.orden.status).toBe("pagada");
+    const [sigueAnulada] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(sigueAnulada.saleId).toBeNull();
+  });
+
+  it("anular una parte parte la línea y anula solo esa parte", async () => {
+    const { o, item } = await conItemEnviado(3);
+    const orden = await anular(o.id, item.id, { cantidad: 1 });
+    expect(orden.total).toBe(16000);
+
+    const lineas = await db.select().from(orderItems)
+      .where(eq(orderItems.orderId, o.id)).orderBy(orderItems.id);
+    expect(lineas).toHaveLength(2);
+    // La original conserva id y estado de cocina; la anulada es la nueva.
+    expect(lineas[0]).toMatchObject({ id: item.id, quantity: 2, voidedAt: null });
+    expect(lineas[0].sentAt).not.toBeNull();
+    expect(lineas[1].quantity).toBe(1);
+    expect(lineas[1].voidedAt).not.toBeNull();
+    expect(lineas[1].sentAt).toEqual(lineas[0].sentAt);
+  });
+
+  it("rechaza lo que no corresponde", async () => {
+    const { o, item } = await conItemEnviado(2);
+    await expect(anular(o.id, item.id, { motivo: "  x " })).rejects.toThrow("MOTIVO_REQUERIDO");
+    await expect(anular(o.id, item.id, { cantidad: 3 })).rejects.toThrow("INVALID_QUANTITY");
+    await expect(anular(o.id, item.id, { cantidad: 0 })).rejects.toThrow("INVALID_QUANTITY");
+
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    const nuevo = await sinMandarDe(o.id);
+    await expect(anular(o.id, nuevo.id)).rejects.toThrow("ITEM_NO_ENVIADO");
+
+    await anular(o.id, item.id);
+    await expect(anular(o.id, item.id)).rejects.toThrow("ITEM_ANULADO");
+    await expect(cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "x" }))
+      .rejects.toThrow("ITEM_ANULADO");
+    await expect(dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 1 }))
+      .rejects.toThrow("ITEM_ANULADO");
+  });
+
+  it("no se anula lo que ya se cobró", async () => {
+    const { o, item } = await conItemEnviado(1);
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    await cobrar(o.id, { itemIds: [item.id] });
+    await expect(anular(o.id, item.id)).rejects.toThrow("ITEM_YA_COBRADO");
+  });
+
+  it("una mesa con todo anulado no se cobra", async () => {
+    const { o, item } = await conItemEnviado(1);
+    await anular(o.id, item.id);
+    await expect(cobrar(o.id)).rejects.toThrow("ORDEN_SIN_ITEMS");
+  });
+
+  it("el resumen de la cuenta no cuenta lo anulado", async () => {
+    const { o, item } = await conItemEnviado(2);
+    await anular(o.id, item.id, { cantidad: 1 });
+    const r = await resumenDeCuenta(db, store, o.id);
+    expect(r).toMatchObject({ total: 8000, pendiente: 8000, cobrado: 0 });
+  });
+
+  it("cambiar la nota de algo enviado queda marcado para la cocina", async () => {
+    const { o, item } = await conItemEnviado(1);
+    await cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "bien cocida" });
+    const [enviado] = await db.select().from(orderItems).where(eq(orderItems.id, item.id));
+    expect(enviado.modifiedAt).not.toBeNull();
+
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    const nuevo = await sinMandarDe(o.id);
+    await cambiarNota(db, { storeId: store, orderId: o.id, itemId: nuevo.id, notes: "fría" });
+    const [noEnviado] = await db.select().from(orderItems).where(eq(orderItems.id, nuevo.id));
+    expect(noEnviado.modifiedAt).toBeNull();
+  });
+
+  it("la base no acepta una anulación a medias", async () => {
+    const { item } = await conItemEnviado(1);
+    await expect(
+      db.update(orderItems).set({ voidedAt: new Date() }).where(eq(orderItems.id, item.id)),
+    ).rejects.toThrow();
+  });
+});
+
+describe("cancelar una mesa con cosas en la cocina", () => {
+  it("sin motivo no se cancela", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    await expect(cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id }))
+      .rejects.toThrow("MOTIVO_REQUERIDO");
+    const [sigue] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(sigue.status).toBe("abierta");
+  });
+
+  it("con motivo anula lo enviado, deja lo no enviado como estaba y registra quién", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+
+    await cancelarOrden(db, {
+      storeId: store, userId: "u1", orderId: o.id, motivo: "Se fueron", wasted: true,
+    });
+
+    const [orden] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(orden).toMatchObject({ status: "cancelada", cancelledBy: "u1", cancelReason: "Se fueron" });
+
+    const lineas = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    const enviada = lineas.find((l) => l.sentAt != null)!;
+    const noEnviada = lineas.find((l) => l.sentAt == null)!;
+    expect(enviada).toMatchObject({ voidReason: "Se fueron", wasted: true });
+    expect(noEnviada.voidedAt).toBeNull();
+  });
+
+  it("una mesa sin nada enviado se cancela sin motivo", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id });
+    const [orden] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(orden.status).toBe("cancelada");
   });
 });

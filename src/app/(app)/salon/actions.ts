@@ -3,13 +3,15 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
-  abrirOrden, agregarItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
+  abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   crearMesa, dividirItem, pagarOrden,
 } from "@/domain/orders";
 import {
   acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
 } from "@/domain/floor-plan";
-import { comandasPendientes, mandarACocina, marcarImpresas } from "@/domain/kitchen";
+import {
+  comandasPendientes, mandarACocina, marcarCorreccionesVistas, marcarImpresas,
+} from "@/domain/kitchen";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
 import type { Discount } from "@/domain/sales";
 import type { FloorMarkerType } from "@/db/schema";
@@ -33,6 +35,10 @@ const MENSAJES: Record<string, string> = {
   ORDEN_CON_PAGOS: "Ya se cobró una parte: anulá la venta desde Ventas.",
   ITEM_NO_ENCONTRADO: "Ese ítem no existe en la comanda.",
   ITEM_YA_COBRADO: "Ese ítem ya se cobró.",
+  ITEM_ENVIADO: "Ya está en la cocina: para sacarlo, anulalo con un motivo.",
+  ITEM_NO_ENVIADO: "Ese ítem todavía no se mandó: quitalo directamente.",
+  ITEM_ANULADO: "Ese ítem ya está anulado.",
+  MOTIVO_REQUERIDO: "Poné un motivo (al menos 3 letras).",
   CANTIDAD_NO_DIVISIBLE: "Elegí una cantidad menor a la de la línea.",
   ITEMS_NO_ENCONTRADOS: "No quedan ítems por cobrar de los que elegiste.",
   VARIANT_NOT_FOUND: "Ese producto no existe.",
@@ -121,10 +127,32 @@ export async function dividirLinea(orderId: number, itemId: number, cantidad: nu
   }
 }
 
-export async function cancelarComanda(orderId: number) {
-  const { storeId } = await requireStore();
+/** Anula una línea ya enviada a cocina: no se borra, queda con su motivo. */
+export async function anularLinea(input: {
+  orderId: number; itemId: number; cantidad: number; motivo: string; wasted: boolean;
+}) {
+  const { storeId, id: userId } = await requireStore();
   try {
-    await cancelarOrden(db, { storeId, orderId });
+    // Campo por campo y la sesión al final: el argumento de una server action
+    // lo arma el cliente, y un `storeId` colado en `input` pisaría el real.
+    const { orderId, itemId, cantidad, motivo, wasted } = input;
+    const orden = await anularItem(db, {
+      orderId, itemId, cantidad, motivo, wasted: wasted === true, storeId, userId,
+    });
+    revalidatePath(`/salon/${input.orderId}`);
+    revalidatePath("/salon");
+    revalidatePath("/cocina");
+    return { ok: true as const, total: orden.total };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function cancelarComanda(orderId: number, motivo?: string, wasted?: boolean) {
+  const { storeId, id: userId } = await requireStore();
+  try {
+    await cancelarOrden(db, { storeId, orderId, userId, motivo, wasted });
+    revalidatePath("/cocina");
     revalidatePath("/salon");
     return { ok: true as const };
   } catch (e) {
@@ -261,6 +289,17 @@ export async function mandarComandaACocina(orderId: number) {
 export async function traerComandas(estacion?: string | null) {
   const { storeId } = await requireStore();
   return comandasPendientes(db, storeId, { estacion });
+}
+
+/** La cocina que trabaja solo con pantalla confirma que vio las correcciones. */
+export async function confirmarCorrecciones(itemIds: number[]) {
+  const { storeId } = await requireStore();
+  try {
+    const n = await marcarCorreccionesVistas(db, { storeId, itemIds });
+    return { ok: true as const, vistas: n };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
 }
 
 /** La pantalla de cocina avisa que ya salió por impresora. */
