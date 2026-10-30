@@ -267,6 +267,13 @@
       "when": 1793299490825,
       "tag": "0037_cocina_listo_agotado",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793370856916,
+      "tag": "0038_mozo_de_la_mesa",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ type OrdenViva = {
   tableId: number | null;
   tableName: string | null;
   sector: string | null;
+  mozo: string | null;
 };
 
 type MesaConOrden = {
@@ -99,6 +100,13 @@ export function SalonClient({
                         {espera(orden.openedAt)}
                         {orden.status === "a_cobrar" && " · pago parcial"}
                       </span>
+                      {orden.mozo && (
+                        // Primer nombre: la tarjeta es chica y en el salón nadie
+                        // se llama por el apellido.
+                        <span className="ledger-label truncate text-muted-foreground">
+                          {orden.mozo.split(" ")[0]}
+                        </span>
+                      )}
                     </>
                   ) : (
                     <span className="ledger-label text-muted-foreground">

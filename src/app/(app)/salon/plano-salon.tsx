@@ -143,6 +143,7 @@ export function PlanoSalon({
                   </span>
                   <span className="ledger-label leading-none text-muted-foreground">
                     {espera(orden.openedAt)}
+                    {orden.mozo && ` · ${orden.mozo.split(" ")[0]}`}
                   </span>
                 </>
               ) : (

@@ -3,13 +3,14 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { createTestDb, seedTestStore, seedTestUser } from "./helpers/db";
 import {
   cashSessions, clients, clientAccountMovements, diningTables, orderItems, orders,
-  notifications, products, productVariants, salePayments, sales, saleItems, stockMovements,
+  notifications, products, productVariants, salePayments, sales, saleItems, stockMovements, user,
 } from "@/db/schema";
 import { closeCashSession, openCashSession } from "@/domain/cash";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   crearMesa, dividirItem, faltaStock, getOrden,
-  listarMesas, listarOrdenesAbiertas, pagarOrden, resumenDeCuenta, ventasDeOrden,
+  listarMesas, listarOrdenesAbiertas, moverOrden, mozosDisponibles, pagarOrden, resumenDeCuenta,
+  transferirMozo, ventasDeOrden,
 } from "@/domain/orders";
 import { voidSale } from "@/domain/sales";
 import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
@@ -76,7 +77,7 @@ describe("abrirOrden", () => {
     // que rechazar la segunda es orders_una_abierta_por_mesa_idx.
     await abrir();
     await expect(
-      db.insert(orders).values({ storeId: store, tableId: mesa, openedBy: "u1" }),
+      db.insert(orders).values({ storeId: store, tableId: mesa, openedBy: "u1", waiterId: "u1" }),
     ).rejects.toThrow();
   });
 
@@ -955,5 +956,104 @@ describe("cobro de mesa: varios medios, reintentos y anulaciones", () => {
     expect(vieja).toMatchObject({ status: "abierta", tableId: null });
     const [actual] = await db.select().from(orders).where(eq(orders.id, nueva.id));
     expect(actual.tableId).toBe(mesa);
+  });
+});
+
+describe("el mozo de la mesa", () => {
+  beforeEach(async () => {
+    await seedTestUser(db, "mozo", "employee", store);
+  });
+
+  it("arranca siendo quien abre la mesa", async () => {
+    const o = await abrir();
+    expect(o.waiterId).toBe("u1");
+    const [viva] = await listarOrdenesAbiertas(db, store);
+    expect(viva).toMatchObject({ waiterId: "u1", mozo: "Test" });
+  });
+
+  it("se le acredita la venta; quien cobra queda como el que la anotó", async () => {
+    const o = await abrir();
+    await transferirMozo(db, { storeId: store, orderId: o.id, waiterId: "mozo" });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    const r = await cobrar(o.id);
+    expect(r.sale.sellerId).toBe("mozo");
+    expect(r.sale.registeredBy).toBe("u1");
+  });
+
+  it("si el mozo ya no está activo, se acredita a quien cobra en vez de trabar el cobro", async () => {
+    const o = await abrir();
+    await transferirMozo(db, { storeId: store, orderId: o.id, waiterId: "mozo" });
+    await db.update(user).set({ banned: true }).where(eq(user.id, "mozo"));
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    const r = await cobrar(o.id);
+    expect(r.sale.sellerId).toBe("u1");
+  });
+
+  it("solo se pasa a un usuario activo de la misma tienda", async () => {
+    const o = await abrir();
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    await seedTestUser(db, "ajeno", "employee", store2);
+    await expect(transferirMozo(db, { storeId: store, orderId: o.id, waiterId: "ajeno" }))
+      .rejects.toThrow("MOZO_INVALIDO");
+    await expect(transferirMozo(db, { storeId: store, orderId: o.id, waiterId: "nadie" }))
+      .rejects.toThrow("MOZO_INVALIDO");
+    await db.update(user).set({ banned: true }).where(eq(user.id, "mozo"));
+    await expect(transferirMozo(db, { storeId: store, orderId: o.id, waiterId: "mozo" }))
+      .rejects.toThrow("MOZO_INVALIDO");
+  });
+
+  it("mozosDisponibles lista solo los activos de la tienda", async () => {
+    await db.update(user).set({ banned: true }).where(eq(user.id, "mozo"));
+    expect((await mozosDisponibles(db, store)).map((m) => m.id)).toEqual(["u1"]);
+  });
+});
+
+describe("pasar la orden a otra mesa", () => {
+  let otra: number;
+  beforeEach(async () => {
+    otra = (await crearMesa(db, { storeId: store, name: "2" })).id;
+  });
+
+  it("se lleva todo y libera la mesa de origen", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+
+    const movida = await moverOrden(db, { storeId: store, orderId: o.id, tableId: otra });
+    expect(movida.tableId).toBe(otra);
+    expect(movida.total).toBe(16000);
+
+    // La de origen queda libre para otra orden.
+    await expect(abrir()).resolves.toBeDefined();
+    // La cocina la ve en la mesa nueva.
+    const [c] = await comandasPendientes(db, store);
+    expect(c.mesa).toBe("2");
+  });
+
+  it("no se puede pasar a una mesa ocupada", async () => {
+    const o = await abrir();
+    await abrirOrden(db, { storeId: store, userId: "u1", tableId: otra });
+    await expect(moverOrden(db, { storeId: store, orderId: o.id, tableId: otra }))
+      .rejects.toThrow("MESA_YA_OCUPADA");
+    const [sigue] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(sigue.tableId).toBe(mesa);
+  });
+
+  it("no se pasa a una mesa de otra tienda, ni inactiva, ni una orden cerrada", async () => {
+    const o = await abrir();
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const ajena = (await crearMesa(db, { storeId: store2, name: "9" })).id;
+    await expect(moverOrden(db, { storeId: store, orderId: o.id, tableId: ajena }))
+      .rejects.toThrow("MESA_NO_ENCONTRADA");
+
+    await db.update(diningTables).set({ active: false }).where(eq(diningTables.id, otra));
+    await expect(moverOrden(db, { storeId: store, orderId: o.id, tableId: otra }))
+      .rejects.toThrow("MESA_INACTIVA");
+
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await cobrar(o.id);
+    await db.update(diningTables).set({ active: true }).where(eq(diningTables.id, otra));
+    await expect(moverOrden(db, { storeId: store, orderId: o.id, tableId: otra }))
+      .rejects.toThrow("ORDEN_CERRADA");
   });
 });

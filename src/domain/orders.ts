@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
-  diningTables, orderItems, orders, products, productVariants, sales,
+  diningTables, orderItems, orders, products, productVariants, sales, user,
   type DiningTable, type Order, type Sale,
 } from "@/db/schema";
 import { createSale, type Discount } from "@/domain/sales";
@@ -91,6 +91,8 @@ export async function abrirOrden(
         uid,
         tableId: input.tableId ?? null,
         openedBy: input.userId,
+        // El mozo arranca siendo quien abre la mesa. Se cambia con transferirMozo.
+        waiterId: input.userId,
         guests: input.guests ?? null,
       }).returning();
       return orden;
@@ -562,14 +564,22 @@ export async function pagarOrden(
     // El createSale de siempre, sin modificar: resuelve precios contra el
     // catálogo, descuenta stock donde corresponde, arma la cuenta corriente y
     // exige caja abierta. Corre como savepoint dentro de esta transacción.
+    // La venta se le acredita al mozo de la mesa y la anota quien cobra: la
+    // misma separación que el mostrador entre `sellerId` y `registeredBy`. Si
+    // el mozo ya no está activo (lo dieron de baja con la mesa abierta),
+    // createSale lo rechazaría y la mesa quedaría sin poder cobrarse: en ese
+    // caso se acredita a quien cobra.
+    const [mozo] = await tx.select({ id: user.id }).from(user)
+      .where(and(
+        eq(user.id, orden.waiterId),
+        eq(user.storeId, input.storeId),
+        or(isNull(user.banned), eq(user.banned, false)),
+      ));
+    const sellerId = mozo ? orden.waiterId : input.userId;
+
     const sale = await createSale(tx, {
       storeId: input.storeId,
-      // En una mesa el acreditado y el operador son el mismo: el que cobra.
-      // Elegir vendedor en el salón sería instalar una respuesta peor que la
-      // que la base ya tiene —quién abrió la orden y tomó los ítems— y dejaría
-      // dos fuentes compitiendo por "quién vendió esta mesa". Se escribe
-      // explícito para que el reparto quede a la vista en los dos caminos.
-      sellerId: input.userId,
+      sellerId,
       registeredBy: input.userId,
       paymentMethod: input.pagos ? undefined : input.paymentMethod,
       pagos: input.pagos,
@@ -630,6 +640,9 @@ export async function pagarOrden(
 
 export type OrdenViva = {
   id: number;
+  waiterId: string;
+  /** Nombre del mozo, para la tarjeta de la mesa. */
+  mozo: string | null;
   status: Order["status"];
   total: number;
   openedAt: Date;
@@ -652,9 +665,12 @@ export async function listarOrdenesAbiertas(db: any, storeId: number): Promise<O
       tableId: orders.tableId,
       tableName: diningTables.name,
       sector: diningTables.sector,
+      waiterId: orders.waiterId,
+      mozo: user.name,
     })
     .from(orders)
     .leftJoin(diningTables, eq(orders.tableId, diningTables.id))
+    .leftJoin(user, eq(orders.waiterId, user.id))
     .where(and(eq(orders.storeId, storeId), inArray(orders.status, [...EDITABLES])))
     .orderBy(orders.openedAt);
 }
@@ -748,4 +764,72 @@ export async function faltaStock(
     ));
   const pedido = fila?.pedido ?? 0;
   return pedido > v.stock ? { disponible: v.stock, pedido } : null;
+}
+
+/**
+ * Pasa la mesa a otro mozo: cambio de turno, o una mesa que se reparte. Solo a
+ * un usuario activo de la misma tienda, igual que createSale con `sellerId`:
+ * es a quien se le va a acreditar la venta.
+ */
+export async function transferirMozo(
+  db: any,
+  input: { storeId: number; orderId: number; waiterId: string },
+): Promise<Order> {
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId, { bloquear: true });
+    const [mozo] = await tx.select({ id: user.id, banned: user.banned }).from(user)
+      .where(and(eq(user.id, input.waiterId), eq(user.storeId, input.storeId)));
+    if (!mozo || mozo.banned) throw new Error("MOZO_INVALIDO");
+    const [orden] = await tx.update(orders)
+      .set({ waiterId: input.waiterId })
+      .where(eq(orders.id, input.orderId))
+      .returning();
+    return orden;
+  });
+}
+
+/**
+ * Pasa la orden a otra mesa: la mesa de la barra que se mudó al salón, o la de
+ * la vereda que entró por el frío. Se mueve todo —ítems, cocina, pagos
+ * parciales— porque es la misma orden; solo cambia dónde está sentada.
+ *
+ * La mesa destino tiene que estar libre: lo garantiza el mismo índice único
+ * parcial que impide abrir dos órdenes en una mesa. Unir dos mesas ocupadas es
+ * otra operación.
+ */
+export async function moverOrden(
+  db: any,
+  input: { storeId: number; orderId: number; tableId: number },
+): Promise<Order> {
+  try {
+    return await db.transaction(async (tx: any) => {
+      const orden = await traerOrdenEditable(tx, input.storeId, input.orderId, { bloquear: true });
+      if (orden.tableId === input.tableId) return orden;
+
+      const [mesa] = await tx.select({ id: diningTables.id, active: diningTables.active })
+        .from(diningTables)
+        .where(and(eq(diningTables.id, input.tableId), eq(diningTables.storeId, input.storeId)));
+      if (!mesa) throw new Error("MESA_NO_ENCONTRADA");
+      if (!mesa.active) throw new Error("MESA_INACTIVA");
+
+      const [movida] = await tx.update(orders)
+        .set({ tableId: input.tableId })
+        .where(eq(orders.id, input.orderId))
+        .returning();
+      return movida;
+    });
+  } catch (err) {
+    if (codigoDe(err) === PG_UNIQUE_VIOLATION) throw new Error("MESA_YA_OCUPADA");
+    throw err;
+  }
+}
+
+/** Usuarios activos de la tienda: a quién se le puede pasar una mesa. */
+export async function mozosDisponibles(
+  db: any,
+  storeId: number,
+): Promise<{ id: string; name: string }[]> {
+  return db.select({ id: user.id, name: user.name }).from(user)
+    .where(and(eq(user.storeId, storeId), or(isNull(user.banned), eq(user.banned, false))))
+    .orderBy(user.name);
 }

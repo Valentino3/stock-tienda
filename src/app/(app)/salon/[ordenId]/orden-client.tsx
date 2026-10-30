@@ -11,8 +11,9 @@ import { money, number } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
-  agregarALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda,
-  cobrarComanda, dividirLinea, mandarComandaACocina, ponerComensales, ponerNota,
+  agregarALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cambiarMozo,
+  cancelarComanda, cobrarComanda, dividirLinea, mandarComandaACocina, pasarAMesa, ponerComensales,
+  ponerNota,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
 import { MotivoDialog, type ResultadoMotivo } from "./motivo-dialog";
@@ -30,13 +31,15 @@ const METODOS = [
 type Metodo = (typeof METODOS)[number]["value"];
 
 export function OrdenClient({
-  orden, items, clientes, ventas, titulo,
+  orden, items, clientes, ventas, titulo, mozos, mesasLibres,
 }: {
   orden: Order;
   items: OrderItem[];
   clientes: ClienteOption[];
   ventas: Sale[];
   titulo: string;
+  mozos: { id: string; name: string }[];
+  mesasLibres: { id: number; nombre: string; sector: string }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -265,8 +268,59 @@ export function OrdenClient({
     });
   }
 
+  function elegirMozo(waiterId: string) {
+    if (waiterId === orden.waiterId) return;
+    const nombre = mozos.find((m) => m.id === waiterId)?.name ?? "";
+    correr(() => cambiarMozo(orden.id, waiterId), () => toast.success(`La mesa pasó a ${nombre}.`));
+  }
+
+  function pasar(tableId: number) {
+    const destino = mesasLibres.find((m) => m.id === tableId);
+    correr(() => pasarAMesa(orden.id, tableId), () =>
+      toast.success(`Se pasó a la mesa ${destino?.nombre ?? ""}${destino ? ` (${destino.sector})` : ""}.`));
+  }
+
   return (
     <div className="grid items-start gap-6 lg:grid-cols-[1fr_360px]">
+      {!cerrada && (
+        // Quién atiende y dónde está sentada. Arriba y no en el panel de cobro:
+        // se cambian en medio del servicio, no al cobrar.
+        <div className="flex flex-wrap items-center gap-3 lg:col-span-2">
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Mozo</span>
+            <select
+              value={orden.waiterId}
+              disabled={pending}
+              onChange={(e) => elegirMozo(e.target.value)}
+              aria-label="Mozo de la mesa"
+              className="h-11 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              {/* El actual aunque esté dado de baja: si no, el select mostraría a otro. */}
+              {!mozos.some((m) => m.id === orden.waiterId) && <option value={orden.waiterId}>—</option>}
+              {mozos.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </label>
+          {mesasLibres.length > 0 && (
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Pasar a</span>
+              <select
+                value=""
+                disabled={pending}
+                onChange={(e) => e.target.value && pasar(Number(e.target.value))}
+                aria-label="Pasar a otra mesa"
+                className="h-11 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="">otra mesa…</option>
+                {mesasLibres.map((m) => (
+                  <option key={m.id} value={m.id}>{m.nombre} · {m.sector}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      )}
       {/* overflow-visible por el mismo motivo que en vender/sale-form.tsx: el
           dropdown del buscador es `absolute` y el overflow-hidden de Card lo
           recortaba en el borde. */}
