@@ -1,13 +1,17 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Printer, PrinterCheck } from "lucide-react";
+import { Check, Printer, PrinterCheck } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { cn } from "@/lib/utils";
 import { number } from "@/lib/format";
-import type { Comanda } from "@/domain/kitchen";
-import { confirmarCorrecciones, confirmarImpresion, traerComandas } from "../salon/actions";
+import type { Comanda, PlatoParaAgotar } from "@/domain/kitchen";
+import {
+  cambiarAgotado, confirmarCorrecciones, confirmarImpresion, deshacerListos, marcarListos,
+  traerComandas, traerPlatosParaAgotar,
+} from "../salon/actions";
 
 /**
  * Pantalla de cocina: consulta cada pocos segundos y, si está activado,
@@ -22,8 +26,12 @@ import { confirmarCorrecciones, confirmarImpresion, traerComandas } from "../sal
 const INTERVALO_MS = 5000;
 const CLAVE_AUTOIMPRESION = "stock-tienda:cocina:autoimprimir";
 
+function minutosDesde(desde: Date | string): number {
+  return Math.max(0, Math.floor((Date.now() - new Date(desde).getTime()) / 60000));
+}
+
 function espera(desde: Date | string): string {
-  const min = Math.max(0, Math.floor((Date.now() - new Date(desde).getTime()) / 60000));
+  const min = minutosDesde(desde);
   return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
@@ -44,6 +52,8 @@ export function CocinaClient({
   // anulación de algo ya impreso, tienen que salir aunque esa mesa ya haya
   // salido antes. Con la orden como clave, solo salía la primera ronda.
   const yaImpresas = useRef<Set<string>>(new Set());
+  // Panel de agotados: null = cerrado.
+  const [platos, setPlatos] = useState<PlatoParaAgotar[] | null>(null);
 
   // La preferencia vive en el dispositivo: la PC de la cocina imprime, la del
   // mostrador no. El setState sincrónico acá no se puede evitar con un
@@ -124,6 +134,46 @@ export function CocinaClient({
     void refrescar();
   }
 
+  async function listo(itemIds: number[], descripcion: string) {
+    if (itemIds.length === 0) return;
+    // Sale de la pantalla ya, sin esperar al servidor: en la hora pico el
+    // cocinero toca y sigue. Si falla, el próximo refresco lo devuelve.
+    setComandas((prev) => prev
+      .map((c) => ({ ...c, lineas: c.lineas.filter((l) => !itemIds.includes(l.itemId)) }))
+      .filter((c) => c.lineas.length > 0));
+    const res = await marcarListos(itemIds);
+    if ("error" in res && res.error) setError(res.error);
+    else {
+      toast.success(`Listo: ${descripcion}`, {
+        action: {
+          label: "Deshacer",
+          onClick: () => { void deshacerListos(itemIds).then(() => refrescar()); },
+        },
+      });
+    }
+    void refrescar();
+  }
+
+  async function abrirAgotados() {
+    if (platos) {
+      setPlatos(null);
+      return;
+    }
+    setPlatos(await traerPlatosParaAgotar(estacion));
+  }
+
+  async function alternarAgotado(p: PlatoParaAgotar) {
+    const res = await cambiarAgotado(p.productId, !p.agotado);
+    if ("error" in res && res.error) {
+      setError(res.error);
+      return;
+    }
+    toast.success(p.agotado ? `${p.nombre}: hay de nuevo.` : `${p.nombre}: agotado por hoy.`);
+    setPlatos(await traerPlatosParaAgotar(estacion));
+  }
+
+  const agotados = platos?.filter((p) => p.agotado).length ?? 0;
+
   async function imprimirAMano(c: Comanda) {
     setImprimiendo(c);
     await confirmarImpresion(c.lineas.map((l) => l.itemId));
@@ -157,7 +207,15 @@ export function CocinaClient({
           </Link>
         ))}
 
-        <label className="ml-auto flex items-center gap-2 text-sm">
+        <Button
+          type="button" variant="outline" size="sm" className="ml-auto"
+          aria-expanded={platos != null}
+          onClick={() => void abrirAgotados()}
+        >
+          Agotados{platos && agotados > 0 ? ` (${agotados})` : ""}
+        </Button>
+
+        <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={autoimprimir}
@@ -166,6 +224,38 @@ export function CocinaClient({
           Imprimir automáticamente
         </label>
       </div>
+
+      {platos && (
+        // Lo que se acabó se marca acá y el salón deja de poder pedirlo. Vuelve
+        // solo al día siguiente: nadie se tiene que acordar de destildarlo.
+        <section className="no-imprimir rounded-xl border border-border bg-card p-4" aria-label="Agotados">
+          <p className="ledger-label mb-2 text-muted-foreground">
+            Tocá lo que se acabó. El salón no lo puede pedir hasta mañana.
+          </p>
+          {platos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No hay platos en el menú.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {platos.map((p) => (
+                <button
+                  key={p.productId}
+                  type="button"
+                  aria-pressed={p.agotado}
+                  onClick={() => void alternarAgotado(p)}
+                  className={cn(
+                    "min-h-11 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                    p.agotado
+                      ? "border-destructive bg-destructive/10 text-destructive line-through"
+                      : "border-border hover:bg-accent",
+                  )}
+                >
+                  {p.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       {autoimprimir && (
         <div className="no-imprimir">
@@ -187,19 +277,32 @@ export function CocinaClient({
         <div className="no-imprimir grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {comandas.map((c) => {
             const correcciones = c.lineas.some((l) => l.anulada || l.modificada);
+            const porSacar = c.lineas.filter((l) => !l.anulada);
+            const titulo = c.mesa ? `Mesa ${c.mesa}` : `Pedido #${c.orderId}`;
+            const minutos = minutosDesde(c.mandadaEn);
             return (
               <article
-                key={c.orderId}
+                key={c.clave}
                 className={cn(
                   "rounded-xl border bg-card p-4",
                   correcciones ? "border-destructive" : "border-border",
                 )}
               >
                 <header className="flex items-baseline justify-between gap-2">
-                  <h2 className="text-base font-semibold">
-                    {c.mesa ? `Mesa ${c.mesa}` : `Pedido #${c.orderId}`}
-                  </h2>
-                  <span className="ledger-label text-muted-foreground">{espera(c.mandadaEn)}</span>
+                  <h2 className="text-base font-semibold">{titulo}</h2>
+                  {/* La espera es de esta ronda, no de la mesa: el postre no
+                      hereda la hora de la entrada. Amarillo a los 15 minutos,
+                      rojo a los 25. */}
+                  <span
+                    className={cn(
+                      "ledger-label",
+                      minutos >= 25 ? "font-semibold text-destructive"
+                        : minutos >= 15 ? "font-semibold text-warning"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {espera(c.mandadaEn)}
+                  </span>
                 </header>
                 {c.sector && <p className="ledger-label text-muted-foreground">{c.sector}</p>}
                 {c.cancelada && (
@@ -210,7 +313,7 @@ export function CocinaClient({
 
                 <ul className="mt-3 space-y-1.5">
                   {c.lineas.map((l) => (
-                    <li key={l.itemId} className="flex gap-2 text-sm">
+                    <li key={l.itemId} className="flex items-center gap-2 text-sm">
                       <span className={cn("figure font-semibold", l.anulada && "line-through")}>
                         {number(l.quantity)}
                       </span>
@@ -237,11 +340,29 @@ export function CocinaClient({
                           </>
                         )}
                       </span>
+                      {!l.anulada && !c.cancelada && (
+                        <Button
+                          type="button" variant="outline" size="icon" className="ml-auto size-11 shrink-0"
+                          aria-label={`Listo: ${l.nombre}`}
+                          onClick={() => void listo([l.itemId], `${l.quantity} × ${l.nombre}`)}
+                        >
+                          <Check className="size-4" />
+                        </Button>
+                      )}
                     </li>
                   ))}
                 </ul>
 
-                <div className="mt-3 flex gap-2">
+                {porSacar.length > 1 && !c.cancelada && (
+                  <Button
+                    type="button" className="mt-3 min-h-11 w-full"
+                    onClick={() => void listo(porSacar.map((l) => l.itemId), `todo ${titulo}`)}
+                  >
+                    <Check className="mr-1 size-4" /> Todo listo
+                  </Button>
+                )}
+
+                <div className="mt-2 flex gap-2">
                   {correcciones && (
                     // La cocina que trabaja solo con pantalla confirma que leyó
                     // la corrección. Imprimirla también cuenta como leída.

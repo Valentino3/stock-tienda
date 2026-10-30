@@ -45,10 +45,12 @@ const CATALOGO = [
   { nombre: "Agotado de prueba", sku: "PRB-CERO", precio: 1000, usd: null, stock: 0, efectivo: null },
 ];
 
+// Una de cada caso de cocina: un plato, algo de barra y algo que no prepara
+// nadie (la gaseosa sale lista apenas se manda).
 const PLATOS = [
-  { nombre: "Milanesa con papas", precio: 12000 },
-  { nombre: "Café", precio: 2500 },
-  { nombre: "Gaseosa", precio: 3000 },
+  { nombre: "Milanesa con papas", precio: 12000, station: "cocina" },
+  { nombre: "Café", precio: 2500, station: "barra" },
+  { nombre: "Gaseosa", precio: 3000, station: null },
 ];
 
 async function main() {
@@ -131,7 +133,7 @@ async function main() {
       .where(and(eq(products.storeId, store.id), eq(products.name, p.nombre)));
     if (ya) continue;
     const [prod] = await db.insert(products)
-      .values({ storeId: store.id, name: p.nombre, basePrice: p.precio, tracksStock: false })
+      .values({ storeId: store.id, name: p.nombre, basePrice: p.precio, tracksStock: false, station: p.station })
       .returning();
     await db.insert(productVariants)
       .values({ storeId: store.id, productId: prod.id, name: "", stock: 0 });

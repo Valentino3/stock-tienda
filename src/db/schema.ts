@@ -210,6 +210,13 @@ export const products = pgTable("products", {
    * saca de la heladera.
    */
   station: text("station"),
+  /**
+   * Día operativo (ver diaOperativo en src/lib/dates.ts) en que la cocina lo
+   * marcó agotado. Es una fecha y no un booleano para que se apague solo al
+   * día siguiente, sin cron y sin que nadie se acuerde de destildarlo: el
+   * salmón que se acabó el viernes no puede seguir agotado el sábado.
+   */
+  soldOutOn: date("sold_out_on", { mode: "string" }),
   basePrice: numeric("base_price", { precision: 12, scale: 2, mode: "number" }).notNull(),
   /**
    * Precio de VENTA en dólares. null = este producto no se ata a la cotización
@@ -686,6 +693,13 @@ export const orderItems = pgTable("order_items", {
    * nueva que esta marca: así cada cambio llega una vez, y no una por recarga.
    */
   correccionVistaAt: timestamp("correccion_vista_at"),
+  /**
+   * La cocina lo sacó: «Listo». Es lo que lo saca de la pantalla de cocina y
+   * le dice al mozo que lo retire. Antes una línea salía de la pantalla recién
+   * cuando la mesa pagaba, así que a las diez de la noche la cocina veía los
+   * principales que se sirvieron hace una hora mezclados con lo nuevo.
+   */
+  readyAt: timestamp("ready_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (t) => [
   index("order_items_order_idx").on(t.orderId),

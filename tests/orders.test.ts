@@ -37,7 +37,7 @@ beforeEach(async () => {
   mesa = m.id;
 
   const [pm] = await db.insert(products)
-    .values({ storeId: store, name: "Milanesa", basePrice: 8000, tracksStock: false }).returning();
+    .values({ storeId: store, name: "Milanesa", basePrice: 8000, tracksStock: false, station: "cocina" }).returning();
   milanesa = (await db.insert(productVariants)
     .values({ storeId: store, productId: pm.id, name: "", stock: 0 }).returning())[0].id;
 

@@ -1,5 +1,6 @@
-import { and, asc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { diningTables, orderItems, orders, products, productVariants } from "@/db/schema";
+import { diaOperativo } from "@/lib/dates";
 
 /**
  * Comandas de cocina.
@@ -47,6 +48,8 @@ export type LineaDeComanda = {
 };
 
 export type Comanda = {
+  /** Una por ronda: orden + momento del envío. */
+  clave: string;
   orderId: number;
   mesa: string | null;
   sector: string | null;
@@ -85,16 +88,37 @@ export async function mandarACocina(
   if (!orden) throw new Error("ORDEN_NO_ENCONTRADA");
   if (orden.status !== "abierta" && orden.status !== "a_cobrar") throw new Error("ORDEN_CERRADA");
 
-  const mandados = await db.update(orderItems)
-    .set({ sentAt: new Date() })
-    .where(and(
-      eq(orderItems.orderId, input.orderId),
-      eq(orderItems.storeId, input.storeId),
-      isNull(orderItems.sentAt),
-    ))
-    .returning({ id: orderItems.id });
+  const ahora = new Date();
+  return db.transaction(async (tx: any) => {
+    const mandados: { id: number; variantId: number }[] = await tx.update(orderItems)
+      .set({ sentAt: ahora })
+      .where(and(
+        eq(orderItems.orderId, input.orderId),
+        eq(orderItems.storeId, input.storeId),
+        isNull(orderItems.sentAt),
+      ))
+      .returning({ id: orderItems.id, variantId: orderItems.variantId });
 
-  return mandados.length;
+    // Lo que no tiene estación no lo prepara nadie: la gaseosa la saca el mozo
+    // de la heladera. Sale «Listo» en el mismo momento en que se manda, y no
+    // aparece en ninguna pantalla de cocina.
+    if (mandados.length > 0) {
+      const sinEstacion = await tx.select({ id: productVariants.id })
+        .from(productVariants)
+        .innerJoin(products, eq(productVariants.productId, products.id))
+        .where(and(
+          inArray(productVariants.id, [...new Set(mandados.map((m) => m.variantId))]),
+          isNull(products.station),
+        ));
+      const variantes = new Set(sinEstacion.map((v: { id: number }) => v.id));
+      const listos = mandados.filter((m) => variantes.has(m.variantId)).map((m) => m.id);
+      if (listos.length > 0) {
+        await tx.update(orderItems).set({ readyAt: ahora }).where(inArray(orderItems.id, listos));
+      }
+    }
+
+    return mandados.length;
+  });
 }
 
 /** Cuántos ítems de la orden están sin mandar. Lo usa el botón del mozo. */
@@ -124,6 +148,13 @@ export async function sinMandar(db: any, storeId: number, orderId: number): Prom
  * Además de lo vivo, trae lo anulado que la cocina todavía no vio, también de
  * mesas canceladas: es lo que le dice «no hagas esto» a alguien que ya lo
  * tiene en papel.
+ *
+ * Una línea sale de la pantalla cuando la cocina la marca «Listo», no cuando
+ * se cobra: un pedido para llevar se paga antes de prepararse. Lo que no tiene
+ * estación no aparece nunca: no lo prepara nadie.
+ *
+ * Cada envío del mozo es una comanda aparte (una ronda): el postre de la mesa
+ * 4 no es la misma comanda que su entrada, ni tiene la misma espera.
  */
 export async function comandasPendientes(
   db: any,
@@ -133,13 +164,23 @@ export async function comandasPendientes(
   const condiciones = [
     eq(orderItems.storeId, storeId),
     isNotNull(orderItems.sentAt),
+    isNotNull(products.station),
     or(
-      // Lo vivo. Un ítem ya cobrado salió hace rato: no tiene nada que hacer
-      // en cocina.
+      // Lo que falta sacar.
       and(
         isNull(orderItems.voidedAt),
-        isNull(orderItems.saleId),
-        inArray(orders.status, [...VIVAS]),
+        isNull(orderItems.readyAt),
+        or(
+          inArray(orders.status, [...VIVAS]),
+          // Un pedido para llevar ya cobrado sigue en la cocina hasta que
+          // sale. Con tope: uno que nadie marcó listo no puede quedar en la
+          // pantalla para siempre.
+          and(
+            eq(orders.status, "pagada"),
+            isNull(orders.tableId),
+            gt(orderItems.sentAt, new Date(Date.now() - 12 * 60 * 60 * 1000)),
+          ),
+        ),
       ),
       // Lo anulado que la cocina no vio, aunque la mesa ya no exista.
       and(
@@ -178,15 +219,18 @@ export async function comandasPendientes(
     .where(and(...condiciones))
     .orderBy(asc(orderItems.sentAt), asc(orderItems.id));
 
-  const porOrden = new Map<number, Comanda>();
+  // Una ronda es todo lo que salió en el mismo envío: mandarACocina estampa el
+  // mismo instante en todas sus líneas, y dividir o anular una parte lo hereda.
+  const porRonda = new Map<string, Comanda>();
   for (const f of filas) {
-    let c = porOrden.get(f.orderId);
+    const clave = `${f.orderId}@${f.sentAt.getTime()}`;
+    let c = porRonda.get(clave);
     if (!c) {
       c = {
-        orderId: f.orderId, mesa: f.mesa, sector: f.sector, mandadaEn: f.sentAt,
+        clave, orderId: f.orderId, mesa: f.mesa, sector: f.sector, mandadaEn: f.sentAt,
         cancelada: f.status === "cancelada", lineas: [],
       };
-      porOrden.set(f.orderId, c);
+      porRonda.set(clave, c);
     }
 
     const vista = f.correccionVistaAt?.getTime() ?? -Infinity;
@@ -207,7 +251,106 @@ export async function comandasPendientes(
   }
 
   // Más vieja primero: es el orden en que la cocina tiene que trabajar.
-  return [...porOrden.values()].sort((a, b) => a.mandadaEn.getTime() - b.mandadaEn.getTime());
+  return [...porRonda.values()].sort((a, b) => a.mandadaEn.getTime() - b.mandadaEn.getTime());
+}
+
+/**
+ * La cocina sacó estas líneas: «Listo». Salen de la pantalla y el mozo las ve
+ * listas para retirar. Solo lo mandado, vivo y no marcado antes.
+ */
+export async function marcarListo(
+  db: any,
+  input: { storeId: number; itemIds: number[] },
+): Promise<number> {
+  if (input.itemIds.length === 0) return 0;
+  const filas = await db.update(orderItems)
+    .set({ readyAt: new Date() })
+    .where(and(
+      eq(orderItems.storeId, input.storeId),
+      inArray(orderItems.id, input.itemIds),
+      isNotNull(orderItems.sentAt),
+      isNull(orderItems.readyAt),
+      isNull(orderItems.voidedAt),
+    ))
+    .returning({ id: orderItems.id });
+  return filas.length;
+}
+
+/** Un «Listo» tocado por error vuelve a la pantalla. */
+export async function deshacerListo(
+  db: any,
+  input: { storeId: number; itemIds: number[] },
+): Promise<number> {
+  if (input.itemIds.length === 0) return 0;
+  const filas = await db.update(orderItems)
+    .set({ readyAt: null })
+    .where(and(
+      eq(orderItems.storeId, input.storeId),
+      inArray(orderItems.id, input.itemIds),
+      isNotNull(orderItems.readyAt),
+    ))
+    .returning({ id: orderItems.id });
+  return filas.length;
+}
+
+// ---- agotado ----
+
+export type PlatoParaAgotar = { productId: number; nombre: string; station: string | null; agotado: boolean };
+
+/**
+ * La carta, para que la cocina marque lo que se acabó. Con `estacion`, solo lo
+ * suyo: la barra agota bebidas, no platos.
+ */
+export async function platosParaAgotar(
+  db: any,
+  storeId: number,
+  opts: { estacion?: string | null; hoy?: string } = {},
+): Promise<PlatoParaAgotar[]> {
+  const hoy = opts.hoy ?? diaOperativo();
+  const condiciones = [eq(products.storeId, storeId), eq(products.active, true)];
+  if (opts.estacion) condiciones.push(eq(products.station, opts.estacion));
+  const filas = await db
+    .select({ productId: products.id, nombre: products.name, station: products.station, soldOutOn: products.soldOutOn })
+    .from(products)
+    .where(and(...condiciones))
+    .orderBy(asc(products.name));
+  return filas.map((f: { productId: number; nombre: string; station: string | null; soldOutOn: string | null }) => ({
+    productId: f.productId, nombre: f.nombre, station: f.station, agotado: f.soldOutOn === hoy,
+  }));
+}
+
+/**
+ * Marca o desmarca un plato como agotado por lo que queda del día operativo.
+ * Al día siguiente vuelve solo.
+ */
+export async function marcarAgotado(
+  db: any,
+  input: { storeId: number; productId: number; agotado: boolean; hoy?: string },
+): Promise<void> {
+  const [fila] = await db.update(products)
+    .set({ soldOutOn: input.agotado ? (input.hoy ?? diaOperativo()) : null })
+    .where(and(eq(products.id, input.productId), eq(products.storeId, input.storeId)))
+    .returning({ id: products.id });
+  if (!fila) throw new Error("PRODUCTO_NO_ENCONTRADO");
+}
+
+/** De estas variantes, cuáles son de un plato agotado hoy. */
+export async function variantesAgotadas(
+  db: any,
+  storeId: number,
+  variantIds: number[],
+  hoy: string = diaOperativo(),
+): Promise<Set<number>> {
+  if (variantIds.length === 0) return new Set();
+  const filas = await db.select({ id: productVariants.id })
+    .from(productVariants)
+    .innerJoin(products, eq(productVariants.productId, products.id))
+    .where(and(
+      eq(productVariants.storeId, storeId),
+      inArray(productVariants.id, variantIds),
+      eq(products.soldOutOn, hoy),
+    ));
+  return new Set(filas.map((f: { id: number }) => f.id));
 }
 
 /**
@@ -263,4 +406,16 @@ export async function estacionesDelMenu(db: any, storeId: number): Promise<strin
     .from(products)
     .where(and(eq(products.storeId, storeId), isNotNull(products.station)));
   return filas.map((f: { station: string }) => f.station).sort();
+}
+
+/**
+ * Lo que no va a ninguna pantalla de cocina. Bien para la gaseosa; un plato
+ * acá es un plato que nunca se prepara, y el dueño lo tiene que ver en Menú.
+ */
+export async function sinEstacion(db: any, storeId: number): Promise<string[]> {
+  const filas = await db.select({ nombre: products.name })
+    .from(products)
+    .where(and(eq(products.storeId, storeId), eq(products.active, true), isNull(products.station)))
+    .orderBy(asc(products.name));
+  return filas.map((f: { nombre: string }) => f.nombre);
 }

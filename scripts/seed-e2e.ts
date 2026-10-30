@@ -100,7 +100,7 @@ async function main() {
   ];
   for (const p of carta) {
     const [prod] = await db.insert(schema.products)
-      .values({ storeId: resto.id, name: p.nombre, basePrice: p.precio, tracksStock: false })
+      .values({ storeId: resto.id, name: p.nombre, basePrice: p.precio, tracksStock: false, station: "cocina" })
       .returning();
     await db.insert(schema.productVariants)
       .values({ storeId: resto.id, productId: prod.id, name: "", stock: 0 });
