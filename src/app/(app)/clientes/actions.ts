@@ -115,7 +115,7 @@ export async function updateClientAction(input: {
   const { storeId } = await requireStore();
   if (!input.name.trim()) return { error: "Nombre requerido" };
   try {
-    await updateClient(db, { storeId, ...input });
+    await updateClient(db, { ...input, storeId });
   } catch (e) {
     return { error: e instanceof Error && e.message === "CLIENT_NOT_FOUND" ? "Cliente no encontrado" : "No se pudo guardar" };
   }

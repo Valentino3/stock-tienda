@@ -169,7 +169,7 @@ export async function cobrarComanda(input: {
 }) {
   const { storeId, id: userId } = await requireStore();
   try {
-    const r = await pagarOrden(db, { storeId, userId, ...input });
+    const r = await pagarOrden(db, { ...input, storeId, userId });
     revalidatePath("/salon");
     revalidatePath(`/salon/${input.orderId}`);
     revalidatePath("/ventas");
@@ -195,7 +195,7 @@ export async function moverMesaEnPlano(
 ) {
   const { storeId } = await requireStoreOwner();
   try {
-    await moverMesa(db, { storeId, tableId, ...g });
+    await moverMesa(db, { ...g, storeId, tableId });
     // Sin revalidatePath a propósito: el editor ya tiene la posición en su
     // estado local y esto se llama al soltar CADA mesa. Revalidar acá haría un
     // refetch completo del RSC por cada arrastre.
@@ -211,7 +211,7 @@ export async function moverMarcadorEnPlano(
 ) {
   const { storeId } = await requireStoreOwner();
   try {
-    await moverMarcador(db, { storeId, markerId, ...g });
+    await moverMarcador(db, { ...g, storeId, markerId });
     return { ok: true as const };
   } catch (e) {
     return { error: traducir(e) };

@@ -37,7 +37,7 @@ export async function guardarCotizacion(input: {
 }) {
   const { id: userId, storeId } = await requireStoreOwner();
   try {
-    await savePricingConfig(db, { storeId, userId, ...input });
+    await savePricingConfig(db, { ...input, storeId, userId });
   } catch (err) {
     return traducir(err);
   }

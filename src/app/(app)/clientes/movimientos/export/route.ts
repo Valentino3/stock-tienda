@@ -26,7 +26,7 @@ function tipo(m: AccountMovementRow) {
 export async function GET(req: Request) {
   const { storeId } = await requireStore();
   const sp = Object.fromEntries(new URL(req.url).searchParams);
-  const { rows } = await listAccountMovements(db, { storeId, ...leerFiltros(sp), page: null });
+  const { rows } = await listAccountMovements(db, { ...leerFiltros(sp), storeId, page: null });
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Movimientos");
