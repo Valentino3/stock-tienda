@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChefHat, Minus, Plus, Printer, Scissors, Search, StickyNote, Trash2 } from "lucide-react";
+import { Ban, ChefHat, Minus, Plus, Printer, Scissors, Search, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,10 +11,11 @@ import { money, number } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
-  agregarALaComanda, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda, cobrarComanda,
-  dividirLinea, mandarComandaACocina, ponerComensales, ponerNota,
+  agregarALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cancelarComanda,
+  cobrarComanda, dividirLinea, mandarComandaACocina, ponerComensales, ponerNota,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
+import { MotivoDialog, type ResultadoMotivo } from "./motivo-dialog";
 
 type ClienteOption = { id: number; name: string };
 type Resultado = Awaited<ReturnType<typeof buscarParaComanda>>[number];
@@ -51,11 +52,19 @@ export function OrdenClient({
   // Qué línea tiene la nota abierta para editar, y su borrador.
   const [notaAbierta, setNotaAbierta] = useState<number | null>(null);
   const [borradorNota, setBorradorNota] = useState("");
+  // Línea ya mandada que se está anulando, y si se está cancelando la mesa.
+  const [anulando, setAnulando] = useState<OrderItem | null>(null);
+  const [cancelando, setCancelando] = useState(false);
+  const [errorDialogo, setErrorDialogo] = useState("");
 
   const cerrada = orden.status === "pagada" || orden.status === "cancelada";
-  const sinMandar = items.filter((i) => i.sentAt == null && i.saleId == null).length;
-  const impagos = items.filter((i) => i.saleId == null);
-  const pagados = items.filter((i) => i.saleId != null);
+  // Lo anulado se sigue mostrando —tachado, con su motivo— pero no cuenta para
+  // nada: ni para cobrar, ni para mandar, ni para la cuenta impresa.
+  const vivos = items.filter((i) => i.voidedAt == null);
+  const sinMandar = vivos.filter((i) => i.sentAt == null && i.saleId == null).length;
+  const impagos = vivos.filter((i) => i.saleId == null);
+  const pagados = vivos.filter((i) => i.saleId != null);
+  const enCocina = impagos.filter((i) => i.sentAt != null).length;
   const totalImpago = impagos.reduce((a, i) => a + i.quantity * i.unitPrice, 0);
   // Sin selección se cobra todo lo impago; con selección, solo eso.
   const totalACobrar = seleccion.length
@@ -120,6 +129,42 @@ export function OrdenClient({
       setNotaAbierta(null);
       setBorradorNota("");
     });
+
+  function cerrarDialogos() {
+    setAnulando(null);
+    setCancelando(false);
+    setErrorDialogo("");
+  }
+
+  function confirmarAnulacion(item: OrderItem, r: ResultadoMotivo) {
+    setErrorDialogo("");
+    startTransition(async () => {
+      const res = await anularLinea({
+        orderId: orden.id, itemId: item.id, cantidad: r.cantidad, motivo: r.motivo, wasted: r.wasted,
+      });
+      if ("error" in res && res.error) {
+        setErrorDialogo(res.error);
+        return;
+      }
+      toast.success(`Anulado: ${r.cantidad} × ${item.nameSnapshot}. La cocina recibe el aviso.`);
+      cerrarDialogos();
+      setSeleccion((prev) => prev.filter((x) => x !== item.id));
+      router.refresh();
+    });
+  }
+
+  function confirmarCancelacion(r: ResultadoMotivo) {
+    setErrorDialogo("");
+    startTransition(async () => {
+      const res = await cancelarComanda(orden.id, r.motivo || undefined, r.wasted);
+      if ("error" in res && res.error) {
+        setErrorDialogo(res.error);
+        return;
+      }
+      cerrarDialogos();
+      router.push("/salon");
+    });
+  }
 
   function cobrar() {
     if (metodo === "cuenta" && !clientId) {
@@ -221,7 +266,24 @@ export function OrdenClient({
             <ul className="divide-y divide-border">
               {items.map((i) => {
                 const cobrado = i.saleId != null;
+                const enviado = i.sentAt != null;
                 const elegido = seleccion.includes(i.id);
+                if (i.voidedAt != null) {
+                  return (
+                    <li key={i.id} className="flex items-center gap-3 py-2.5 opacity-55">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm line-through">{i.nameSnapshot}</div>
+                        <div className="ledger-label text-destructive">
+                          {number(i.quantity)} anulado · {i.voidReason}
+                          {i.wasted && " · se tiró"}
+                        </div>
+                      </div>
+                      <span className="figure w-20 text-right text-sm line-through">
+                        {money(i.quantity * i.unitPrice)}
+                      </span>
+                    </li>
+                  );
+                }
                 return (
                   <li key={i.id} className={cn("flex items-center gap-3 py-2.5", cobrado && "opacity-55")}>
                     {!cerrada && !cobrado && (
@@ -242,7 +304,7 @@ export function OrdenClient({
                       <div className="truncate text-sm font-medium">{i.nameSnapshot}</div>
                       <div className="ledger-label text-muted-foreground">
                         {number(i.quantity)} × {money(i.unitPrice)}
-                        {i.sentAt != null && !cobrado && " · en cocina"}
+                        {enviado && !cobrado && " · en cocina"}
                         {cobrado && " · cobrado"}
                         {i.notes && ` · ${i.notes}`}
                       </div>
@@ -259,21 +321,29 @@ export function OrdenClient({
                         >
                           <StickyNote className={cn("size-3", i.notes && "text-brand")} />
                         </Button>
-                        <Button
-                          type="button" variant="outline" size="icon" className="size-7"
-                          disabled={pending} aria-label="Restar uno"
-                          onClick={() => cambiar(i.id, i.quantity - 1)}
-                        >
-                          <Minus className="size-3" />
-                        </Button>
-                        <span className="figure w-6 text-center text-sm">{i.quantity}</span>
-                        <Button
-                          type="button" variant="outline" size="icon" className="size-7"
-                          disabled={pending} aria-label="Sumar uno"
-                          onClick={() => cambiar(i.id, i.quantity + 1)}
-                        >
-                          <Plus className="size-3" />
-                        </Button>
+                        {!enviado && (
+                          // Lo que todavía no salió se toca libremente. Lo que ya
+                          // está en la cocina solo se anula, con motivo: para
+                          // pedir otro igual, se agrega desde el buscador.
+                          <>
+                            <Button
+                              type="button" variant="outline" size="icon" className="size-7"
+                              disabled={pending} aria-label="Restar uno"
+                              onClick={() => cambiar(i.id, i.quantity - 1)}
+                            >
+                              <Minus className="size-3" />
+                            </Button>
+                            <span className="figure w-6 text-center text-sm">{i.quantity}</span>
+                            <Button
+                              type="button" variant="outline" size="icon" className="size-7"
+                              disabled={pending} aria-label="Sumar uno"
+                              onClick={() => cambiar(i.id, i.quantity + 1)}
+                            >
+                              <Plus className="size-3" />
+                            </Button>
+                          </>
+                        )}
+                        {enviado && <span className="figure w-6 text-center text-sm">{i.quantity}</span>}
                         {i.quantity > 1 && (
                           // Partir una unidad en su propia línea: es lo que
                           // permite que cada comensal pague la suya cuando se
@@ -287,13 +357,24 @@ export function OrdenClient({
                             <Scissors className="size-3" />
                           </Button>
                         )}
-                        <Button
-                          type="button" variant="ghost" size="icon" className="size-7"
-                          disabled={pending} aria-label="Quitar"
-                          onClick={() => cambiar(i.id, 0)}
-                        >
-                          <Trash2 className="size-3" />
-                        </Button>
+                        {enviado ? (
+                          <Button
+                            type="button" variant="ghost" size="icon" className="size-7 text-destructive"
+                            disabled={pending} aria-label={`Anular ${i.nameSnapshot}`}
+                            title="Anular (ya está en la cocina)"
+                            onClick={() => { setErrorDialogo(""); setAnulando(i); }}
+                          >
+                            <Ban className="size-3" />
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button" variant="ghost" size="icon" className="size-7"
+                            disabled={pending} aria-label="Quitar"
+                            onClick={() => cambiar(i.id, 0)}
+                          >
+                            <Trash2 className="size-3" />
+                          </Button>
+                        )}
                       </div>
                     )}
                     <span className="figure w-20 text-right text-sm font-medium">
@@ -478,7 +559,7 @@ export function OrdenClient({
                 <Button
                   type="button" variant="ghost" size="sm" className="w-full"
                   disabled={pending}
-                  onClick={() => correr(() => cancelarComanda(orden.id), () => router.push("/salon"))}
+                  onClick={() => { setErrorDialogo(""); setCancelando(true); }}
                 >
                   Cancelar comanda
                 </Button>
@@ -493,6 +574,36 @@ export function OrdenClient({
           )}
         </CardContent>
       </Card>
+
+      {anulando && (
+        <MotivoDialog
+          titulo={`Anular ${anulando.nameSnapshot}`}
+          descripcion="Ya está en la cocina. Queda registrado quién lo anuló y por qué, y la cocina recibe el aviso."
+          maxCantidad={anulando.quantity}
+          textoConfirmar="Anular"
+          pending={pending}
+          error={errorDialogo}
+          onConfirmar={(r) => confirmarAnulacion(anulando, r)}
+          onCerrar={cerrarDialogos}
+        />
+      )}
+
+      {cancelando && (
+        <MotivoDialog
+          titulo={`Cancelar ${titulo}`}
+          descripcion={
+            enCocina > 0
+              ? `Hay ${money(totalImpago)} sin cobrar y ${number(enCocina)} ítem(s) en la cocina. Se anulan y la cocina recibe el aviso.`
+              : `La mesa se libera sin cobrar ${money(totalImpago)}.`
+          }
+          requiereMotivo={enCocina > 0}
+          textoConfirmar="Cancelar la mesa"
+          pending={pending}
+          error={errorDialogo}
+          onConfirmar={confirmarCancelacion}
+          onCerrar={cerrarDialogos}
+        />
+      )}
 
       {mostrarCuenta && (
         <CuentaImprimible

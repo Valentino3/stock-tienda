@@ -623,6 +623,11 @@ export const orders = pgTable("orders", {
   subtotal: numeric("subtotal", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
   discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
   total: numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull().default(0),
+  // Quién canceló la mesa y por qué. El motivo es obligatorio si ya había algo
+  // en la cocina: una mesa con platos servidos que desaparece sin explicación
+  // es la forma más simple de no cobrar un consumo.
+  cancelledBy: text("cancelled_by").references(() => user.id),
+  cancelReason: text("cancel_reason"),
 }, (t) => [
   index("orders_store_status_idx").on(t.storeId, t.status),
   uniqueIndex("orders_store_uid_idx").on(t.storeId, t.uid),
@@ -661,8 +666,39 @@ export const orderItems = pgTable("order_items", {
    * cuando no queda ninguno en null.
    */
   saleId: integer("sale_id").references(() => sales.id),
+  /**
+   * Anulación de una línea que ya estaba en la cocina.
+   *
+   * Lo enviado no se borra: se anula, con quién, por qué y si se llegó a
+   * preparar (`wasted`). Un DELETE es cómo un plato servido desaparece de la
+   * cuenta sin dejar rastro, y cómo la cocina sigue preparando algo que ya no
+   * figura. Lo que todavía no salió se sigue borrando libremente.
+   */
+  voidedAt: timestamp("voided_at"),
+  voidedBy: text("voided_by").references(() => user.id),
+  voidReason: text("void_reason"),
+  wasted: boolean("wasted").notNull().default(false),
+  /** Última vez que se cambió la nota de una línea ya enviada. */
+  modifiedAt: timestamp("modified_at"),
+  /**
+   * Cuándo la cocina vio la última corrección (anulación o cambio de nota),
+   * en papel o en pantalla. Una corrección está pendiente mientras sea más
+   * nueva que esta marca: así cada cambio llega una vez, y no una por recarga.
+   */
+  correccionVistaAt: timestamp("correccion_vista_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-}, (t) => [index("order_items_order_idx").on(t.orderId)]);
+}, (t) => [
+  index("order_items_order_idx").on(t.orderId),
+  // Igual que en cuenta corriente: anulado sin motivo, o sin quién, es justo
+  // el registro que después no se puede explicar. Todo o nada. Y solo se anula
+  // lo que llegó a la cocina y no se cobró.
+  check(
+    "order_items_anulacion_completa",
+    sql`(${t.voidedAt} is null and ${t.voidedBy} is null and ${t.voidReason} is null and ${t.wasted} = false)
+      or (${t.voidedAt} is not null and ${t.voidedBy} is not null and ${t.voidReason} is not null
+          and ${t.sentAt} is not null and ${t.saleId} is null)`,
+  ),
+]);
 
 /**
  * Los medios con los que se cobro una venta. Una fila por medio.

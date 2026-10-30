@@ -3,9 +3,12 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedTestStore, seedTestUser } from "./helpers/db";
 import { orderItems, products, productVariants } from "@/db/schema";
 import { openCashSession } from "@/domain/cash";
-import { abrirOrden, agregarItem, crearMesa, pagarOrden } from "@/domain/orders";
 import {
-  comandasPendientes, estacionesDelMenu, mandarACocina, marcarImpresas, sinMandar,
+  abrirOrden, agregarItem, anularItem, cambiarNota, cancelarOrden, crearMesa, pagarOrden,
+} from "@/domain/orders";
+import {
+  comandasPendientes, estacionesDelMenu, mandarACocina, marcarCorreccionesVistas, marcarImpresas,
+  sinMandar,
 } from "@/domain/kitchen";
 
 /**
@@ -236,5 +239,104 @@ describe("estacionesDelMenu", () => {
   it("una tienda sin estaciones devuelve vacío", async () => {
     const store2 = await seedTestStore(db, "t2", "Tienda 2");
     expect(await estacionesDelMenu(db, store2)).toEqual([]);
+  });
+});
+
+describe("correcciones después de mandar", () => {
+  const mandadaConMilanesa = async (quantity = 1) => {
+    const o = await nuevaOrden();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    return { o, item };
+  };
+
+  it("lo anulado llega como ANULADO, con motivo, hasta que la cocina lo ve", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await marcarImpresas(db, { storeId: store, itemIds: [item.id] });
+    await anularItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, userId: "u1", motivo: "Cliente cambió",
+    });
+
+    const [c] = await comandasPendientes(db, store);
+    expect(c.lineas).toHaveLength(1);
+    expect(c.lineas[0]).toMatchObject({ anulada: true, motivoAnulacion: "Cliente cambió", porImprimir: true });
+
+    expect(await marcarCorreccionesVistas(db, { storeId: store, itemIds: [item.id] })).toBe(1);
+    expect(await comandasPendientes(db, store)).toEqual([]);
+  });
+
+  it("imprimir la corrección también es verla", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await marcarImpresas(db, { storeId: store, itemIds: [item.id] });
+    await anularItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, userId: "u1", motivo: "Error de carga",
+    });
+
+    const [paraImprimir] = await comandasPendientes(db, store, { soloSinImprimir: true });
+    expect(paraImprimir.lineas.map((l) => l.itemId)).toEqual([item.id]);
+
+    expect(await marcarImpresas(db, { storeId: store, itemIds: [item.id] })).toBe(1);
+    expect(await comandasPendientes(db, store, { soloSinImprimir: true })).toEqual([]);
+  });
+
+  it("una anulación parcial deja la parte viva y avisa la anulada", async () => {
+    const { o, item } = await mandadaConMilanesa(3);
+    await anularItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, userId: "u1", cantidad: 1, motivo: "Demora",
+    });
+    const [c] = await comandasPendientes(db, store);
+    const viva = c.lineas.find((l) => !l.anulada)!;
+    const anulada = c.lineas.find((l) => l.anulada)!;
+    expect(viva.quantity).toBe(2);
+    expect(anulada.quantity).toBe(1);
+  });
+
+  it("una mesa cancelada con cosas en cocina llega como cancelada", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id, motivo: "Se fueron" });
+
+    const [c] = await comandasPendientes(db, store);
+    expect(c.cancelada).toBe(true);
+    expect(c.lineas[0]).toMatchObject({ itemId: item.id, anulada: true });
+
+    await marcarCorreccionesVistas(db, { storeId: store, itemIds: [item.id] });
+    expect(await comandasPendientes(db, store)).toEqual([]);
+  });
+
+  it("una nota cambiada después de imprimir vuelve a salir como MODIF", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await marcarImpresas(db, { storeId: store, itemIds: [item.id] });
+    expect(await comandasPendientes(db, store, { soloSinImprimir: true })).toEqual([]);
+
+    await cambiarNota(db, { storeId: store, orderId: o.id, itemId: item.id, notes: "bien cocida" });
+    const [c] = await comandasPendientes(db, store, { soloSinImprimir: true });
+    expect(c.lineas[0]).toMatchObject({ modificada: true, notes: "bien cocida", porImprimir: true });
+
+    await marcarImpresas(db, { storeId: store, itemIds: [item.id] });
+    const [despues] = await comandasPendientes(db, store);
+    expect(despues.lineas[0]).toMatchObject({ modificada: false, porImprimir: false });
+  });
+
+  it("lo anulado y ya visto no vuelve a aparecer aunque la mesa siga abierta", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: cerveza, quantity: 1 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+    await anularItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, userId: "u1", motivo: "Error de carga",
+    });
+    await marcarCorreccionesVistas(db, { storeId: store, itemIds: [item.id] });
+
+    const [c] = await comandasPendientes(db, store);
+    expect(c.lineas.map((l) => l.nombre)).toEqual(["Cerveza"]);
+  });
+
+  it("no marca correcciones de otra tienda", async () => {
+    const { o, item } = await mandadaConMilanesa();
+    await anularItem(db, {
+      storeId: store, orderId: o.id, itemId: item.id, userId: "u1", motivo: "Error de carga",
+    });
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    expect(await marcarCorreccionesVistas(db, { storeId: store2, itemIds: [item.id] })).toBe(0);
   });
 });
