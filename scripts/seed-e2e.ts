@@ -146,6 +146,15 @@ async function main() {
   await db.update(schema.user).set({ role: "employee", storeId: cartas.id })
     .where(eq(schema.user.id, emp.id));
 
+  // Un mozo en el resto, para poder pasarle una mesa. Tampoco se loguea.
+  await ctx.internalAdapter.createUser({
+    email: "mozo@test.local", name: "Mozo Prueba", emailVerified: true,
+  });
+  const [mozo] = await db.select().from(schema.user)
+    .where(eq(schema.user.email, "mozo@test.local"));
+  await db.update(schema.user).set({ role: "employee", storeId: resto.id })
+    .where(eq(schema.user.id, mozo.id));
+
   await sembrarCatalogoDeCartas(db, schema, cartas.id);
 
   console.log("\nListo. Tiendas de prueba:");

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, dividirItem, faltaStock, pagarOrden,
+  crearMesa, dividirItem, faltaStock, moverOrden, pagarOrden, transferirMozo,
 } from "@/domain/orders";
 import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
 import { money } from "@/lib/format";
@@ -27,6 +27,7 @@ import type { FloorMarkerType } from "@/db/schema";
 
 const MENSAJES: Record<string, string> = {
   MESA_YA_OCUPADA: "Esa mesa ya tiene una comanda abierta.",
+  MOZO_INVALIDO: "Ese usuario no puede atender mesas en este local.",
   MARCADOR_NO_ENCONTRADO: "Esa referencia del plano no existe.",
   TIPO_INVALIDO: "Tipo de referencia desconocido.",
   MESA_NO_ENCONTRADA: "La mesa no existe.",
@@ -388,6 +389,33 @@ export async function cambiarAgotado(productId: number, agotado: boolean) {
   const { storeId } = await requireStore();
   try {
     await marcarAgotado(db, { storeId, productId, agotado: agotado === true });
+    revalidatePath("/cocina");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Pasa la mesa a otro mozo: a quien se le va a acreditar la venta. */
+export async function cambiarMozo(orderId: number, waiterId: string) {
+  const { storeId } = await requireStore();
+  try {
+    await transferirMozo(db, { storeId, orderId, waiterId: String(waiterId) });
+    revalidatePath(`/salon/${orderId}`);
+    revalidatePath("/salon");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+/** Pasa la orden entera a otra mesa libre. */
+export async function pasarAMesa(orderId: number, tableId: number) {
+  const { storeId } = await requireStore();
+  try {
+    await moverOrden(db, { storeId, orderId, tableId: Number(tableId) });
+    revalidatePath(`/salon/${orderId}`);
+    revalidatePath("/salon");
     revalidatePath("/cocina");
     return { ok: true as const };
   } catch (e) {

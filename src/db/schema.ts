@@ -623,6 +623,14 @@ export const orders = pgTable("orders", {
   guests: integer("guests"),
   notes: text("notes"),
   openedBy: text("opened_by").notNull().references(() => user.id),
+  /**
+   * El mozo que atiende la mesa. Arranca en quien la abrió y se puede pasar a
+   * otro (cambio de turno, mesa que se reparte). Es a quien se le acredita la
+   * venta al cobrar: el cajero que cobra queda como `registeredBy`, igual que
+   * en el mostrador. Sin esto, todas las mesas eran «del cajero» y no había
+   * base para comisiones ni para repartir propinas.
+   */
+  waiterId: text("waiter_id").notNull().references(() => user.id),
   openedAt: timestamp("opened_at").notNull().defaultNow(),
   closedAt: timestamp("closed_at"),
   // Recalculados por el servidor después de cada cambio. Nunca se confía en un
