@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDb, seedTestUser, seedTestStore, sembrarVentasCrudas } from "./helpers/db";
 import { cashSessions, sales, type CashSession } from "@/db/schema";
 import { openCashSession, closeCashSession, getOpenSession, createCashMovement, getSessionCashMovements } from "@/domain/cash";
+import { abrirOrden, crearMesa } from "@/domain/orders";
 
 let db: Awaited<ReturnType<typeof createTestDb>>;
 let store: number;
@@ -122,5 +123,54 @@ describe("cash sessions", () => {
     expect(rejected).toHaveLength(1);
     expect((rejected[0] as PromiseRejectedResult).reason.message).toBe("SESSION_ALREADY_OPEN");
     expect(await db.select().from(cashSessions)).toHaveLength(1);
+  });
+});
+
+describe("cierre: lo que hay que mirar antes de cerrar", () => {
+  it("una diferencia de mil o más exige motivo; con motivo cierra", async () => {
+    const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 5000 });
+    await expect(closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 3800 }))
+      .rejects.toMatchObject({ message: "DIFERENCIA_SIN_MOTIVO", diferencia: -1200 });
+    await expect(closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 3800, notes: "  x " }))
+      .rejects.toThrow("DIFERENCIA_SIN_MOTIVO");
+
+    const cerrada = await closeCashSession(db, {
+      storeId: store, sessionId: s.id, userId: "u1", countedCash: 3800, notes: "Faltó cambio",
+    });
+    expect(cerrada.difference).toBe(-1200);
+    expect(cerrada.notes).toBe("Faltó cambio");
+  });
+
+  it("una diferencia chica cierra sin motivo, también si sobra", async () => {
+    const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 5000 });
+    const cerrada = await closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 5999 });
+    expect(cerrada.difference).toBe(999);
+  });
+
+  it("con mesas abiertas no cierra hasta que se confirma, y dice cuáles", async () => {
+    const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    const mesa = await crearMesa(db, { storeId: store, name: "7" });
+    await abrirOrden(db, { storeId: store, userId: "u1", tableId: mesa.id });
+
+    await expect(closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 0 }))
+      .rejects.toMatchObject({ message: "MESAS_ABIERTAS", mesas: [expect.objectContaining({ mesa: "7" })] });
+    const [sigue] = await db.select().from(cashSessions).where(eq(cashSessions.id, s.id));
+    expect(sigue.closedAt).toBeNull();
+
+    const cerrada = await closeCashSession(db, {
+      storeId: store, sessionId: s.id, userId: "u1", countedCash: 0, confirmarMesasAbiertas: true,
+    });
+    expect(cerrada.closedAt).not.toBeNull();
+  });
+
+  it("las mesas de otra tienda no frenan el cierre", async () => {
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    await seedTestUser(db, "u2", "owner", store2);
+    const mesa = await crearMesa(db, { storeId: store2, name: "1" });
+    await abrirOrden(db, { storeId: store2, userId: "u2", tableId: mesa.id });
+
+    const s = await openCashSession(db, { storeId: store, userId: "u1", openingCash: 0 });
+    await expect(closeCashSession(db, { storeId: store, sessionId: s.id, userId: "u1", countedCash: 0 }))
+      .resolves.toBeDefined();
   });
 });

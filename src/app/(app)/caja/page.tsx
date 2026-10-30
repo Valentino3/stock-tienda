@@ -4,6 +4,7 @@ import { clientAccountMovements, clients, sales, salePayments, user } from "@/db
 import { requireStore } from "@/lib/session";
 import { efectivoDeCuentaEnCaja, getOpenSession, getSessionCashMovements } from "@/domain/cash";
 import { getVentasDelTurno } from "@/domain/cash-close";
+import { listarOrdenesAbiertas } from "@/domain/orders";
 import { VentasDelTurno } from "@/components/caja/ventas-del-turno";
 import { PageHeader } from "@/components/ui/page-header";
 import { CajaClient } from "./caja-client";
@@ -61,6 +62,11 @@ export default async function CajaPage() {
     .where(efectivoDeCuentaEnCaja(session.id))
     .orderBy(clientAccountMovements.createdAt);
 
+  // Las mesas que siguen abiertas: quien cierra las tiene que ver antes.
+  const mesasAbiertas = (await listarOrdenesAbiertas(db, currentUser.storeId)).map((o) => ({
+    orderId: o.id, mesa: o.tableName, total: o.total, status: o.status,
+  }));
+
   return (
     <div className="space-y-6">
       <PageHeader title="Caja" description="Caja abierta. Cerrá con el conteo al terminar el turno." />
@@ -77,6 +83,7 @@ export default async function CajaPage() {
         }))}
         cobrosCuenta={cobrosCuenta as any[]}
         isOwner={isOwner}
+        mesasAbiertas={mesasAbiertas}
         ventasDelTurno={
           <VentasDelTurno
             remitos={ventas ?? []}
