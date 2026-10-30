@@ -4,8 +4,10 @@ import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, dividirItem, pagarOrden,
+  crearMesa, dividirItem, faltaStock, pagarOrden,
 } from "@/domain/orders";
+import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
+import { money } from "@/lib/format";
 import {
   acomodarMesasSinUbicar, borrarMarcador, crearMarcador, moverMarcador, moverMesa,
 } from "@/domain/floor-plan";
@@ -42,6 +44,11 @@ const MENSAJES: Record<string, string> = {
   MOTIVO_REQUERIDO: "Poné un motivo (al menos 3 letras).",
   CANTIDAD_NO_DIVISIBLE: "Elegí una cantidad menor a la de la línea.",
   ITEMS_NO_ENCONTRADOS: "No quedan ítems por cobrar de los que elegiste.",
+  ITEMS_YA_COBRADOS: "Alguien cobró parte de esto recién. Revisá la cuenta antes de cobrar.",
+  UID_REPETIDO: "No se pudo cobrar. Volvé a intentar.",
+  PAYMENT_INPUT_INVALID: "Elegí cómo se paga.",
+  INVALID_PAYMENT_METHOD: "Medio de pago inválido.",
+  INVALID_PAYMENT_AMOUNT: "Monto de pago inválido.",
   VARIANT_NOT_FOUND: "Ese producto no existe.",
   PRODUCTO_AGOTADO: "La cocina lo marcó agotado por hoy.",
   PRODUCTO_NO_ENCONTRADO: "Ese plato no existe.",
@@ -52,6 +59,8 @@ const MENSAJES: Record<string, string> = {
   CLIENT_NOT_FOUND: "Cliente no encontrado.",
   EMPTY_NAME: "Poné un nombre.",
 };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const traducir = (e: unknown) =>
   (e instanceof Error ? MENSAJES[e.message] : undefined) ?? "No se pudo completar la operación.";
@@ -80,9 +89,10 @@ export async function agregarALaComanda(orderId: number, variantId: number, quan
   const { storeId } = await requireStore();
   try {
     const orden = await agregarItem(db, { storeId, orderId, variantId, quantity, notes });
+    const falta = await faltaStock(db, { storeId, orderId, variantId });
     revalidatePath(`/salon/${orderId}`);
     revalidatePath("/salon");
-    return { ok: true as const, total: orden.total };
+    return { ok: true as const, total: orden.total, falta };
   } catch (e) {
     return { error: traducir(e) };
   }
@@ -169,12 +179,22 @@ export async function cancelarComanda(orderId: number, motivo?: string, wasted?:
 
 export async function cobrarComanda(input: {
   orderId: number;
-  paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+  paymentMethod?: PaymentMethod;
+  pagos?: Pago[];
   clientId?: number | null;
   saleDiscount?: Discount;
   itemIds?: number[];
+  uid?: string;
 }) {
   const { storeId, id: userId } = await requireStore();
+  // La forma se valida acá, igual que en /vender: el argumento lo arma el
+  // navegador y el tipo de TypeScript no existe en runtime.
+  if (input.pagos !== undefined) {
+    const invalidos = !Array.isArray(input.pagos) || input.pagos.length === 0 ||
+      input.pagos.some((p) => !esMetodoValido(p?.method) || !Number.isFinite(p?.amount) || p.amount <= 0);
+    if (invalidos) return { error: "Pago inválido." };
+  }
+  if (input.uid !== undefined && !UUID_RE.test(input.uid)) return { error: "Identificador de cobro inválido." };
   try {
     const r = await pagarOrden(db, { ...input, storeId, userId });
     revalidatePath("/salon");
@@ -188,6 +208,16 @@ export async function cobrarComanda(input: {
       avisoDePrecio: r.avisoDePrecio,
     };
   } catch (e) {
+    // El total del servidor va en el mensaje: si un precio cambió con la mesa
+    // abierta, repartir otra vez con el total viejo falla siempre.
+    if (e instanceof Error && e.message === "PAYMENT_TOTAL_MISMATCH") {
+      const total = (e as Error & { total?: number }).total;
+      return {
+        error: total != null
+          ? `Los pagos no suman el total a cobrar (${money(total)}). Cambió un precio: volvé a repartir el pago.`
+          : "Los pagos no suman el total a cobrar.",
+      };
+    }
     return { error: traducir(e) };
   }
 }

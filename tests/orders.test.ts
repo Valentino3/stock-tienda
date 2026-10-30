@@ -3,14 +3,15 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { createTestDb, seedTestStore, seedTestUser } from "./helpers/db";
 import {
   cashSessions, clients, clientAccountMovements, diningTables, orderItems, orders,
-  products, productVariants, sales, saleItems, stockMovements,
+  notifications, products, productVariants, salePayments, sales, saleItems, stockMovements,
 } from "@/db/schema";
 import { closeCashSession, openCashSession } from "@/domain/cash";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, dividirItem, getOrden,
-  listarMesas, listarOrdenesAbiertas, pagarOrden, resumenDeCuenta,
+  crearMesa, dividirItem, faltaStock, getOrden,
+  listarMesas, listarOrdenesAbiertas, pagarOrden, resumenDeCuenta, ventasDeOrden,
 } from "@/domain/orders";
+import { voidSale } from "@/domain/sales";
 import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
 
 /**
@@ -838,5 +839,121 @@ describe("cancelar una mesa con cosas en la cocina", () => {
     await cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id });
     const [orden] = await db.select().from(orders).where(eq(orders.id, o.id));
     expect(orden.status).toBe("cancelada");
+  });
+});
+
+describe("cobro de mesa: varios medios, reintentos y anulaciones", () => {
+  const conDosMilanesas = async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    return o;
+  };
+
+  it("cobra con dos medios en la misma tanda", async () => {
+    const o = await conDosMilanesas();
+    const r = await pagarOrden(db, {
+      storeId: store, orderId: o.id, userId: "u1",
+      pagos: [{ method: "efectivo", amount: 6000 }, { method: "tarjeta", amount: 10000 }],
+    });
+    expect(r.sale.total).toBe(16000);
+    expect(r.orden.status).toBe("pagada");
+    const pagos = await db.select().from(salePayments).where(eq(salePayments.saleId, r.sale.id));
+    expect(pagos.map((p) => [p.method, p.amount]).sort()).toEqual([["efectivo", 6000], ["tarjeta", 10000]]);
+  });
+
+  it("si los pagos no suman el total no cobra nada y la mesa queda igual", async () => {
+    const o = await conDosMilanesas();
+    await expect(pagarOrden(db, {
+      storeId: store, orderId: o.id, userId: "u1",
+      pagos: [{ method: "efectivo", amount: 6000 }, { method: "tarjeta", amount: 9000 }],
+    })).rejects.toThrow("PAYMENT_TOTAL_MISMATCH");
+    const [orden] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(orden.status).toBe("abierta");
+    expect(await db.select().from(sales)).toHaveLength(0);
+  });
+
+  it("reintentar con el mismo uid devuelve el mismo cobro, no otro", async () => {
+    const o = await conDosMilanesas();
+    const uid = "9b2f6c1e-1d2a-4c3b-8e4f-5a6b7c8d9e0f";
+    const a = await cobrar(o.id, { uid });
+    const b = await cobrar(o.id, { uid });
+    expect(b.sale.id).toBe(a.sale.id);
+    expect(b.parcial).toBe(false);
+    expect(await db.select().from(sales)).toHaveLength(1);
+  });
+
+  it("dos cobros de la misma mesa a la vez dan una sola venta", async () => {
+    const o = await conDosMilanesas();
+    const resultados = await Promise.allSettled([cobrar(o.id), cobrar(o.id)]);
+    expect(resultados.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await db.select().from(sales)).toHaveLength(1);
+  });
+
+  it("lo servido se cobra aunque el stock cargado no alcance, y avisa al dueño", async () => {
+    const o = await abrir();
+    // Hay 6 botellas cargadas y la mesa tomó 8.
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 8 });
+    const r = await cobrar(o.id);
+    expect(r.sale.total).toBe(40000);
+
+    const [v] = await db.select().from(productVariants).where(eq(productVariants.id, remera));
+    expect(v.stock).toBe(-2);
+    const avisos = await db.select().from(notifications).where(eq(notifications.type, "stock_negativo"));
+    expect(avisos).toHaveLength(1);
+    expect(avisos[0].stockAtCreate).toBe(-2);
+  });
+
+  it("avisa al cargar si lo pedido supera el stock, sin bloquear", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 5 });
+    expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: remera })).toBeNull();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 2 });
+    expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: remera }))
+      .toEqual({ disponible: 6, pedido: 7 });
+    // Un plato no lleva stock: nunca avisa.
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 50 });
+    expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: milanesa })).toBeNull();
+  });
+
+  it("anular una tanda devuelve sus ítems a la mesa y se pueden volver a cobrar", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 1 });
+    const [mila] = await db.select().from(orderItems)
+      .where(and(eq(orderItems.orderId, o.id), eq(orderItems.variantId, milanesa)));
+
+    const tanda = await cobrar(o.id, { itemIds: [mila.id], paymentMethod: "tarjeta" });
+    await cobrar(o.id);
+    const [cerrada] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(cerrada.status).toBe("pagada");
+
+    await voidSale(db, { storeId: store, saleId: tanda.sale.id, userId: "u1", reason: "Era efectivo" });
+
+    const [reabierta] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(reabierta.status).toBe("a_cobrar");
+    expect(reabierta.closedAt).toBeNull();
+    const [liberada] = await db.select().from(orderItems).where(eq(orderItems.id, mila.id));
+    expect(liberada.saleId).toBeNull();
+
+    // La venta anulada no cuenta como cobrada.
+    expect(await ventasDeOrden(db, store, o.id)).toHaveLength(1);
+    const resumen = await resumenDeCuenta(db, store, o.id);
+    expect(resumen).toMatchObject({ cobrado: 5000, pendiente: 8000 });
+
+    const otra = await cobrar(o.id, { paymentMethod: "efectivo" });
+    expect(otra.orden.status).toBe("pagada");
+  });
+
+  it("si la mesa ya está ocupada, la orden reabierta vuelve sin mesa", async () => {
+    const o = await conDosMilanesas();
+    const r = await cobrar(o.id);
+    const nueva = await abrir();
+
+    await voidSale(db, { storeId: store, saleId: r.sale.id, userId: "u1", reason: "Error de cobro" });
+
+    const [vieja] = await db.select().from(orders).where(eq(orders.id, o.id));
+    expect(vieja).toMatchObject({ status: "abierta", tableId: null });
+    const [actual] = await db.select().from(orders).where(eq(orders.id, nueva.id));
+    expect(actual.tableId).toBe(mesa);
   });
 });
