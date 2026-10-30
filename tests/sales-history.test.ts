@@ -44,6 +44,23 @@ describe("getSalesHistory", () => {
     expect(result.sales[0].sale.createdAt.getTime()).not.toEqual(OLD_DATE.getTime());
   });
 
+  it("una venta recién hecha aparece aunque el reloj de la base vaya adelantado", async () => {
+    // createdAt lo pone la base. Si su reloj va adelantado respecto del de la
+    // app, la venta que se acaba de cobrar tiene un createdAt "futuro" para la
+    // app; el historial por defecto igual la tiene que mostrar.
+    await db.insert(sales).values({
+      storeId: store,
+      sellerId: "u1", registeredBy: "u1",
+      cashSessionId,
+      total: 1000,
+      paymentMethod: "efectivo",
+      createdAt: new Date(Date.now() + 2000),
+    });
+
+    const result = await getSalesHistory(db, { storeId: store, page: 1 });
+    expect(result.sales).toHaveLength(1);
+  });
+
   it("paginates results (page size 50) and reports hasNextPage", async () => {
     for (let i = 0; i < 55; i++) {
       await createSale(db, { storeId: store, sellerId: "u1", paymentMethod: "efectivo", items: [{ variantId, quantity: 1 }] });

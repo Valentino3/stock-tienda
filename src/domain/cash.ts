@@ -134,7 +134,11 @@ export async function closeCashSession(
 
     const [closed] = await tx.update(cashSessions)
       .set({
-        closedAt: new Date(),
+        // El reloj de la base, el mismo que estampa `sales.createdAt`. La hoja
+        // de cierre marca como tardía toda venta posterior a esta hora: con el
+        // reloj de la app, una venta hecha justo antes de cerrar podía quedar
+        // "después" si la base iba apenas adelantada.
+        closedAt: sql`now()`,
         closedBy: input.userId,
         expectedCash,
         totalTransfer: round2(byMethod.transferencia ?? 0),
