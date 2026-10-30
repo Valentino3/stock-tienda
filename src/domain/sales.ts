@@ -1,10 +1,11 @@
-import { eq, inArray, and, isNull, sql } from "drizzle-orm";
-import { products, productVariants, sales, saleItems, salePayments, cashSessions, clients, clientAccountMovements, stores, user, type Sale } from "@/db/schema";
+import { eq, inArray, and, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { products, productVariants, sales, saleItems, salePayments, cashSessions, clients, clientAccountMovements, orderItems, orders, stores, user, type Sale } from "@/db/schema";
 import {
   type Pago, type PaymentMethod, esMetodoValido, normalizarPagos, sumaPagos,
   medioPrincipal, montoACuenta,
 } from "@/domain/pagos";
 import { applyStockMovement } from "@/domain/stock";
+import { createSyncNotification } from "@/domain/notifications";
 // El mismo mínimo para anular una venta que un movimiento de cuenta.
 import { MOTIVO_MIN } from "@/domain/clients";
 
@@ -166,7 +167,28 @@ async function buscarPorUid(db: any, storeId: number, uid: string): Promise<Sale
   return existing;
 }
 
-export async function createSale(db: any, input: SaleInput): Promise<SaleResult> {
+/**
+ * Opciones que solo puede pasar el servidor.
+ *
+ * Van aparte del `input` a propósito: las server actions arman el input
+ * con un spread de lo que manda el navegador, y un flag como este adentro del
+ * input sería un campo que cualquiera puede prender.
+ */
+export type OpcionesDeVenta = {
+  /**
+   * Deja que el stock quede negativo y avisa al dueño. Para el cobro de una
+   * mesa: la botella ya se sirvió y se tomó, y rechazar el cobro no devuelve
+   * nada al depósito, solo deja al cliente esperando en la puerta sin poder
+   * pagar. El mostrador nunca lo usa: ahí la guarda impide sobrevender.
+   */
+  permitirStockNegativo?: boolean;
+};
+
+export async function createSale(
+  db: any,
+  input: SaleInput,
+  opciones: OpcionesDeVenta = {},
+): Promise<SaleResult> {
   // Quién operó. El eje operativo —los movimientos de stock y los asientos en
   // la cuenta del cliente— cuelga de acá, no del acreditado: ver el insert.
   const operador = input.registeredBy ?? input.sellerId;
@@ -220,6 +242,8 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
           basePrice: products.basePrice,
           tracksStock: products.tracksStock,
           isPromo: products.isPromo,
+          productName: products.name,
+          variantName: productVariants.name,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -348,7 +372,7 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
         // guarda, un plato con existencias en 0 rebota con INSUFFICIENT_STOCK
         // y el restaurante no puede vender nada.
         if (mueveStock.get(line.variantId)) {
-          await applyStockMovement(tx, {
+          const restante = await applyStockMovement(tx, {
             variantId: line.variantId,
             storeId: input.storeId,
             type: "venta",
@@ -360,7 +384,18 @@ export async function createSale(db: any, input: SaleInput): Promise<SaleResult>
             // convertiría el libro de stock en una coartada.
             userId: operador,
             saleId: sale.id,
+            permitirNegativo: opciones.permitirStockNegativo === true,
           });
+          if (restante < 0) {
+            const v = porId.get(line.variantId) as { productName: string; variantName: string };
+            const etiqueta = v.variantName ? `${v.productName} — ${v.variantName}` : v.productName;
+            await createSyncNotification(tx, {
+              storeId: input.storeId, userId: operador, type: "stock_negativo",
+              label: v.productName, variantName: v.variantName || null,
+              variantId: line.variantId, stockAtCreate: restante,
+              message: `Stock negativo (${restante} u.) en ${etiqueta} tras cobrar la venta #${sale.id} de una mesa: se sirvió más de lo que había cargado.`,
+            });
+          }
         }
       }
       return sale;
@@ -466,6 +501,43 @@ export async function voidSale(
           createdBy: input.userId,
           note: `Anulación de la venta #${input.saleId}`,
         });
+      }
+    }
+
+    // Una tanda cobrada de una mesa. Sus ítems vuelven a quedar impagos y la
+    // mesa se reabre, para cobrarlos bien: el caso típico es «se cobró con
+    // tarjeta y era efectivo». Sin esto los ítems seguían marcados como
+    // pagados por una venta anulada y la única salida era recargar todo en el
+    // mostrador.
+    if (voided.orderId != null) {
+      await tx.update(orderItems)
+        .set({ saleId: null })
+        .where(and(eq(orderItems.saleId, input.saleId), eq(orderItems.storeId, input.storeId)));
+
+      const [orden] = await tx.select().from(orders)
+        .where(and(eq(orders.id, voided.orderId), eq(orders.storeId, input.storeId)))
+        .for("update");
+      if (orden && orden.status !== "cancelada") {
+        // Si la mesa ya la ocupa otra orden, esta vuelve como pedido sin mesa:
+        // reabrirla en la misma mesa chocaría contra el índice de una orden
+        // viva por mesa, y la anulación no puede fallar por eso.
+        let tableId = orden.tableId;
+        if (tableId != null && orden.status === "pagada") {
+          const [ocupada] = await tx.select({ id: orders.id }).from(orders)
+            .where(and(
+              eq(orders.tableId, tableId),
+              inArray(orders.status, ["abierta", "a_cobrar"]),
+              ne(orders.id, orden.id),
+            ))
+            .limit(1);
+          if (ocupada) tableId = null;
+        }
+        const [otroPago] = await tx.select({ id: orderItems.id }).from(orderItems)
+          .where(and(eq(orderItems.orderId, orden.id), isNotNull(orderItems.saleId)))
+          .limit(1);
+        await tx.update(orders)
+          .set({ status: otroPago ? "a_cobrar" : "abierta", closedAt: null, tableId })
+          .where(eq(orders.id, orden.id));
       }
     }
   });

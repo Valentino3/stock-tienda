@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, ChefHat, Minus, Plus, Printer, Scissors, Search, StickyNote, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -48,6 +48,15 @@ export function OrdenClient({
   const [error, setError] = useState("");
   const [mostrarCuenta, setMostrarCuenta] = useState(false);
   const [descuento, setDescuento] = useState("");
+  // Pago con varios medios: «20 mil en efectivo y el resto con tarjeta».
+  const [dividido, setDividido] = useState(false);
+  const [montos, setMontos] = useState<Record<Metodo, string>>(
+    { efectivo: "", transferencia: "", tarjeta: "", cuenta: "" },
+  );
+  const [personas, setPersonas] = useState("");
+  // Clave del intento de cobro. Se conserva si la red se corta en el medio, y
+  // el reintento devuelve el cobro que ya entró en vez de cobrar otra vez.
+  const uidDelCobro = useRef<string | null>(null);
   const [tipoDescuento, setTipoDescuento] = useState<"amount" | "percent">("amount");
   // Qué línea tiene la nota abierta para editar, y su borrador.
   const [notaAbierta, setNotaAbierta] = useState<number | null>(null);
@@ -70,6 +79,21 @@ export function OrdenClient({
   const totalACobrar = seleccion.length
     ? impagos.filter((i) => seleccion.includes(i.id)).reduce((a, i) => a + i.quantity * i.unitPrice, 0)
     : totalImpago;
+
+  // Lo que el servidor va a cobrar, con el descuento. Es una estimación: si un
+  // precio cambió con la mesa abierta, el servidor rechaza el reparto y dice el
+  // total real.
+  const valorDescuento = Number(descuento.replace(",", ".")) || 0;
+  const montoDescuento = valorDescuento <= 0 ? 0
+    : tipoDescuento === "percent" ? totalACobrar * Math.min(valorDescuento, 100) / 100
+    : Math.min(valorDescuento, totalACobrar);
+  const aCobrar = Math.round((totalACobrar - montoDescuento) * 100) / 100;
+  const pagosDivididos = METODOS
+    .map((m) => ({ method: m.value, amount: Math.round((Number(montos[m.value].replace(",", ".")) || 0) * 100) / 100 }))
+    .filter((p) => p.amount > 0);
+  const resta = Math.round((aCobrar - pagosDivididos.reduce((a, p) => a + p.amount, 0)) * 100) / 100;
+  const usaCuenta = dividido ? pagosDivididos.some((p) => p.method === "cuenta") : metodo === "cuenta";
+  const nPersonas = Math.floor(Number(personas));
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -95,11 +119,27 @@ export function OrdenClient({
     });
   }
 
-  const agregar = (r: Resultado) =>
-    correr(() => agregarALaComanda(orden.id, r.variantId, 1), () => {
+  function agregar(r: Resultado) {
+    setError("");
+    startTransition(async () => {
+      const res = await agregarALaComanda(orden.id, r.variantId, 1);
+      if ("error" in res && res.error) {
+        setError(res.error);
+        return;
+      }
       setTerm("");
       setResultados([]);
+      if ("falta" in res && res.falta) {
+        // No se bloquea: el stock cargado rara vez es el de la cava a mitad de
+        // servicio. Pero el mozo tiene que saberlo antes de servir.
+        toast.warning(
+          `${r.productName}: hay ${number(res.falta.disponible)} cargadas y la mesa lleva ${number(res.falta.pedido)}. Fijate si quedan antes de servir.`,
+          { duration: 10_000 },
+        );
+      }
+      router.refresh();
     });
+  }
 
   const cambiar = (itemId: number, cantidad: number) =>
     correr(() => cambiarCantidadDeItem(orden.id, itemId, cantidad));
@@ -167,20 +207,36 @@ export function OrdenClient({
   }
 
   function cobrar() {
-    if (metodo === "cuenta" && !clientId) {
-      setError("Elegí un cliente para la venta a cuenta.");
+    if (usaCuenta && !clientId) {
+      setError("Elegí un cliente para la parte a cuenta.");
+      return;
+    }
+    if (dividido && resta !== 0) {
+      setError(resta > 0 ? `Falta repartir ${money(resta)}.` : `Sobran ${money(-resta)}.`);
       return;
     }
     setError("");
+    uidDelCobro.current ??= crypto.randomUUID();
+    const uid = uidDelCobro.current;
     startTransition(async () => {
-      const valorDescuento = Number(descuento.replace(",", "."));
-      const res = await cobrarComanda({
-        orderId: orden.id,
-        paymentMethod: metodo,
-        clientId: metodo === "cuenta" ? Number(clientId) : undefined,
-        itemIds: seleccion.length ? seleccion : undefined,
-        saleDiscount: valorDescuento > 0 ? { kind: tipoDescuento, value: valorDescuento } : undefined,
-      });
+      let res: Awaited<ReturnType<typeof cobrarComanda>>;
+      try {
+        res = await cobrarComanda({
+          orderId: orden.id,
+          ...(dividido ? { pagos: pagosDivididos } : { paymentMethod: metodo }),
+          clientId: usaCuenta ? Number(clientId) : undefined,
+          itemIds: seleccion.length ? seleccion : undefined,
+          saleDiscount: valorDescuento > 0 ? { kind: tipoDescuento, value: valorDescuento } : undefined,
+          uid,
+        });
+      } catch {
+        // No se sabe si el cobro entró. La clave se conserva: tocar Cobrar de
+        // nuevo devuelve el cobro original si ya estaba, y no cobra dos veces.
+        setError("Se cortó la conexión. Tocá Cobrar de nuevo: no se cobra dos veces.");
+        return;
+      }
+      // El servidor contestó, entró o no: el próximo intento es otro cobro.
+      uidDelCobro.current = null;
       if ("error" in res && res.error) {
         setError(res.error);
         return;
@@ -201,6 +257,8 @@ export function OrdenClient({
         );
         setSeleccion([]);
         setDescuento("");
+        setMontos({ efectivo: "", transferencia: "", tarjeta: "", cuenta: "" });
+        setDividido(false);
         if (!res.parcial) router.push("/salon");
         else router.refresh();
       }
@@ -519,29 +577,102 @@ export function OrdenClient({
                 <span className="text-sm text-muted-foreground">
                   {seleccion.length ? `${seleccion.length} ítem(s) elegidos` : "Total de la mesa"}
                 </span>
-                <span className="figure text-xl font-semibold">{money(totalACobrar)}</span>
+                <span className="figure text-xl font-semibold">{money(aCobrar)}</span>
+              </div>
+              {montoDescuento > 0 && (
+                <p className="-mt-3 text-right text-xs text-muted-foreground">
+                  {money(totalACobrar)} − {money(montoDescuento)} de descuento
+                </p>
+              )}
+
+              {/* Cuánto le toca a cada uno. Solo informa: cada persona paga su
+                  parte con el medio que quiera, y eso se carga en «Dividir el
+                  pago». */}
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">Entre</span>
+                <Input
+                  className="h-8 w-14 text-center"
+                  inputMode="numeric"
+                  value={personas}
+                  placeholder="—"
+                  aria-label="Dividir entre cuántas personas"
+                  onChange={(e) => setPersonas(e.target.value.replace(/\D/g, ""))}
+                />
+                <span className="text-muted-foreground">personas</span>
+                {nPersonas >= 2 && (
+                  <span className="figure ml-auto font-medium">
+                    {money(Math.ceil((aCobrar / nPersonas) * 100) / 100)} c/u
+                  </span>
+                )}
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                {METODOS.map((m) => (
-                  <button
-                    key={m.value}
-                    type="button"
-                    onClick={() => setMetodo(m.value)}
-                    aria-pressed={metodo === m.value}
+              <label className="flex min-h-11 items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={dividido}
+                  onChange={(e) => setDividido(e.target.checked)}
+                />
+                Dividir el pago entre varios medios
+              </label>
+
+              {!dividido ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {METODOS.map((m) => (
+                    <button
+                      key={m.value}
+                      type="button"
+                      onClick={() => setMetodo(m.value)}
+                      aria-pressed={metodo === m.value}
+                      className={cn(
+                        "min-h-11 rounded-lg border px-3 py-2 text-sm transition-colors",
+                        metodo === m.value
+                          ? "border-brand bg-brand text-brand-foreground"
+                          : "border-border hover:bg-accent",
+                      )}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {METODOS.map((m) => (
+                    <div key={m.value} className="flex items-center gap-2">
+                      <span className="w-28 text-sm">{m.label}</span>
+                      <Input
+                        className="h-11 flex-1"
+                        inputMode="decimal"
+                        value={montos[m.value]}
+                        placeholder="0"
+                        aria-label={`Monto en ${m.label.toLowerCase()}`}
+                        onChange={(e) => setMontos((prev) => ({ ...prev, [m.value]: e.target.value }))}
+                      />
+                      <Button
+                        type="button" variant="outline" size="sm" className="h-11"
+                        disabled={resta <= 0}
+                        aria-label={`Poner lo que falta en ${m.label.toLowerCase()}`}
+                        onClick={() => setMontos((prev) => {
+                          const actual = Number(prev[m.value].replace(",", ".")) || 0;
+                          return { ...prev, [m.value]: String(Math.round((actual + resta) * 100) / 100) };
+                        })}
+                      >
+                        Resto
+                      </Button>
+                    </div>
+                  ))}
+                  <p
                     className={cn(
-                      "rounded-lg border px-3 py-2 text-sm transition-colors",
-                      metodo === m.value
-                        ? "border-brand bg-brand text-brand-foreground"
-                        : "border-border hover:bg-accent",
+                      "text-right text-sm font-medium",
+                      resta === 0 ? "text-success" : "text-destructive",
                     )}
+                    aria-live="polite"
                   >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
+                    {resta === 0 ? "Repartido completo" : resta > 0 ? `Falta ${money(resta)}` : `Sobran ${money(-resta)}`}
+                  </p>
+                </div>
+              )}
 
-              {metodo === "cuenta" && (
+              {usaCuenta && (
                 <select
                   value={clientId}
                   onChange={(e) => setClientId(e.target.value)}
@@ -559,7 +690,7 @@ export function OrdenClient({
 
               <Button
                 type="button" className="w-full" size="lg"
-                disabled={pending || impagos.length === 0}
+                disabled={pending || impagos.length === 0 || (dividido && resta !== 0)}
                 onClick={cobrar}
               >
                 {pending ? "Cobrando…" : seleccion.length ? "Cobrar lo elegido" : "Cobrar todo"}

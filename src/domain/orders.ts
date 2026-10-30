@@ -4,6 +4,7 @@ import {
   type DiningTable, type Order, type Sale,
 } from "@/db/schema";
 import { createSale, type Discount } from "@/domain/sales";
+import type { Pago, PaymentMethod } from "@/domain/pagos";
 import { MOTIVO_MIN } from "@/domain/clients";
 import { diaOperativo } from "@/lib/dates";
 
@@ -31,9 +32,12 @@ const codigoDe = (err: unknown) =>
 /** Estados en los que la orden todavía admite cambios. */
 const EDITABLES = ["abierta", "a_cobrar"] as const;
 
-async function traerOrdenEditable(tx: any, storeId: number, orderId: number): Promise<Order> {
-  const [orden] = await tx.select().from(orders)
+async function traerOrdenEditable(
+  tx: any, storeId: number, orderId: number, opts: { bloquear?: boolean } = {},
+): Promise<Order> {
+  const consulta = tx.select().from(orders)
     .where(and(eq(orders.id, orderId), eq(orders.storeId, storeId)));
+  const [orden] = await (opts.bloquear ? consulta.for("update") : consulta);
   if (!orden) throw new Error("ORDEN_NO_ENCONTRADA");
   if (!EDITABLES.includes(orden.status)) throw new Error("ORDEN_CERRADA");
   return orden;
@@ -275,8 +279,9 @@ export async function resumenDeCuenta(
     .where(and(eq(orderItems.orderId, orderId), isNull(orderItems.voidedAt)));
   const importe = (i: { quantity: number; unitPrice: number }) => i.quantity * i.unitPrice;
 
+  // Una tanda anulada no se cobró: sus ítems volvieron a quedar impagos.
   const ventas = await db.select().from(sales)
-    .where(and(eq(sales.orderId, orderId), eq(sales.storeId, storeId)))
+    .where(and(eq(sales.orderId, orderId), eq(sales.storeId, storeId), eq(sales.voided, false)))
     .orderBy(sales.id);
 
   return {
@@ -498,15 +503,36 @@ export async function pagarOrden(
     storeId: number;
     orderId: number;
     userId: string;
-    paymentMethod: "efectivo" | "transferencia" | "tarjeta" | "cuenta";
+    /** Un solo medio por el total. Excluyente con `pagos`, como en createSale. */
+    paymentMethod?: PaymentMethod;
+    /** Varios medios: «20 mil en efectivo y el resto con tarjeta». */
+    pagos?: Pago[];
     clientId?: number | null;
     saleDiscount?: Discount;
     itemIds?: number[];
     uid?: string | null;
   },
 ): Promise<ResultadoPago> {
+  const uid = input.uid?.trim() || null;
+
   return db.transaction(async (tx: any) => {
-    const orden = await traerOrdenEditable(tx, input.storeId, input.orderId);
+    // Reintento de un cobro que ya entró (se cortó la red y se perdió solo la
+    // respuesta): se devuelve la venta original en vez de cobrar otra vez. Va
+    // antes de exigir la orden editable porque, si era la última tanda, la
+    // orden ya está pagada.
+    if (uid) {
+      const [ya] = await tx.select().from(sales)
+        .where(and(eq(sales.storeId, input.storeId), eq(sales.uid, uid), eq(sales.orderId, input.orderId)));
+      if (ya) {
+        const [ordenActual] = await tx.select().from(orders).where(eq(orders.id, input.orderId));
+        return { sale: ya, orden: ordenActual, parcial: ordenActual.status !== "pagada" };
+      }
+    }
+
+    // FOR UPDATE: dos cobros de la misma mesa a la vez (el mozo desde el
+    // teléfono, el cajero desde la caja) se serializan acá. Sin el bloqueo, los
+    // dos leían los mismos ítems impagos y entraban dos ventas por lo mismo.
+    const orden = await traerOrdenEditable(tx, input.storeId, input.orderId, { bloquear: true });
 
     const impagos = await tx.select().from(orderItems)
       .where(and(
@@ -545,17 +571,34 @@ export async function pagarOrden(
       // explícito para que el reparto quede a la vista en los dos caminos.
       sellerId: input.userId,
       registeredBy: input.userId,
-      paymentMethod: input.paymentMethod,
+      paymentMethod: input.pagos ? undefined : input.paymentMethod,
+      pagos: input.pagos,
       clientId: input.clientId,
       saleDiscount: input.saleDiscount,
       orderId: orden.id,
-      uid: input.uid,
+      uid,
       items: [...porVariante].map(([variantId, quantity]) => ({ variantId, quantity })),
+    }, {
+      // Lo de la mesa ya se sirvió: si el stock cargado no alcanza, se cobra
+      // igual y el dueño recibe el aviso. Ver OpcionesDeVenta.
+      permitirStockNegativo: true,
     });
 
-    await tx.update(orderItems)
+    // El uid ya se buscó para esta orden arriba. Si createSale igual devolvió
+    // una venta existente, el uid es de otra orden: estampar los ítems con esa
+    // venta los daría por pagados con plata de otra mesa.
+    if (sale.duplicada) throw new Error("UID_REPETIDO");
+
+    // `saleId IS NULL` además del bloqueo: si algún camino se saltea el FOR
+    // UPDATE, un ítem nunca queda pagado por dos ventas.
+    const estampados = await tx.update(orderItems)
       .set({ saleId: sale.id })
-      .where(inArray(orderItems.id, aCobrar.map((i: { id: number }) => i.id)));
+      .where(and(
+        inArray(orderItems.id, aCobrar.map((i: { id: number }) => i.id)),
+        isNull(orderItems.saleId),
+      ))
+      .returning({ id: orderItems.id });
+    if (estampados.length !== aCobrar.length) throw new Error("ITEMS_YA_COBRADOS");
 
     const [restantes] = await tx
       .select({ n: sql<number>`count(*)`.mapWith(Number) })
@@ -669,7 +712,40 @@ export async function crearMesa(
 
 /** Ventas de una orden, para el detalle y para dividir la cuenta. */
 export async function ventasDeOrden(db: any, storeId: number, orderId: number) {
+  // Sin las anuladas: el panel «Ya cobrado» las sumaba como plata que entró.
   return db.select().from(sales)
-    .where(and(eq(sales.orderId, orderId), eq(sales.storeId, storeId)))
+    .where(and(eq(sales.orderId, orderId), eq(sales.storeId, storeId), eq(sales.voided, false)))
     .orderBy(sales.id);
+}
+
+/**
+ * Si lo pedido de esta variante en la mesa supera el stock cargado, cuánto
+ * hay. null si alcanza o si el producto no lleva stock.
+ *
+ * Es un aviso y no un bloqueo: el stock del sistema rara vez coincide con la
+ * cava a mitad de servicio, y quien sabe si queda una botella es el mozo que
+ * la tiene en la mano. Pero tiene que saberlo antes de servirla, no al cobrar.
+ */
+export async function faltaStock(
+  db: any,
+  input: { storeId: number; orderId: number; variantId: number },
+): Promise<{ disponible: number; pedido: number } | null> {
+  const [v] = await db.select({ stock: productVariants.stock, tracksStock: products.tracksStock })
+    .from(productVariants)
+    .innerJoin(products, eq(productVariants.productId, products.id))
+    .where(and(eq(productVariants.id, input.variantId), eq(productVariants.storeId, input.storeId)));
+  if (!v || v.tracksStock === false) return null;
+
+  const [fila] = await db
+    .select({ pedido: sql<number>`coalesce(sum(${orderItems.quantity}), 0)`.mapWith(Number) })
+    .from(orderItems)
+    .where(and(
+      eq(orderItems.orderId, input.orderId),
+      eq(orderItems.storeId, input.storeId),
+      eq(orderItems.variantId, input.variantId),
+      isNull(orderItems.saleId),
+      isNull(orderItems.voidedAt),
+    ));
+  const pedido = fila?.pedido ?? 0;
+  return pedido > v.stock ? { disponible: v.stock, pedido } : null;
 }
