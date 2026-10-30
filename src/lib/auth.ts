@@ -7,9 +7,7 @@ import * as schema from "@/db/schema";
 
 // La versión instalada de better-auth (1.6.23) valida `adminRoles` contra las
 // claves de `roles` (o los roles por defecto "admin"/"user" si no se pasa
-// `roles`), así que declaramos explícitamente los roles "owner" (permisos
-// admin completos) y "employee" (sin permisos admin) — ver brief Task 3,
-// nota de reconciliación contra la API instalada.
+// `roles`), así que declaramos explícitamente los tres roles de la app.
 export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg", schema }),
   emailAndPassword: { enabled: true, disableSignUp: true },
@@ -17,9 +15,14 @@ export const auth = betterAuth({
     admin({
       defaultRole: "employee",
       // superadmin = plataforma (todas las tiendas); owner = dueño de su tienda.
-      // Ambos con permisos admin; employee sin permisos admin.
-      adminRoles: ["superadmin", "owner"],
-      roles: { superadmin: adminAc, owner: adminAc, employee: userAc },
+      // Solo superadmin tiene permisos admin del plugin. El plugin no conoce
+      // tiendas: con adminAc, un dueño podía pegarle directo a
+      // /api/auth/admin/set-role y hacerse superadmin, o listar, cambiar la
+      // contraseña e impersonar usuarios de otros locales. La gestión de
+      // empleados del dueño va por server actions propias, scopeadas por
+      // tienda (src/app/(app)/usuarios/actions.ts).
+      adminRoles: ["superadmin"],
+      roles: { superadmin: adminAc, owner: userAc, employee: userAc },
     }),
   ],
 });
