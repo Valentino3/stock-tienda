@@ -52,21 +52,25 @@ test("el dueño no puede impersonar ni cambiar contraseñas", async ({ page, bas
 });
 
 test("el dueño sigue pudiendo dar de alta, desactivar y reactivar empleados", async ({ page }) => {
-  const nombre = `Empleado ${Date.now()}`;
+  const sello = Date.now();
+  const nombre = `Empleado ${sello}`;
   await page.goto("/usuarios");
   await page.getByRole("button", { name: /nuevo empleado/i }).click();
-  await page.getByLabel("Nombre").fill(nombre);
-  await page.getByLabel("Email").fill(`e${Date.now()}@test.local`);
-  await page.getByLabel(/contraseña/i).fill("test12345");
-  await page.getByRole("button", { name: /^crear$/i }).click();
+  const alta = page.getByRole("dialog");
+  await alta.getByLabel("Nombre").fill(nombre);
+  await alta.getByLabel("Email").fill(`e${sello}@test.local`);
+  await alta.getByLabel(/contraseña/i).fill("test12345");
+  await alta.getByRole("button", { name: /^crear$/i }).click();
+  await expect(alta).toBeHidden();
 
+  // Texto exacto: "Desactivado" también contiene "activo".
   const fila = page.getByRole("row").filter({ hasText: nombre });
-  await expect(fila.getByText("Activo")).toBeVisible();
+  await expect(fila.getByText("Activo", { exact: true })).toBeVisible();
 
   await fila.getByRole("button", { name: /desactivar/i }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: /desactivar/i }).click();
-  await expect(fila.getByText("Desactivado")).toBeVisible();
+  await expect(fila.getByText("Desactivado", { exact: true })).toBeVisible();
 
   await fila.getByRole("button", { name: /^activar$/i }).click();
-  await expect(fila.getByText("Activo")).toBeVisible();
+  await expect(fila.getByText("Activo", { exact: true })).toBeVisible();
 });

@@ -2,6 +2,8 @@
 import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import { openCashSession, closeCashSession, getOpenSession, createCashMovement } from "@/domain/cash";
+import type { MesaAbiertaAlCerrar } from "@/domain/cierre-reglas";
+import { money } from "@/lib/format";
 import { revalidatePath } from "next/cache";
 
 const MOVEMENT_ERRORS: Record<string, string> = {
@@ -46,16 +48,35 @@ export async function openSession(openingCash: number) {
   return { ok: true };
 }
 
-export async function closeSession(countedCash: number, notes: string) {
+export async function closeSession(countedCash: number, notes: string, confirmarMesasAbiertas = false) {
   const { id, storeId } = await requireStore();
-  if (countedCash < 0) return { error: "Monto inválido" };
+  if (!Number.isFinite(countedCash) || countedCash < 0) return { error: "Monto inválido" };
   const open = await getOpenSession(db, storeId);
   if (!open) return { error: "No hay caja abierta" };
   let closed;
   try {
-    closed = await closeCashSession(db, { storeId, sessionId: open.id, userId: id, countedCash, notes: notes || undefined });
+    closed = await closeCashSession(db, {
+      storeId, sessionId: open.id, userId: id, countedCash, notes: notes || undefined,
+      confirmarMesasAbiertas: confirmarMesasAbiertas === true,
+    });
   } catch (e) {
-    return { error: e instanceof Error && e.message === "SESSION_NOT_OPEN" ? "La caja ya fue cerrada" : "No se pudo cerrar la caja" };
+    const codigo = e instanceof Error ? e.message : "";
+    if (codigo === "SESSION_NOT_OPEN") return { error: "La caja ya fue cerrada" };
+    if (codigo === "MESAS_ABIERTAS") {
+      const mesas = (e as Error & { mesas: MesaAbiertaAlCerrar[] }).mesas;
+      return {
+        error: mesas.length === 1 ? "Hay una mesa abierta." : `Hay ${mesas.length} mesas abiertas.`,
+        mesasAbiertas: mesas,
+      };
+    }
+    if (codigo === "DIFERENCIA_SIN_MOTIVO") {
+      const diferencia = (e as Error & { diferencia: number }).diferencia;
+      return {
+        error: `La caja ${diferencia < 0 ? "tiene un faltante" : "tiene un sobrante"} de ${money(Math.abs(diferencia))}. Anotá el motivo en Notas para cerrar.`,
+        pedirMotivo: true as const,
+      };
+    }
+    return { error: "No se pudo cerrar la caja" };
   }
   revalidatePath("/caja"); revalidatePath("/vender");
   // El id vuelve para poder ofrecer la descarga del cierre sin otra consulta.

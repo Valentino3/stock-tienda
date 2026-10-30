@@ -128,7 +128,7 @@ describe("createSale idempotente por uid", () => {
     // Si el corte de red tapó la respuesta y la caja se cerró antes del
     // reintento, exigir caja abierta rechazaría una venta que YA está cobrada.
     const primera = await venta(UID);
-    await closeCashSession(db, { storeId: store, sessionId, userId: "u1", countedCash: 0 });
+    await closeCashSession(db, { storeId: store, sessionId, userId: "u1", countedCash: 0, notes: "Prueba de reintento" });
 
     const segunda = await venta(UID);
     expect(segunda.id).toBe(primera.id);

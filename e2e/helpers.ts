@@ -38,9 +38,15 @@ export async function asegurarCajaAbierta(page: Page, montoInicial = 0) {
  * verificar no es que el botón ande, sino que lo esperado coincida con lo
  * cobrado. Un arqueo que no cuadra es el peor síntoma de este sistema.
  */
-export async function cerrarCaja(page: Page, efectivoContado: number) {
+export async function cerrarCaja(page: Page, efectivoContado: number, nota = "Cierre de prueba") {
   await page.goto("/caja");
   await page.getByLabel(/efectivo contado/i).fill(String(efectivoContado));
+  // Una diferencia grande exige motivo, y un spec que limpia la caja del
+  // anterior no sabe cuánto había. La nota no cambia ningún número.
+  await page.getByLabel(/^notas/i).fill(nota);
+  // Las mesas abiertas que dejó otro spec no son asunto de este cierre.
+  const conMesas = page.getByLabel(/cerrar igual/i);
+  if (await conMesas.isVisible().catch(() => false)) await conMesas.check();
   await page.getByRole("button", { name: /^cerrar caja$/i }).click();
 
   const resumen = page.getByText("Caja cerrada");

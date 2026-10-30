@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { db } from "@/db";
 import { requireStoreOwner } from "@/lib/session";
-import { isoDate } from "@/lib/dates";
+import { haceDiasAR, hoyAR, rangoAR } from "@/lib/dates";
 import { money, moneyDiff, number } from "@/lib/format";
 import {
   getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport,
@@ -47,19 +47,8 @@ export default async function ReportesPage({
 
   const params = await searchParams;
 
-  const now = new Date();
-  const defaultTo = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  const defaultFrom = new Date(defaultTo);
-  defaultFrom.setDate(defaultFrom.getDate() - 30);
-  defaultFrom.setHours(0, 0, 0, 0);
-
-  const from = params.from ? new Date(`${params.from}T00:00:00`) : defaultFrom;
-  const to = params.to
-    ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1)
-    : defaultTo;
-
-  const fromValue = params.from ?? defaultFrom.toISOString().slice(0, 10);
-  const toValue = params.to ?? defaultTo.toISOString().slice(0, 10);
+  // Días de Argentina: ver rangoAR.
+  const { from, to, fromValue, toValue } = rangoAR(params);
 
   const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements, cuentaCorriente] = await Promise.all([
     getSalesReport(db, storeId, { from, to }),
@@ -78,9 +67,8 @@ export default async function ReportesPage({
     (s: { difference: number | null }) => s.difference !== null && s.difference !== 0
   ).length;
 
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
+  const hoy = hoyAR();
+  const haceUnaSemana = haceDiasAR(7);
 
   const rangeLabel = `${fromValue} → ${toValue}`;
   const hayFiltro = Boolean(params.from || params.to || params.set);
@@ -96,10 +84,10 @@ export default async function ReportesPage({
         actions={
           <div className="flex gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link href={`/reportes?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
+              <Link href={`/reportes?from=${hoy}&to=${hoy}`}>Hoy</Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link href={`/reportes?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+              <Link href={`/reportes?from=${haceUnaSemana}&to=${hoy}`}>Esta semana</Link>
             </Button>
             <Button asChild size="sm">
               <a href={`/reportes/export?from=${fromValue}&to=${toValue}`}>Exportar Excel</a>

@@ -269,7 +269,7 @@ describe("pagarOrden — la venta resultante es una venta común", () => {
     const [caja] = await db.select().from(cashSessions).where(eq(cashSessions.storeId, store));
     const o = await abrir();
     await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
-    await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 0 });
+    await closeCashSession(db, { storeId: store, sessionId: caja.id, userId: "u1", countedCash: 0, confirmarMesasAbiertas: true });
 
     await expect(cobrar(o.id)).rejects.toThrow("NO_OPEN_SESSION");
 

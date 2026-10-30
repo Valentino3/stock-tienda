@@ -1,3 +1,4 @@
+import { finDelDiaAR, inicioDelDiaAR } from "@/lib/dates";
 import {
   FILTROS_TIPO_MOVIMIENTO, type EstadoMovimiento, type FiltroTipoMovimiento,
 } from "@/domain/clients";
@@ -24,8 +25,8 @@ export function leerFiltros(p: ParamsMovimientos) {
   const clientId = Number(p.cliente);
   return {
     // Mismo criterio que /ventas: el día entero, `to` inclusive.
-    from: p.from ? new Date(`${p.from}T00:00:00`) : undefined,
-    to: p.to ? new Date(new Date(`${p.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined,
+    from: p.from ? inicioDelDiaAR(p.from) : undefined,
+    to: p.to ? finDelDiaAR(p.to) : undefined,
     tipo,
     clientId: Number.isInteger(clientId) && clientId > 0 ? clientId : undefined,
     userId: p.usuario || undefined,

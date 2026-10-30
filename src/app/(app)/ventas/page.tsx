@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user } from "@/db/schema";
 import { requireStore } from "@/lib/session";
-import { isoDate } from "@/lib/dates";
+import { finDelDiaAR, haceDiasAR, hoyAR, inicioDelDiaAR } from "@/lib/dates";
 import { money } from "@/lib/format";
 import { getSalesHistory } from "@/domain/sales-history";
 import { getComprobantesForSales } from "@/domain/fiscal-emision";
@@ -96,8 +96,9 @@ export default async function VentasPage({
   const storeId = currentUser.storeId;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const from = params.from ? new Date(`${params.from}T00:00:00`) : (params.all ? new Date(0) : undefined);
-  const to = params.to ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000) : undefined;
+  // Días de Argentina, no de UTC: ver inicioDelDiaAR.
+  const from = params.from ? inicioDelDiaAR(params.from) : (params.all ? new Date(0) : undefined);
+  const to = params.to ? finDelDiaAR(params.to) : undefined;
   // El <select> de vendedor ahora lo tiene tambien el empleado: con vendedor
   // elegible, "la venta que carge para Juan" es una busqueda real. Es seguro
   // porque `visibleParaUserId` acota igual lo que puede ver.
@@ -150,9 +151,8 @@ export default async function VentasPage({
   const hasFilters = Boolean(params.from || params.to || params.seller || params.facturacion);
   const usingDefaultWindow = !params.from && !params.to && !params.all;
 
-  const today = new Date();
-  const weekAgo = new Date(today);
-  weekAgo.setDate(weekAgo.getDate() - 7);
+  const hoy = hoyAR();
+  const haceUnaSemana = haceDiasAR(7);
 
   // Construye el querystring de paginación a mano en vez de
   // `new URLSearchParams({...params, page})`: `params` puede tener
@@ -178,10 +178,10 @@ export default async function VentasPage({
         actions={
           <div className="flex gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link href={`/ventas?from=${isoDate(today)}&to=${isoDate(today)}`}>Hoy</Link>
+              <Link href={`/ventas?from=${hoy}&to=${hoy}`}>Hoy</Link>
             </Button>
             <Button asChild variant="outline" size="sm">
-              <Link href={`/ventas?from=${isoDate(weekAgo)}&to=${isoDate(today)}`}>Esta semana</Link>
+              <Link href={`/ventas?from=${haceUnaSemana}&to=${hoy}`}>Esta semana</Link>
             </Button>
             <Button asChild size="sm">
               <a href={`/ventas/export${params.from || params.to ? `?from=${params.from ?? ""}&to=${params.to ?? ""}` : ""}`}>

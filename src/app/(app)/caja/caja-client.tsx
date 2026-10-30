@@ -1,6 +1,7 @@
 "use client";
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,6 +10,7 @@ import { Notice } from "@/components/ui/notice";
 import { StatTile } from "@/components/ui/stat-tile";
 import { money, number } from "@/lib/format";
 import { useEstadoOffline } from "@/lib/offline/estado";
+import { UMBRAL_DIFERENCIA_CON_MOTIVO, type MesaAbiertaAlCerrar } from "@/domain/cierre-reglas";
 import { openSession, closeSession, addGasto, addEgreso } from "./actions";
 
 const METHOD_LABEL: Record<string, string> = {
@@ -39,9 +41,13 @@ type Props = {
    * navegador en cada carga de la caja.
    */
   ventasDelTurno?: React.ReactNode;
+  /** Mesas que siguen abiertas: si se cierra, se cobran en la caja siguiente. */
+  mesasAbiertas?: MesaAbiertaAlCerrar[];
 };
 
-export function CajaClient({ session, openedByName, totals, movements, cobrosCuenta, isOwner, ventasDelTurno }: Props) {
+export function CajaClient({
+  session, openedByName, totals, movements, cobrosCuenta, isOwner, ventasDelTurno, mesasAbiertas: mesasIniciales = [],
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const { pendientes } = useEstadoOffline();
@@ -52,6 +58,9 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
   const [countedCash, setCountedCash] = useState("");
   const [notes, setNotes] = useState("");
   const [closeError, setCloseError] = useState("");
+  const [mesasAbiertas, setMesasAbiertas] = useState<MesaAbiertaAlCerrar[]>(mesasIniciales);
+  const [cerrarConMesas, setCerrarConMesas] = useState(false);
+  const [pedirMotivo, setPedirMotivo] = useState(false);
   const [closedResult, setClosedResult] = useState<ClosedResult | null>(null);
 
   const [movKind, setMovKind] = useState<"gasto" | "egreso">("gasto");
@@ -103,9 +112,14 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
       return;
     }
     startTransition(async () => {
-      const res = await closeSession(Number(countedCash), notes);
+      const res = await closeSession(Number(countedCash), notes, cerrarConMesas);
       if ("error" in res && res.error) {
         setCloseError(res.error);
+        if ("mesasAbiertas" in res && res.mesasAbiertas) {
+          setMesasAbiertas(res.mesasAbiertas);
+          setCerrarConMesas(false);
+        }
+        if ("pedirMotivo" in res && res.pedirMotivo) setPedirMotivo(true);
         return;
       }
       if ("ok" in res && res.ok) {
@@ -379,15 +393,55 @@ export function CajaClient({ session, openedByName, totals, movements, cobrosCue
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="notes">Notas (opcional)</Label>
-              <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <Label htmlFor="notes">Notas{pedirMotivo ? "" : " (opcional)"}</Label>
+              <Input
+                id="notes"
+                value={notes}
+                required={pedirMotivo}
+                aria-invalid={pedirMotivo && notes.trim().length < 3}
+                placeholder={pedirMotivo ? "Qué pasó con la diferencia" : undefined}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Obligatorias si la diferencia es de {money(UMBRAL_DIFERENCIA_CON_MOTIVO)} o más.
+              </p>
             </div>
+            {mesasAbiertas.length > 0 && (
+              // Una mesa abierta al cerrar se cobra en la caja siguiente. Bien si
+              // es la del postre; mal si se fue sin pagar y nadie lo notó.
+              <Notice tone="warn">
+                <p className="font-medium">
+                  {mesasAbiertas.length === 1 ? "Queda una mesa abierta:" : `Quedan ${mesasAbiertas.length} mesas abiertas:`}
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {mesasAbiertas.map((m) => (
+                    <li key={m.orderId}>
+                      <Link href={`/salon/${m.orderId}`} className="underline">
+                        {m.mesa ? `Mesa ${m.mesa}` : `Pedido #${m.orderId}`}
+                      </Link>{" "}
+                      · {money(m.total)}{m.status === "a_cobrar" && " · pago parcial"}
+                    </li>
+                  ))}
+                </ul>
+                <label className="mt-2 flex min-h-11 items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={cerrarConMesas}
+                    onChange={(e) => setCerrarConMesas(e.target.checked)}
+                  />
+                  Cerrar igual: se cobran en la caja siguiente
+                </label>
+              </Notice>
+            )}
             {closeError && (
               <Notice tone="danger" role="alert">
                 {closeError}
               </Notice>
             )}
-            <Button type="submit" size="lg" disabled={pending} className="w-full">
+            <Button
+              type="submit" size="lg" className="w-full"
+              disabled={pending || (mesasAbiertas.length > 0 && !cerrarConMesas)}
+            >
               {pending ? "Cerrando…" : "Cerrar caja"}
             </Button>
           </form>
