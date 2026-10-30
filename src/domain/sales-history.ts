@@ -33,9 +33,13 @@ export async function getSalesHistory(db: any, opts: SalesHistoryOpts) {
   // Sin rango explícito, se acota a los últimos 30 días — un pedido sin
   // filtro no debe traer TODO el historial de ventas de por vida.
   const from = opts.from ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const to = opts.to ?? new Date();
 
-  const conditions = [eq(sales.storeId, opts.storeId), gte(sales.createdAt, from), lt(sales.createdAt, to)];
+  const conditions = [eq(sales.storeId, opts.storeId), gte(sales.createdAt, from)];
+  // Sin "hasta" no hay tope, y no `< new Date()`: `createdAt` lo estampa el
+  // reloj de la base y `new Date()` es el del servidor de la app. Con la base
+  // apenas adelantada, la venta que se acaba de cobrar quedaba "en el futuro"
+  // y no aparecía en el historial hasta un rato después.
+  if (opts.to) conditions.push(lt(sales.createdAt, opts.to));
   if (opts.sellerId) conditions.push(eq(sales.sellerId, opts.sellerId));
   if (opts.visibleParaUserId) {
     conditions.push(or(
