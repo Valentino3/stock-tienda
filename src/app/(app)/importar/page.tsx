@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { ImportForm } from "./import-form";
 
+// Lo hereda la server action que confirma (actions.ts): aplicar una planilla
+// de miles de filas no entra en el límite por defecto de una función, y si se
+// corta la transacción se deshace entera. Igual que /importar/parse.
+export const maxDuration = 300;
+
 export default async function ImportarPage() {
   try {
     await requireOwner();

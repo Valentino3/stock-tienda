@@ -67,15 +67,16 @@ export async function createImportBatch(
  * Scopeado por tienda: un lote de OTRA tienda no se encuentra, aunque se
  * conozca su id. Un lote ya confirmado tampoco.
  *
- * El lote se marca confirmado ANTES de ejecutarlo, con un UPDATE condicional
- * que devuelve la fila. Ese UPDATE es la reclamación: si dos requests entran a
- * la vez (doble click), solo una consigue la fila y la otra ve 0 y aborta. Un
+ * El lote se marca confirmado con un UPDATE condicional que devuelve la fila.
+ * Ese UPDATE es la reclamación: si dos requests entran a la vez (doble click),
+ * la segunda espera el lock de la fila, la encuentra ya confirmada y aborta. Un
  * SELECT-y-después-UPDATE tendría una ventana de carrera en la que ambas leen
  * "pending" y ambas importan, duplicando el stock.
  *
- * La contra es que si executeImport falla, el lote queda marcado y hay que
- * volver a subir el archivo. Es el lado seguro para fallar: peor sería duplicar
- * el stock de una tienda.
+ * La reclamación y la importación van en la MISMA transacción: si la
+ * importación falla (o la función se corta por tiempo), el lote vuelve a
+ * quedar pendiente y se puede confirmar de nuevo sin volver a subir el
+ * archivo. Antes quedaba marcado como usado aunque no se hubiera aplicado nada.
  */
 export async function confirmImportBatch(
   db: any,
@@ -83,21 +84,23 @@ export async function confirmImportBatch(
   batchId: string,
   userId: string
 ): Promise<{ created: number; updated: number; skipped: number }> {
-  const [batch] = await db.update(importBatches)
-    .set({ status: "confirmed" })
-    .where(and(
-      eq(importBatches.id, batchId),
-      eq(importBatches.storeId, storeId),
-      eq(importBatches.status, "pending"),
-    ))
-    .returning();
-  if (!batch) throw new Error("BATCH_NOT_FOUND");
+  return db.transaction(async (tx: any) => {
+    const [batch] = await tx.update(importBatches)
+      .set({ status: "confirmed" })
+      .where(and(
+        eq(importBatches.id, batchId),
+        eq(importBatches.storeId, storeId),
+        eq(importBatches.status, "pending"),
+      ))
+      .returning();
+    if (!batch) throw new Error("BATCH_NOT_FOUND");
 
-  return executeImport(
-    db,
-    storeId,
-    batch.rows as ValidatedRow[],
-    userId,
-    { mode: batch.mode as "absolute" | "add" }
-  );
+    return executeImport(
+      tx,
+      storeId,
+      batch.rows as ValidatedRow[],
+      userId,
+      { mode: batch.mode as "absolute" | "add" }
+    );
+  });
 }

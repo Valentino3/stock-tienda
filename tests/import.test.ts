@@ -512,3 +512,120 @@ describe("planilla sin columna de Stock", () => {
     expect(await db.select().from(stockMovements)).toHaveLength(0);
   });
 });
+
+// Un catálogo de cartas tiene miles de filas. La confirmación aplica todo en
+// lotes: antes eran dos o tres viajes a la base por fila y la función se
+// cortaba por tiempo, deshaciendo la importación entera.
+describe("planillas grandes", () => {
+  it("actualiza miles de variantes existentes: precio, stock, atributos y movimientos", async () => {
+    const N = 1200;
+    const [p] = await db.insert(products).values({ storeId: store, name: "Sobre", basePrice: 100 }).returning();
+    await db.insert(productVariants).values(Array.from({ length: N }, (_, i) => ({
+      storeId: store, productId: p.id, name: `V${i}`, sku: `UP-${i}`, stock: 10,
+    })));
+
+    const rows = Array.from({ length: N }, (_, i) => row(i + 2, {
+      product: "Sobre", variant: `V${i}`, sku: `UP-${i}`,
+      price: 200 + i,
+      // La mitad cambia de stock; la otra mitad queda igual y no debe dejar movimiento.
+      stock: i % 2 === 0 ? 10 + i : 10,
+      priceCash: 150 + i,
+      supplier: `Prov ${i % 3}`,
+      condition: "NM",
+    }));
+    const validated = await validateImportRows(db, store, rows);
+    const res = await executeImport(db, store, validated, "u1");
+    expect(res).toEqual({ created: 0, updated: N, skipped: 0 });
+
+    const [v7] = await db.select().from(productVariants).where(eq(productVariants.sku, "UP-7"));
+    expect(v7).toMatchObject({ price: 207, stock: 10, priceCash: 157, supplier: "Prov 1", condition: "NM" });
+    const [v8] = await db.select().from(productVariants).where(eq(productVariants.sku, "UP-8"));
+    expect(v8).toMatchObject({ price: 208, stock: 18, priceCash: 158, supplier: "Prov 2" });
+    const [ultimo] = await db.select().from(productVariants).where(eq(productVariants.sku, `UP-${N - 2}`));
+    expect(ultimo.stock).toBe(10 + N - 2);
+
+    const movimientos = await db.select().from(stockMovements).where(eq(stockMovements.reason, "importación"));
+    // Las filas pares menos la 0, cuyo stock queda en 10.
+    expect(movimientos).toHaveLength(N / 2 - 1);
+    expect(movimientos.every((m) => m.type === "ajuste" && m.userId === "u1")).toBe(true);
+  });
+
+  it("crea miles de variantes nuevas en tandas, sin pasar el tope de parámetros", async () => {
+    const N = 3000;
+    const rows = Array.from({ length: N }, (_, i) => row(i + 2, {
+      product: `Carta ${i % 700}`, variant: `Ed ${i}`, sku: `NEW-${i}`, price: 100, stock: 1,
+      priceCash: 90, priceWholesale: 80, costArs: 50, supplier: "Distri", supplierSku: `D-${i}`,
+      setName: "Base", condition: "NM", language: "EN", foil: i % 2 === 0,
+    }));
+    const validated = await validateImportRows(db, store, rows);
+    const res = await executeImport(db, store, validated, "u1");
+    expect(res).toEqual({ created: N, updated: 0, skipped: 0 });
+
+    expect(await db.select().from(products).where(eq(products.storeId, store))).toHaveLength(700);
+    const [ultima] = await db.select().from(productVariants).where(eq(productVariants.sku, `NEW-${N - 1}`));
+    expect(ultima).toMatchObject({ stock: 1, supplierSku: `D-${N - 1}`, foil: false });
+    const movimientos = await db.select().from(stockMovements).where(eq(stockMovements.reason, "importación"));
+    expect(movimientos).toHaveLength(N);
+  });
+
+  it("filas con distintas columnas: lo que una fila no trae no se pisa", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Caja", basePrice: 100 }).returning();
+    await db.insert(productVariants).values([
+      { storeId: store, productId: p.id, name: "A", sku: "MIX-A", stock: 1, supplier: "Viejo A" },
+      { storeId: store, productId: p.id, name: "B", sku: "MIX-B", stock: 1, supplier: "Viejo B" },
+    ]);
+    const validated = await validateImportRows(db, store, [
+      row(2, { product: "Caja", variant: "A", sku: "MIX-A", price: null, stock: null, supplier: "Nuevo A" }),
+      row(3, { product: "Caja", variant: "B", sku: "MIX-B", price: null, stock: null, costArs: 70 }),
+    ]);
+    await executeImport(db, store, validated, "u1");
+
+    const [a] = await db.select().from(productVariants).where(eq(productVariants.sku, "MIX-A"));
+    const [b] = await db.select().from(productVariants).where(eq(productVariants.sku, "MIX-B"));
+    expect(a.supplier).toBe("Nuevo A");
+    expect(b).toMatchObject({ supplier: "Viejo B", costArs: 70 });
+  });
+
+  it("dos filas para la misma variante: en absoluto gana la última, en «add» se suman", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Dado", basePrice: 100 }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "Rojo", stock: 5 });
+    const filas = [
+      row(2, { product: "Dado", variant: "Rojo", sku: null, price: null, stock: 8 }),
+      row(3, { product: "Dado", variant: "Rojo", sku: null, price: null, stock: 3 }),
+    ];
+
+    const absoluto = await validateImportRows(db, store, filas, { matchByName: true });
+    await executeImport(db, store, absoluto, "u1");
+    let [d] = await db.select().from(productVariants).where(eq(productVariants.name, "Rojo"));
+    expect(d.stock).toBe(3);
+
+    const suma = await validateImportRows(db, store, filas, { matchByName: true });
+    await executeImport(db, store, suma, "u1", { mode: "add" });
+    [d] = await db.select().from(productVariants).where(eq(productVariants.name, "Rojo"));
+    expect(d.stock).toBe(14);
+  });
+
+  it("si la importación falla, el lote queda pendiente y se puede confirmar de nuevo", async () => {
+    const [p] = await db.insert(products).values({ storeId: store, name: "Mazo", basePrice: 500 }).returning();
+    const [v] = await db.insert(productVariants)
+      .values({ storeId: store, productId: p.id, name: "", sku: "MZ-1", stock: 2 }).returning();
+    const validated = await validateImportRows(db, store, [
+      row(2, { product: "Mazo", variant: "", sku: "MZ-1", price: null, stock: 9 }),
+    ]);
+    const { batchId } = await createImportBatch(db, {
+      storeId: store, userId: "u1", source: "excel", mode: "absolute", rows: validated,
+    });
+
+    // La variante desaparece entre el preview y la confirmación.
+    await db.delete(productVariants).where(eq(productVariants.id, v.id));
+    await expect(confirmImportBatch(db, store, batchId, "u1")).rejects.toThrow("VARIANT_GONE");
+    const [lote] = await db.select().from(importBatches).where(eq(importBatches.id, batchId));
+    expect(lote.status).toBe("pending");
+
+    // Se resuelve el problema y se confirma el MISMO lote, sin volver a subir.
+    await db.insert(productVariants).values({ storeId: store, productId: p.id, name: "", sku: "MZ-1", stock: 2 });
+    await expect(confirmImportBatch(db, store, batchId, "u1")).resolves.toMatchObject({ updated: 1 });
+    const [mz] = await db.select().from(productVariants).where(eq(productVariants.sku, "MZ-1"));
+    expect(mz.stock).toBe(9);
+  });
+});
