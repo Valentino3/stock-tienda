@@ -92,11 +92,19 @@ export function ImportForm() {
     startTransition(async () => {
       try {
         const res = await confirmImport(batch.batchId);
+        if (!("ok" in res)) {
+          // El lote sigue pendiente: si la falla fue transitoria, confirmar de
+          // nuevo funciona sin volver a subir el archivo.
+          setError(res.error);
+          return;
+        }
         setResult(res);
         setBatch(null);
       } catch (err) {
+        // Corte de red o de tiempo antes de que el servidor contestara. La
+        // importación es una sola transacción: o entró entera o no entró nada.
         console.error("[importar] confirmación falló", err);
-        setError("No se pudo confirmar la importación. Volvé a subir el archivo.");
+        setError("Se cortó la conexión antes de saber si la importación entró. Revisá Productos antes de confirmar de nuevo.");
       }
     });
   }
