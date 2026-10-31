@@ -1,8 +1,10 @@
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  cashMovements, cashSessions, clientAccountMovements, sales, salePayments,
+  cashMovements, cashSessions, clientAccountMovements, diningTables, orders, sales, salePayments,
   type CashMovement, type CashSession,
 } from "@/db/schema";
+import { MOTIVO_MIN } from "@/domain/clients";
+import { UMBRAL_DIFERENCIA_CON_MOTIVO, type MesaAbiertaAlCerrar } from "@/domain/cierre-reglas";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -90,7 +92,14 @@ export async function openCashSession(db: any, input: { storeId: number; userId:
 
 export async function closeCashSession(
   db: any,
-  input: { storeId: number; sessionId: number; userId: string; countedCash: number; notes?: string }
+  input: {
+    storeId: number; sessionId: number; userId: string; countedCash: number; notes?: string;
+    /**
+     * Quien cierra vio las mesas abiertas y cierra igual: se van a cobrar en
+     * la caja siguiente. Sin esto, cerrar con mesas abiertas se rechaza.
+     */
+    confirmarMesasAbiertas?: boolean;
+  }
 ): Promise<CashSession> {
   return db.transaction(async (tx: any) => {
     // Lock the session row so a concurrent close (or a sale committing
@@ -100,6 +109,19 @@ export async function closeCashSession(
     const [session] = await tx.select().from(cashSessions)
       .where(and(eq(cashSessions.id, input.sessionId), eq(cashSessions.storeId, input.storeId))).for("update");
     if (!session || session.closedAt) throw new Error("SESSION_NOT_OPEN");
+
+    // Una mesa abierta al cerrar se cobra en la caja siguiente: está bien si
+    // es la del postre, y está mal si es una mesa que se fue sin pagar y nadie
+    // lo notó. Quien cierra la tiene que ver antes.
+    if (!input.confirmarMesasAbiertas) {
+      const abiertas: MesaAbiertaAlCerrar[] = await tx
+        .select({ orderId: orders.id, mesa: diningTables.name, total: orders.total, status: orders.status })
+        .from(orders)
+        .leftJoin(diningTables, eq(orders.tableId, diningTables.id))
+        .where(and(eq(orders.storeId, input.storeId), inArray(orders.status, ["abierta", "a_cobrar"])))
+        .orderBy(orders.openedAt);
+      if (abiertas.length > 0) throw Object.assign(new Error("MESAS_ABIERTAS"), { mesas: abiertas });
+    }
 
     // Se suma de `sale_payments` y no de `sales.total`: una venta puede
     // haberse cobrado con varios medios, y agrupar por el predominante metería
@@ -132,6 +154,11 @@ export async function closeCashSession(
     const byMethod = Object.fromEntries(totals.map((t: any) => [t.method, t.total]));
     const expectedCash = round2(session.openingCash + (byMethod.efectivo ?? 0) + inflow - out);
 
+    const diferencia = round2(input.countedCash - expectedCash);
+    if (Math.abs(diferencia) >= UMBRAL_DIFERENCIA_CON_MOTIVO && (input.notes?.trim().length ?? 0) < MOTIVO_MIN) {
+      throw Object.assign(new Error("DIFERENCIA_SIN_MOTIVO"), { diferencia });
+    }
+
     const [closed] = await tx.update(cashSessions)
       .set({
         // El reloj de la base, el mismo que estampa `sales.createdAt`. La hoja
@@ -144,7 +171,7 @@ export async function closeCashSession(
         totalTransfer: round2(byMethod.transferencia ?? 0),
         totalCard: round2(byMethod.tarjeta ?? 0),
         countedCash: round2(input.countedCash),
-        difference: round2(input.countedCash - expectedCash),
+        difference: diferencia,
         notes: input.notes,
       })
       .where(and(eq(cashSessions.id, input.sessionId), eq(cashSessions.storeId, input.storeId), isNull(cashSessions.closedAt)))

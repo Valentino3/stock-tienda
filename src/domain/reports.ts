@@ -108,17 +108,25 @@ export async function getSellerSalesSummary(
   return [...porVendedor.values()].sort((a, b) => b.total - a.total);
 }
 
+/**
+ * `created_at` es un timestamp sin zona guardado en UTC. Agrupar por su fecha
+ * tal cual mandaba lo vendido después de las 21 de Argentina al día
+ * siguiente: en un restaurante, todo el servicio de la noche. Se convierte a
+ * hora argentina antes de sacarle el día.
+ */
+const diaAR = sql`((${sales.createdAt} at time zone 'UTC') at time zone 'America/Argentina/Buenos_Aires')`;
+
 export async function getSalesReport(db: any, storeId: number, range: { from: Date; to: Date }) {
   const notVoided = and(eq(sales.storeId, storeId), eq(sales.voided, false), between(sales.createdAt, range.from, range.to));
   const byDay = await db
     .select({
-      day: sql<string>`to_char(${sales.createdAt}, 'YYYY-MM-DD')`,
+      day: sql<string>`to_char(${diaAR}, 'YYYY-MM-DD')`,
       count: sql<number>`count(*)`.mapWith(Number),
       total: sql<number>`sum(${sales.total})`.mapWith(Number),
     })
     .from(sales).where(notVoided)
-    .groupBy(sql`to_char(${sales.createdAt}, 'YYYY-MM-DD')`)
-    .orderBy(sql`to_char(${sales.createdAt}, 'YYYY-MM-DD')`);
+    .groupBy(sql`to_char(${diaAR}, 'YYYY-MM-DD')`)
+    .orderBy(sql`to_char(${diaAR}, 'YYYY-MM-DD')`);
   // De `sale_payments`: con pago dividido una venta aporta a mas de un medio.
   // `count` cuenta PAGOS, no ventas, asi que su suma ya no es la cantidad de
   // ventas del periodo — la columna se llama "Pagos" en la pantalla.

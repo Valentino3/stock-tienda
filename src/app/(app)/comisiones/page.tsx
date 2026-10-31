@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { user } from "@/db/schema";
 import { requireStoreOwner } from "@/lib/session";
-import { isoDate } from "@/lib/dates";
+import { haceDiasAR, hoyAR, rangoAR } from "@/lib/dates";
 import { money, number } from "@/lib/format";
 import { getSellerSalesSummary, type ResumenVendedor } from "@/domain/reports";
 import { listCommissions } from "@/domain/commissions";
@@ -28,18 +28,8 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
 
   const params = await searchParams;
 
-  const now = new Date();
-  const defaultTo = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-  const defaultFrom = new Date(defaultTo);
-  defaultFrom.setDate(defaultFrom.getDate() - 30);
-  defaultFrom.setHours(0, 0, 0, 0);
-
-  const from = params.from ? new Date(`${params.from}T00:00:00`) : defaultFrom;
-  const to = params.to
-    ? new Date(new Date(`${params.to}T00:00:00`).getTime() + 24 * 60 * 60 * 1000 - 1)
-    : defaultTo;
-  const fromValue = params.from ?? defaultFrom.toISOString().slice(0, 10);
-  const toValue = params.to ?? defaultTo.toISOString().slice(0, 10);
+  // Días de Argentina: ver rangoAR.
+  const { from, to, fromValue, toValue } = rangoAR(params);
 
   const [summary, commissions, employees] = await Promise.all([
     getSellerSalesSummary(db, storeId, { from, to }),
@@ -52,9 +42,8 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
     .filter((e: { banned: boolean | null }) => !e.banned)
     .map((e: { id: string; name: string }) => ({ id: e.id, name: e.name }));
 
-  const today = new Date();
-  const monthAgo = new Date(today);
-  monthAgo.setMonth(monthAgo.getMonth() - 1);
+  const hoy = hoyAR();
+  const haceUnMes = haceDiasAR(30);
 
   return (
     <div className="space-y-8">
@@ -64,7 +53,7 @@ export default async function ComisionesPage({ searchParams }: { searchParams: P
         actions={
           <div className="flex gap-2">
             <Button asChild variant="outline" size="sm">
-              <Link href={`/comisiones?from=${isoDate(monthAgo)}&to=${isoDate(today)}`}>Último mes</Link>
+              <Link href={`/comisiones?from=${haceUnMes}&to=${hoy}`}>Último mes</Link>
             </Button>
           </div>
         }
