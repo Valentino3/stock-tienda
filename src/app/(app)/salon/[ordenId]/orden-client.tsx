@@ -67,6 +67,9 @@ export function OrdenClient({
   // Línea ya mandada que se está anulando, y si se está cancelando la mesa.
   const [anulando, setAnulando] = useState<OrderItem | null>(null);
   const [cancelando, setCancelando] = useState(false);
+  // "Ahora no" a la pregunta de los comensales: no se vuelve a preguntar en
+  // esta pantalla, y se cargan después desde el panel de cobro.
+  const [sinContarComensales, setSinContarComensales] = useState(false);
   const [errorDialogo, setErrorDialogo] = useState("");
 
   const cerrada = orden.status === "pagada" || orden.status === "cancelada";
@@ -329,6 +332,32 @@ export function OrdenClient({
           <CardTitle className="text-base">Comanda</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!cerrada && orden.guests == null && items.length === 0 && !sinContarComensales && (
+            // Se pregunta al abrir, que es cuando el mozo lo sabe. Escondido en
+            // el panel de cobro quedaba vacío casi siempre, y sin comensales no
+            // hay cubiertos ni promedio por cubierto.
+            <div className="rounded-lg border border-border bg-muted/30 p-3">
+              <p className="mb-2 text-sm font-medium">¿Cuántos son?</p>
+              <div className="grid grid-cols-4 gap-2 sm:grid-cols-8">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                  <Button
+                    key={n} type="button" variant="outline" className="h-11"
+                    disabled={pending}
+                    onClick={() => correr(() => ponerComensales(orden.id, n))}
+                  >
+                    {n}
+                  </Button>
+                ))}
+              </div>
+              <Button
+                type="button" variant="ghost" size="sm" className="mt-1"
+                onClick={() => setSinContarComensales(true)}
+              >
+                Ahora no
+              </Button>
+            </div>
+          )}
+
           {!cerrada && (
             <div className="relative">
               <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -110,11 +110,11 @@ describe("gastronomía", () => {
     expect(hrefs).not.toContain("/mesas");
   });
 
-  it("no ofrece importar por Excel", () => {
+  it("ofrece importar por Excel al dueño", () => {
     const hrefs = VERTICALS.gastronomia
       .nav({ isOwner: true, openAvisos: 0 })
       .flatMap((g) => g.links.map((l) => l.href));
-    expect(hrefs).not.toContain("/importar");
+    expect(hrefs).toContain("/importar");
   });
 
   it("conserva caja, ventas, clientes y facturación: se cobra igual que en cualquier rubro", () => {
