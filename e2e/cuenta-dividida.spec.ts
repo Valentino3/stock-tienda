@@ -21,6 +21,8 @@ async function pedir(page: Page, texto: string, veces = 1) {
     await expect(buscador).toHaveValue("");
     await buscador.fill(texto);
     await page.getByRole("button", { name: new RegExp(texto, "i") }).first().click();
+    // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+    await page.getByRole("button", { name: /agregar a la comanda/i }).click();
     await expect(lineas).toHaveCount(antes + 1);
   }
 }

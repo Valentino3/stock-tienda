@@ -31,6 +31,8 @@ test("anular una parte de lo mandado: la cuenta baja y queda el motivo", async (
   const buscador = page.getByPlaceholder(/buscar plato o producto/i);
   await buscador.fill("Milanesa");
   await page.getByRole("button", { name: /milanesa/i }).first().click();
+  // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+  await page.getByRole("button", { name: /agregar a la comanda/i }).click();
   const linea = page.getByRole("listitem").filter({ hasText: "Milanesa napolitana" });
   await expect(linea).toHaveCount(1);
   await linea.getByRole("button", { name: /sumar uno/i }).click();

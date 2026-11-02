@@ -27,6 +27,8 @@ test("se pasa la mesa a otro mozo y a otra mesa, y la venta es del mozo", async 
 
   await page.getByPlaceholder(/buscar plato o producto/i).fill("Flan");
   await page.getByRole("button", { name: /flan/i }).first().click();
+  // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+  await page.getByRole("button", { name: /agregar a la comanda/i }).click();
   await expect(page.getByRole("listitem").filter({ hasText: "Flan casero" })).toHaveCount(1);
 
   // Arranca siendo de quien la abrió.

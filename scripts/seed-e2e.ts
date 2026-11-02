@@ -94,13 +94,16 @@ async function main() {
 
   // Platos: sin control de stock, que es el default del rubro.
   const carta = [
-    { nombre: "Milanesa napolitana", precio: 8000 },
-    { nombre: "Ensalada César", precio: 6500 },
-    { nombre: "Flan casero", precio: 3000 },
+    { nombre: "Milanesa napolitana", precio: 8000, categoria: "Principales" },
+    { nombre: "Ensalada César", precio: 6500, categoria: "Entradas" },
+    { nombre: "Flan casero", precio: 3000, categoria: "Postres" },
   ];
   for (const p of carta) {
     const [prod] = await db.insert(schema.products)
-      .values({ storeId: resto.id, name: p.nombre, basePrice: p.precio, tracksStock: false, station: "cocina" })
+      .values({
+        storeId: resto.id, name: p.nombre, basePrice: p.precio, tracksStock: false, station: "cocina",
+        category: p.categoria,
+      })
       .returning();
     await db.insert(schema.productVariants)
       .values({ storeId: resto.id, productId: prod.id, name: "", stock: 0 });
@@ -109,7 +112,7 @@ async function main() {
   // La bebida SÍ lleva stock: es lo que permite testear el carrito mixto y que
   // el descuento de stock siga andando en un restaurante.
   const [vino] = await db.insert(schema.products)
-    .values({ storeId: resto.id, name: "Vino", basePrice: 12000, tracksStock: true })
+    .values({ storeId: resto.id, name: "Vino", basePrice: 12000, tracksStock: true, category: "Bebidas" })
     .returning();
   await db.insert(schema.productVariants)
     .values({ storeId: resto.id, productId: vino.id, name: "Malbec", stock: 24 });

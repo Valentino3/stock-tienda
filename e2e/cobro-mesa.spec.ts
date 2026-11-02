@@ -26,6 +26,8 @@ test("se cobra una mesa con efectivo y tarjeta a la vez", async ({ page }) => {
 
   await page.getByPlaceholder(/buscar plato o producto/i).fill("Milanesa");
   await page.getByRole("button", { name: /milanesa/i }).first().click();
+  // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+  await page.getByRole("button", { name: /agregar a la comanda/i }).click();
   const linea = page.getByRole("listitem").filter({ hasText: "Milanesa napolitana" });
   await expect(linea).toHaveCount(1);
   await linea.getByRole("button", { name: /sumar uno/i }).click();
