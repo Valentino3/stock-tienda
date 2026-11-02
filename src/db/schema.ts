@@ -804,9 +804,63 @@ export const cashMovements = pgTable("cash_movements", {
   kind: cashMovementKindEnum("kind").notNull(),
   amount: numeric("amount", { precision: 12, scale: 2, mode: "number" }).notNull(), // positivo
   description: text("description").notNull(),
+  // Rubro del gasto pagado con plata de la caja. Opcional: los movimientos
+  // anteriores no lo tienen, y un egreso (el dueño que se lleva efectivo) no
+  // es un gasto del local.
+  rubroId: integer("rubro_id").references((): AnyPgColumn => rubros.id),
   createdBy: text("created_by").notNull().references(() => user.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [index("cash_movements_session_idx").on(table.cashSessionId)]);
+
+/**
+ * Rubros de gasto de la tienda: Mercadería, Sueldos y jornales, Servicios…
+ *
+ * Una lista editable y no un enum: cada local arma los suyos. Un rubro usado
+ * no se borra, se desactiva, para que los gastos viejos sigan diciendo en qué
+ * se gastó.
+ */
+export const rubros = pgTable("rubros", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  nombre: text("nombre").notNull(),
+  activo: boolean("activo").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [uniqueIndex("rubros_store_nombre_idx").on(t.storeId, t.nombre)]);
+
+/**
+ * Gastos que NO salen de la caja: sueldos, alquiler, la luz, lo que se paga
+ * por transferencia. Son historial, no plata del cajón, así que no tocan el
+ * arqueo. Lo que se paga en efectivo desde la caja sigue siendo un
+ * `cash_movements` de tipo gasto.
+ *
+ * `fecha` es el día al que corresponde el gasto (un `date` de Argentina), no
+ * cuándo se cargó: el sueldo de octubre se puede cargar el 2 de noviembre.
+ *
+ * Un gasto mal cargado no se borra: se anula, con quién y por qué, igual que
+ * un movimiento de cuenta corriente.
+ */
+export const gastos = pgTable("gastos", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  rubroId: integer("rubro_id").notNull().references(() => rubros.id),
+  fecha: date("fecha", { mode: "string" }).notNull(),
+  monto: numeric("monto", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  medio: text("medio").notNull(),
+  detalle: text("detalle"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  voidedAt: timestamp("voided_at"),
+  voidedBy: text("voided_by").references(() => user.id),
+  voidReason: text("void_reason"),
+}, (t) => [
+  index("gastos_store_fecha_idx").on(t.storeId, t.fecha),
+  check("gastos_monto_positivo", sql`${t.monto} > 0`),
+  check(
+    "gastos_anulacion_completa",
+    sql`(${t.voidedAt} is null and ${t.voidedBy} is null and ${t.voidReason} is null)
+      or (${t.voidedAt} is not null and ${t.voidedBy} is not null and ${t.voidReason} is not null)`,
+  ),
+]);
 
 // Comisiones anotadas a mano por el dueño para un empleado y un período.
 export const commissions = pgTable("commissions", {
@@ -1192,6 +1246,8 @@ export type SaleItem = typeof saleItems.$inferSelect;
 export type StockMovement = typeof stockMovements.$inferSelect;
 export type CashSession = typeof cashSessions.$inferSelect;
 export type CashMovement = typeof cashMovements.$inferSelect;
+export type Rubro = typeof rubros.$inferSelect;
+export type Gasto = typeof gastos.$inferSelect;
 export type Commission = typeof commissions.$inferSelect;
 export type StoreFiscalConfig = typeof storeFiscalConfig.$inferSelect;
 export type StorePricingConfig = typeof storePricingConfig.$inferSelect;

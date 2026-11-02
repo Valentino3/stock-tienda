@@ -274,6 +274,13 @@
       "when": 1793370856916,
       "tag": "0038_mozo_de_la_mesa",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793635749145,
+      "tag": "0039_rubros_y_gastos",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,7 @@ import { requireStore } from "@/lib/session";
 import { efectivoDeCuentaEnCaja, getOpenSession, getSessionCashMovements } from "@/domain/cash";
 import { getVentasDelTurno } from "@/domain/cash-close";
 import { listarOrdenesAbiertas } from "@/domain/orders";
+import { listarRubros } from "@/domain/gastos";
 import { VentasDelTurno } from "@/components/caja/ventas-del-turno";
 import { PageHeader } from "@/components/ui/page-header";
 import { CajaClient } from "./caja-client";
@@ -84,6 +85,7 @@ export default async function CajaPage() {
         cobrosCuenta={cobrosCuenta as any[]}
         isOwner={isOwner}
         mesasAbiertas={mesasAbiertas}
+        rubros={(await listarRubros(db, currentUser.storeId)).map((r) => ({ id: r.id, nombre: r.nombre }))}
         ventasDelTurno={
           <VentasDelTurno
             remitos={ventas ?? []}

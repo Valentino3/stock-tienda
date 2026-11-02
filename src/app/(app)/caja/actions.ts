@@ -10,13 +10,18 @@ const MOVEMENT_ERRORS: Record<string, string> = {
   INVALID_AMOUNT: "Monto inválido",
   EMPTY_DESCRIPTION: "Escribí una descripción",
   NO_OPEN_SESSION: "No hay caja abierta",
+  RUBRO_NO_ENCONTRADO: "Ese rubro no existe",
+  RUBRO_INACTIVO: "Ese rubro está desactivado",
 };
 
-async function recordMovement(kind: "gasto" | "egreso", storeId: number, userId: string, amount: number, description: string) {
+async function recordMovement(
+  kind: "gasto" | "egreso", storeId: number, userId: string, amount: number, description: string,
+  rubroId: number | null = null,
+) {
   const open = await getOpenSession(db, storeId);
   if (!open) return { error: "No hay caja abierta" };
   try {
-    await createCashMovement(db, { storeId, sessionId: open.id, kind, amount, description, userId });
+    await createCashMovement(db, { storeId, sessionId: open.id, kind, amount, description, userId, rubroId });
   } catch (e) {
     return { error: (e instanceof Error && MOVEMENT_ERRORS[e.message]) || "No se pudo registrar" };
   }
@@ -25,9 +30,10 @@ async function recordMovement(kind: "gasto" | "egreso", storeId: number, userId:
 }
 
 // Gasto: compra/pago operativo. Lo puede cargar cualquier usuario de la tienda.
-export async function addGasto(amount: number, description: string) {
+export async function addGasto(amount: number, description: string, rubroId?: number | null) {
   const { id, storeId } = await requireStore();
-  return recordMovement("gasto", storeId, id, amount, description);
+  const rubro = rubroId == null || rubroId === 0 ? null : Number(rubroId);
+  return recordMovement("gasto", storeId, id, amount, description, Number.isInteger(rubro) ? rubro : null);
 }
 
 // Egreso: retiro de efectivo. Solo dueño.

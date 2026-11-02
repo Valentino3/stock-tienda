@@ -70,6 +70,7 @@ const NAV_ADMIN = (
             // Importar, que tampoco tiene sentido con un menu de 40 platos.
             ...(extra.precios ? [{ href: "/precios", label: "Precios" }] : []),
             { href: "/reportes", label: "Reportes" },
+            { href: "/gastos", label: "Gastos" },
             { href: "/comisiones", label: "Comisiones" },
             { href: "/facturacion", label: "Facturación" },
             { href: "/avisos", label: "Avisos", badge: ctx.openAvisos },

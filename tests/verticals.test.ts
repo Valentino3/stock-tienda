@@ -26,6 +26,7 @@ const NAV_RETAIL_DUENO = [
       { href: "/importar", label: "Importar" },
       { href: "/precios", label: "Precios" },
       { href: "/reportes", label: "Reportes" },
+      { href: "/gastos", label: "Gastos" },
       { href: "/comisiones", label: "Comisiones" },
       { href: "/facturacion", label: "Facturación" },
       { href: "/avisos", label: "Avisos", badge: 3 },

@@ -4,6 +4,7 @@ import {
   type CashMovement, type CashSession,
 } from "@/db/schema";
 import { MOTIVO_MIN } from "@/domain/clients";
+import { validarRubro } from "@/domain/gastos";
 import { UMBRAL_DIFERENCIA_CON_MOTIVO, type MesaAbiertaAlCerrar } from "@/domain/cierre-reglas";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -41,10 +42,16 @@ export async function getOpenSession(db: any, storeId: number): Promise<CashSess
 // Ambos tipos restan del efectivo esperado al cerrar (ver closeCashSession).
 export async function createCashMovement(
   db: any,
-  input: { storeId: number; sessionId: number; kind: "gasto" | "egreso"; amount: number; description: string; userId: string }
+  input: {
+    storeId: number; sessionId: number; kind: "gasto" | "egreso"; amount: number; description: string; userId: string;
+    /** Solo para un gasto: en qué se gastó. Un egreso no es un gasto del local. */
+    rubroId?: number | null;
+  }
 ): Promise<CashMovement> {
   if (!(input.amount > 0)) throw new Error("INVALID_AMOUNT");
   if (!input.description.trim()) throw new Error("EMPTY_DESCRIPTION");
+  const rubroId = input.kind === "gasto" ? input.rubroId ?? null : null;
+  if (rubroId != null) await validarRubro(db, input.storeId, rubroId);
   const session = await getOpenSession(db, input.storeId);
   if (!session || session.id !== input.sessionId) throw new Error("NO_OPEN_SESSION");
   const [row] = await db.insert(cashMovements).values({
@@ -52,6 +59,7 @@ export async function createCashMovement(
     kind: input.kind,
     amount: round2(input.amount),
     description: input.description.trim(),
+    rubroId,
     createdBy: input.userId,
   }).returning();
   return row;
