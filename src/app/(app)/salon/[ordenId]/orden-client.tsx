@@ -13,10 +13,11 @@ import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
   agregarVariosALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cambiarMozo,
   cancelarComanda, cobrarComanda, dividirLinea, mandarComandaACocina, pasarAMesa, ponerComensales,
-  ponerNota,
+  ponerNota, agregarLibreALaComanda,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
 import { MotivoDialog, type ResultadoMotivo } from "./motivo-dialog";
+import { ItemLibreForm } from "../../vender/item-libre-form";
 import type { PlatoDeLaCarta } from "@/domain/orders";
 
 type LineaDeBandeja = { variantId: number; nombre: string; precio: number; cantidad: number };
@@ -484,6 +485,15 @@ export function OrdenClient({
                 </div>
               )}
             </div>
+          )}
+
+          {!cerrada && (
+            <ItemLibreForm
+              offline={false}
+              onAgregar={({ nombre, precio, cantidad }) => {
+                correr(() => agregarLibreALaComanda(orden.id, nombre, precio, cantidad));
+              }}
+            />
           )}
 
           {bandeja.length > 0 && (

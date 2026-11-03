@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 const NOMBRE_MAX = 120;
 
 /**
- * Agregar al carrito algo que no está en el catálogo, con nombre, precio y
+ * Agregar al carrito (o a la comanda de una mesa) algo que no está en el catálogo, con nombre, precio y
  * cantidad escritos a mano: "Torta por encargo", "Descorche".
  *
  * Queda registrado quién lo cargó (Reportes → Ítems libres), porque el precio
