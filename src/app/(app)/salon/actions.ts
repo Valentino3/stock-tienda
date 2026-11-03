@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  borrarMesa, cambiarMesaActiva, crearMesa, dividirItem, editarMesa, faltaStock, moverOrden, pagarOrden,
+  agregarItems, borrarMesa, cambiarMesaActiva, crearMesa, dividirItem, editarMesa, faltaStock, moverOrden, pagarOrden,
   transferirMozo,
 } from "@/domain/orders";
 import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
@@ -469,3 +469,32 @@ export async function eliminarMesa(tableId: number) {
     return { error: traducir(e) };
   }
 }
+
+/**
+ * Lo que el mozo juntó en la bandeja, de una vez. Si algo se agotó mientras
+ * tanto, no entra nada y el mensaje dice qué sacar.
+ */
+export async function agregarVariosALaComanda(orderId: number, items: { variantId: number; quantity: number }[]) {
+  const { storeId } = await requireStore();
+  if (!Array.isArray(items)) return { error: traducir(new Error("INVALID_QUANTITY")) };
+  const lineas = items.map((i) => ({ variantId: Number(i?.variantId), quantity: Number(i?.quantity) }));
+  try {
+    await agregarItems(db, { storeId, orderId: Number(orderId), items: lineas });
+  } catch (e) {
+    if (e instanceof Error && e.message === "PRODUCTO_AGOTADO") {
+      const producto = (e as Error & { producto?: string }).producto;
+      return { error: producto ? `${producto} se agotó: sacalo de la lista.` : traducir(e) };
+    }
+    return { error: traducir(e) };
+  }
+  // El aviso de stock, por cada variante que lleva stock y quedó corta.
+  const faltas: { nombre: string; disponible: number; pedido: number }[] = [];
+  for (const variantId of new Set(lineas.map((l) => l.variantId))) {
+    const falta = await faltaStock(db, { storeId, orderId: Number(orderId), variantId });
+    if (falta) faltas.push(falta);
+  }
+  revalidatePath(`/salon/${orderId}`);
+  revalidatePath("/salon");
+  return { ok: true as const, faltas };
+}
+

@@ -745,8 +745,11 @@ export async function ventasDeOrden(db: any, storeId: number, orderId: number) {
 export async function faltaStock(
   db: any,
   input: { storeId: number; orderId: number; variantId: number },
-): Promise<{ disponible: number; pedido: number } | null> {
-  const [v] = await db.select({ stock: productVariants.stock, tracksStock: products.tracksStock })
+): Promise<{ disponible: number; pedido: number; nombre: string } | null> {
+  const [v] = await db.select({
+    stock: productVariants.stock, tracksStock: products.tracksStock,
+    producto: products.name, variante: productVariants.name,
+  })
     .from(productVariants)
     .innerJoin(products, eq(productVariants.productId, products.id))
     .where(and(eq(productVariants.id, input.variantId), eq(productVariants.storeId, input.storeId)));
@@ -763,7 +766,8 @@ export async function faltaStock(
       isNull(orderItems.voidedAt),
     ));
   const pedido = fila?.pedido ?? 0;
-  return pedido > v.stock ? { disponible: v.stock, pedido } : null;
+  const nombre = v.variante ? `${v.producto} — ${v.variante}` : v.producto;
+  return pedido > v.stock ? { disponible: v.stock, pedido, nombre } : null;
 }
 
 /**
@@ -938,4 +942,119 @@ export async function borrarMesa(db: any, input: { storeId: number; tableId: num
       .returning({ id: diningTables.id });
     if (borradas.length === 0) throw new Error("MESA_NO_ENCONTRADA");
   });
+}
+
+// ---- carta del salón y carga en tanda ----
+
+/** Lo más que se agrega de una vez: una mesa grande, no una planilla. */
+const MAX_LINEAS_POR_TANDA = 50;
+
+/**
+ * Agrega varias líneas de una vez, en una sola transacción.
+ *
+ * Es lo que hace la bandeja de la comanda: el mozo toca dos milanesas, una
+ * ensalada y tres cocas, y recién ahí confirma. Antes cada toque era un viaje
+ * al servidor y, con el wifi del salón, el mozo esperaba en cada plato. Todo o
+ * nada: si un plato se agotó mientras tanto, no entra ninguno y el mozo ve cuál.
+ */
+export async function agregarItems(
+  db: any,
+  input: { storeId: number; orderId: number; items: { variantId: number; quantity: number }[] },
+): Promise<Order> {
+  if (input.items.length === 0 || input.items.length > MAX_LINEAS_POR_TANDA) throw new Error("INVALID_QUANTITY");
+  for (const i of input.items) {
+    if (!Number.isInteger(i.variantId) || !Number.isInteger(i.quantity) || i.quantity <= 0 || i.quantity > 99) {
+      throw new Error("INVALID_QUANTITY");
+    }
+  }
+
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+
+    const ids = [...new Set(input.items.map((i) => i.variantId))];
+    const variantes = await tx
+      .select({
+        id: productVariants.id,
+        variantName: productVariants.name,
+        productName: products.name,
+        price: productVariants.price,
+        basePrice: products.basePrice,
+        soldOutOn: products.soldOutOn,
+      })
+      .from(productVariants)
+      .innerJoin(products, eq(productVariants.productId, products.id))
+      .where(and(eq(productVariants.storeId, input.storeId), inArray(productVariants.id, ids)));
+    const porId = new Map<number, (typeof variantes)[number]>(variantes.map((v: { id: number }) => [v.id, v]));
+    if (porId.size !== ids.length) throw new Error("VARIANT_NOT_FOUND");
+
+    const hoy = diaOperativo();
+    const agotado = variantes.find((v: { soldOutOn: string | null }) => v.soldOutOn === hoy);
+    if (agotado) {
+      throw Object.assign(new Error("PRODUCTO_AGOTADO"), { producto: agotado.productName as string });
+    }
+
+    // La misma variante dos veces en la bandeja es una sola línea: así la ve
+    // la cocina («3 cocas», no «1 coca, 2 cocas»).
+    const cantidades = new Map<number, number>();
+    for (const i of input.items) cantidades.set(i.variantId, (cantidades.get(i.variantId) ?? 0) + i.quantity);
+
+    await tx.insert(orderItems).values([...cantidades].map(([variantId, quantity]) => {
+      const v = porId.get(variantId)!;
+      return {
+        orderId: input.orderId,
+        storeId: input.storeId,
+        variantId,
+        quantity,
+        unitPrice: v.price ?? v.basePrice,
+        nameSnapshot: v.variantName ? `${v.productName} — ${v.variantName}` : v.productName,
+      };
+    }));
+
+    return recalcularTotales(tx, input.orderId);
+  });
+}
+
+export type PlatoDeLaCarta = {
+  variantId: number;
+  nombre: string;
+  precio: number;
+  categoria: string;
+  agotado: boolean;
+};
+
+/**
+ * La carta para tocar en la comanda, agrupable por categoría. Una carta de
+ * restaurante son decenas o pocos cientos de platos: viaja entera y el filtro
+ * por categoría es local, sin ir al servidor en cada toque.
+ */
+export async function cartaDelSalon(db: any, storeId: number): Promise<PlatoDeLaCarta[]> {
+  const hoy = diaOperativo();
+  const filas = await db
+    .select({
+      variantId: productVariants.id,
+      productName: products.name,
+      variantName: productVariants.name,
+      price: productVariants.price,
+      basePrice: products.basePrice,
+      category: products.category,
+      soldOutOn: products.soldOutOn,
+    })
+    .from(productVariants)
+    .innerJoin(products, eq(productVariants.productId, products.id))
+    .where(and(
+      eq(productVariants.storeId, storeId),
+      eq(products.active, true),
+      eq(productVariants.active, true),
+    ))
+    .orderBy(products.category, products.name, productVariants.name);
+  return filas.map((f: {
+    variantId: number; productName: string; variantName: string; price: number | null;
+    basePrice: number; category: string | null; soldOutOn: string | null;
+  }) => ({
+    variantId: f.variantId,
+    nombre: f.variantName ? `${f.productName} — ${f.variantName}` : f.productName,
+    precio: f.price ?? f.basePrice,
+    categoria: f.category?.trim() || "Otros",
+    agotado: f.soldOutOn === hoy,
+  }));
 }

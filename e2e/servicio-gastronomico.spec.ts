@@ -119,6 +119,8 @@ async function pedir(page: import("@playwright/test").Page, texto: string, canti
   const opcion = page.getByRole("button", { name: new RegExp(texto, "i") }).first();
   await expect(opcion).toBeVisible();
   await opcion.click();
+  // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+  await page.getByRole("button", { name: /agregar a la comanda/i }).click();
 
   await expect(lineas).toHaveCount(antes + 1);
 

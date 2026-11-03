@@ -11,12 +11,15 @@ import { money, number } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { Order, OrderItem, Sale } from "@/db/schema";
 import {
-  agregarALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cambiarMozo,
+  agregarVariosALaComanda, anularLinea, buscarParaComanda, cambiarCantidadDeItem, cambiarMozo,
   cancelarComanda, cobrarComanda, dividirLinea, mandarComandaACocina, pasarAMesa, ponerComensales,
   ponerNota,
 } from "../actions";
 import { CuentaImprimible } from "./cuenta-imprimible";
 import { MotivoDialog, type ResultadoMotivo } from "./motivo-dialog";
+import type { PlatoDeLaCarta } from "@/domain/orders";
+
+type LineaDeBandeja = { variantId: number; nombre: string; precio: number; cantidad: number };
 
 type ClienteOption = { id: number; name: string };
 type Resultado = Awaited<ReturnType<typeof buscarParaComanda>>[number];
@@ -31,7 +34,7 @@ const METODOS = [
 type Metodo = (typeof METODOS)[number]["value"];
 
 export function OrdenClient({
-  orden, items, clientes, ventas, titulo, mozos, mesasLibres,
+  orden, items, clientes, ventas, titulo, mozos, mesasLibres, carta,
 }: {
   orden: Order;
   items: OrderItem[];
@@ -40,10 +43,15 @@ export function OrdenClient({
   titulo: string;
   mozos: { id: string; name: string }[];
   mesasLibres: { id: number; nombre: string; sector: string }[];
+  carta: PlatoDeLaCarta[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [term, setTerm] = useState("");
+  // Lo elegido que todavía no entró a la comanda. Se confirma todo junto: con
+  // el wifi del salón, un viaje al servidor por plato era una espera por plato.
+  const [bandeja, setBandeja] = useState<LineaDeBandeja[]>([]);
+  const [categoria, setCategoria] = useState<string | null>(null);
   const [resultados, setResultados] = useState<Resultado[]>([]);
   const [metodo, setMetodo] = useState<Metodo>("efectivo");
   const [clientId, setClientId] = useState("");
@@ -125,27 +133,58 @@ export function OrdenClient({
     });
   }
 
-  function agregar(r: Resultado) {
+  function sumarABandeja(p: { variantId: number; nombre: string; precio: number }) {
+    setBandeja((prev) => {
+      const ya = prev.find((l) => l.variantId === p.variantId);
+      return ya
+        ? prev.map((l) => (l.variantId === p.variantId ? { ...l, cantidad: l.cantidad + 1 } : l))
+        : [...prev, { ...p, cantidad: 1 }];
+    });
+  }
+
+  function cambiarEnBandeja(variantId: number, cantidad: number) {
+    setBandeja((prev) => cantidad <= 0
+      ? prev.filter((l) => l.variantId !== variantId)
+      : prev.map((l) => (l.variantId === variantId ? { ...l, cantidad } : l)));
+  }
+
+  function elegirDelBuscador(r: Resultado) {
+    sumarABandeja({
+      variantId: r.variantId,
+      nombre: r.variantName ? `${r.productName} — ${r.variantName}` : r.productName,
+      precio: r.price ?? r.basePrice,
+    });
+    setTerm("");
+    setResultados([]);
+  }
+
+  function confirmarBandeja() {
     setError("");
+    const lineas = bandeja.map((l) => ({ variantId: l.variantId, quantity: l.cantidad }));
     startTransition(async () => {
-      const res = await agregarALaComanda(orden.id, r.variantId, 1);
+      const res = await agregarVariosALaComanda(orden.id, lineas);
       if ("error" in res && res.error) {
         setError(res.error);
         return;
       }
-      setTerm("");
-      setResultados([]);
-      if ("falta" in res && res.falta) {
-        // No se bloquea: el stock cargado rara vez es el de la cava a mitad de
-        // servicio. Pero el mozo tiene que saberlo antes de servir.
-        toast.warning(
-          `${r.productName}: hay ${number(res.falta.disponible)} cargadas y la mesa lleva ${number(res.falta.pedido)}. Fijate si quedan antes de servir.`,
-          { duration: 10_000 },
-        );
+      setBandeja([]);
+      setCategoria(null);
+      if ("faltas" in res && res.faltas) {
+        for (const f of res.faltas) {
+          // No se bloquea: el stock cargado rara vez es el de la cava a mitad
+          // de servicio. Pero el mozo tiene que saberlo antes de servir.
+          toast.warning(
+            `${f.nombre}: hay ${number(f.disponible)} cargadas y la mesa lleva ${number(f.pedido)}. Fijate si quedan antes de servir.`,
+            { duration: 10_000 },
+          );
+        }
       }
       router.refresh();
     });
   }
+
+  const categorias = [...new Set(carta.map((p) => p.categoria))];
+  const enBandeja = bandeja.reduce((a, l) => a + l.cantidad, 0);
 
   const cambiar = (itemId: number, cantidad: number) =>
     correr(() => cambiarCantidadDeItem(orden.id, itemId, cantidad));
@@ -379,7 +418,7 @@ export function OrdenClient({
                           "flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left text-sm transition-colors hover:bg-accent",
                           r.agotado && "cursor-not-allowed opacity-60 hover:bg-transparent",
                         )}
-                        onClick={() => agregar(r)}
+                        onClick={() => elegirDelBuscador(r)}
                       >
                         <span className={cn("min-w-0 truncate", r.agotado && "line-through")}>
                           {r.productName}{r.variantName ? ` — ${r.variantName}` : ""}
@@ -396,6 +435,88 @@ export function OrdenClient({
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+
+          {!cerrada && categorias.length > 0 && (
+            // La carta por categorías: el mozo con el teléfono en una mano toca
+            // en vez de tipear. Cerrada por defecto, para que la comanda se vea.
+            <div className="space-y-2">
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Categorías de la carta">
+                {categorias.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    role="tab"
+                    aria-selected={categoria === c}
+                    onClick={() => setCategoria(categoria === c ? null : c)}
+                    className={cn(
+                      "min-h-11 shrink-0 rounded-full border px-4 text-sm transition-colors",
+                      categoria === c
+                        ? "border-brand bg-brand text-brand-foreground"
+                        : "border-border hover:bg-accent",
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+              {categoria && (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="tabpanel" aria-label={categoria}>
+                  {carta.filter((p) => p.categoria === categoria).map((p) => (
+                    <button
+                      key={p.variantId}
+                      type="button"
+                      disabled={p.agotado}
+                      aria-label={p.agotado ? `${p.nombre} (agotado)` : `Elegir ${p.nombre}`}
+                      onClick={() => sumarABandeja(p)}
+                      className={cn(
+                        "flex min-h-14 flex-col items-start justify-between rounded-lg border border-border px-3 py-2 text-left text-sm transition-colors hover:bg-accent",
+                        p.agotado && "cursor-not-allowed opacity-50 hover:bg-transparent",
+                      )}
+                    >
+                      <span className={cn("line-clamp-2 font-medium", p.agotado && "line-through")}>{p.nombre}</span>
+                      <span className={cn("figure text-xs", p.agotado ? "font-semibold text-destructive" : "text-muted-foreground")}>
+                        {p.agotado ? "Agotado" : money(p.precio)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {bandeja.length > 0 && (
+            <div className="space-y-2 rounded-lg border border-brand/40 bg-brand/5 p-3" aria-label="Por agregar">
+              <span className="ledger-label">Por agregar</span>
+              <ul className="space-y-1">
+                {bandeja.map((l) => (
+                  <li key={l.variantId} className="flex items-center gap-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate">{l.nombre}</span>
+                    <Button
+                      type="button" variant="outline" size="icon" className="size-11 md:size-8"
+                      aria-label={`Uno menos de ${l.nombre}`}
+                      onClick={() => cambiarEnBandeja(l.variantId, l.cantidad - 1)}
+                    >
+                      <Minus className="size-3" />
+                    </Button>
+                    <span className="figure w-6 text-center">{l.cantidad}</span>
+                    <Button
+                      type="button" variant="outline" size="icon" className="size-11 md:size-8"
+                      aria-label={`Uno más de ${l.nombre}`}
+                      onClick={() => cambiarEnBandeja(l.variantId, l.cantidad + 1)}
+                    >
+                      <Plus className="size-3" />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex gap-2">
+                <Button type="button" variant="ghost" onClick={() => setBandeja([])}>Vaciar</Button>
+                <Button type="button" className="min-h-11 flex-1" disabled={pending} onClick={confirmarBandeja}>
+                  {pending ? "Agregando…" : `Agregar a la comanda (${number(enBandeja)})`}
+                </Button>
+              </div>
             </div>
           )}
 
@@ -463,7 +584,7 @@ export function OrdenClient({
                     {!cerrada && !cobrado && (
                       <div className="flex items-center gap-1">
                         <Button
-                          type="button" variant="ghost" size="icon" className="size-7"
+                          type="button" variant="ghost" size="icon" className="size-11 md:size-7"
                           disabled={pending} aria-label="Nota para cocina"
                           onClick={() => {
                             setNotaAbierta(notaAbierta === i.id ? null : i.id);
@@ -478,7 +599,7 @@ export function OrdenClient({
                           // pedir otro igual, se agrega desde el buscador.
                           <>
                             <Button
-                              type="button" variant="outline" size="icon" className="size-7"
+                              type="button" variant="outline" size="icon" className="size-11 md:size-7"
                               disabled={pending} aria-label="Restar uno"
                               onClick={() => cambiar(i.id, i.quantity - 1)}
                             >
@@ -486,7 +607,7 @@ export function OrdenClient({
                             </Button>
                             <span className="figure w-6 text-center text-sm">{i.quantity}</span>
                             <Button
-                              type="button" variant="outline" size="icon" className="size-7"
+                              type="button" variant="outline" size="icon" className="size-11 md:size-7"
                               disabled={pending} aria-label="Sumar uno"
                               onClick={() => cambiar(i.id, i.quantity + 1)}
                             >
@@ -500,7 +621,7 @@ export function OrdenClient({
                           // permite que cada comensal pague la suya cuando se
                           // pidieron dos iguales.
                           <Button
-                            type="button" variant="ghost" size="icon" className="size-7"
+                            type="button" variant="ghost" size="icon" className="size-11 md:size-7"
                             disabled={pending} aria-label={`Separar una unidad de ${i.nameSnapshot}`}
                             title="Separar una unidad para cobrarla aparte"
                             onClick={() => dividir(i.id)}
@@ -510,7 +631,7 @@ export function OrdenClient({
                         )}
                         {enviado ? (
                           <Button
-                            type="button" variant="ghost" size="icon" className="size-7 text-destructive"
+                            type="button" variant="ghost" size="icon" className="size-11 md:size-7 text-destructive"
                             disabled={pending} aria-label={`Anular ${i.nameSnapshot}`}
                             title="Anular (ya está en la cocina)"
                             onClick={() => { setErrorDialogo(""); setAnulando(i); }}
@@ -519,7 +640,7 @@ export function OrdenClient({
                           </Button>
                         ) : (
                           <Button
-                            type="button" variant="ghost" size="icon" className="size-7"
+                            type="button" variant="ghost" size="icon" className="size-11 md:size-7"
                             disabled={pending} aria-label="Quitar"
                             onClick={() => cambiar(i.id, 0)}
                           >

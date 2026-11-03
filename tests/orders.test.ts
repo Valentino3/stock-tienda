@@ -11,7 +11,9 @@ import {
   crearMesa, dividirItem, faltaStock, getOrden,
   listarMesas, listarOrdenesAbiertas, moverOrden, mozosDisponibles, pagarOrden, resumenDeCuenta,
   transferirMozo, ventasDeOrden, editarMesa, cambiarMesaActiva, borrarMesa, mesasParaAdministrar,
+  agregarItems, cartaDelSalon,
 } from "@/domain/orders";
+import { diaOperativo } from "@/lib/dates";
 import { voidSale } from "@/domain/sales";
 import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
 
@@ -910,7 +912,7 @@ describe("cobro de mesa: varios medios, reintentos y anulaciones", () => {
     expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: remera })).toBeNull();
     await agregarItem(db, { storeId: store, orderId: o.id, variantId: remera, quantity: 2 });
     expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: remera }))
-      .toEqual({ disponible: 6, pedido: 7 });
+      .toEqual({ disponible: 6, pedido: 7, nombre: "Vino — Malbec" });
     // Un plato no lleva stock: nunca avisa.
     await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 50 });
     expect(await faltaStock(db, { storeId: store, orderId: o.id, variantId: milanesa })).toBeNull();
@@ -1106,5 +1108,62 @@ describe("administrar mesas", () => {
     await expect(cambiarMesaActiva(db, { storeId: store, tableId: ajena.id, activa: false }))
       .rejects.toThrow("MESA_NO_ENCONTRADA");
     await expect(borrarMesa(db, { storeId: store, tableId: ajena.id })).rejects.toThrow("MESA_NO_ENCONTRADA");
+  });
+});
+
+describe("carta y carga en tanda", () => {
+  it("agrega varias líneas de una vez y junta la misma variante en una sola", async () => {
+    const o = await abrir();
+    const orden = await agregarItems(db, {
+      storeId: store, orderId: o.id,
+      items: [
+        { variantId: milanesa, quantity: 1 },
+        { variantId: remera, quantity: 2 },
+        { variantId: milanesa, quantity: 1 },
+      ],
+    });
+    expect(orden.total).toBe(2 * 8000 + 2 * 5000);
+    const lineas = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    expect(lineas.map((l) => [l.variantId, l.quantity]).sort()).toEqual(
+      [[milanesa, 2], [remera, 2]].sort(),
+    );
+  });
+
+  it("si algo está agotado no entra nada y dice qué", async () => {
+    const [p] = await db.select({ id: products.id }).from(products).where(eq(products.name, "Milanesa"));
+    await db.update(products).set({ soldOutOn: diaOperativo() }).where(eq(products.id, p.id));
+    const o = await abrir();
+    await expect(agregarItems(db, {
+      storeId: store, orderId: o.id,
+      items: [{ variantId: remera, quantity: 1 }, { variantId: milanesa, quantity: 1 }],
+    })).rejects.toMatchObject({ message: "PRODUCTO_AGOTADO", producto: "Milanesa" });
+    expect(await db.select().from(orderItems).where(eq(orderItems.orderId, o.id))).toHaveLength(0);
+  });
+
+  it("rechaza tandas vacías, cantidades raras y variantes de otra tienda", async () => {
+    const o = await abrir();
+    await expect(agregarItems(db, { storeId: store, orderId: o.id, items: [] })).rejects.toThrow("INVALID_QUANTITY");
+    await expect(agregarItems(db, { storeId: store, orderId: o.id, items: [{ variantId: milanesa, quantity: 0 }] }))
+      .rejects.toThrow("INVALID_QUANTITY");
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const [p2] = await db.insert(products).values({ storeId: store2, name: "Ajeno", basePrice: 1 }).returning();
+    const [v2] = await db.insert(productVariants).values({ storeId: store2, productId: p2.id, name: "" }).returning();
+    await expect(agregarItems(db, { storeId: store, orderId: o.id, items: [{ variantId: v2.id, quantity: 1 }] }))
+      .rejects.toThrow("VARIANT_NOT_FOUND");
+  });
+
+  it("la carta trae lo activo, con categoría y agotado", async () => {
+    const [p] = await db.select({ id: products.id }).from(products).where(eq(products.name, "Milanesa"));
+    await db.update(products).set({ category: "Principales", soldOutOn: diaOperativo() }).where(eq(products.id, p.id));
+    const [inactivo] = await db.insert(products)
+      .values({ storeId: store, name: "Viejo", basePrice: 1, active: false }).returning();
+    await db.insert(productVariants).values({ storeId: store, productId: inactivo.id, name: "" });
+
+    const carta = await cartaDelSalon(db, store);
+    expect(carta.map((c) => c.nombre)).not.toContain("Viejo");
+    expect(carta.find((c) => c.variantId === milanesa)).toMatchObject({
+      categoria: "Principales", precio: 8000, agotado: true,
+    });
+    expect(carta.find((c) => c.variantId === remera)).toMatchObject({ categoria: "Otros", nombre: "Vino — Malbec" });
   });
 });

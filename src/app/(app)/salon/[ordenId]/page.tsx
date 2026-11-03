@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { clients } from "@/db/schema";
 import { requireStore } from "@/lib/session";
-import { getOrden, listarMesas, mozosDisponibles, ventasDeOrden } from "@/domain/orders";
+import { cartaDelSalon, getOrden, listarMesas, mozosDisponibles, ventasDeOrden } from "@/domain/orders";
 import { PageHeader } from "@/components/ui/page-header";
 import { OrdenClient } from "./orden-client";
 
@@ -15,7 +15,7 @@ export default async function OrdenPage({ params }: { params: Promise<{ ordenId:
   const detalle = await getOrden(db, storeId, ordenId);
   if (!detalle) notFound();
 
-  const [listaClientes, ventas, mozos, mesas] = await Promise.all([
+  const [listaClientes, ventas, mozos, mesas, carta] = await Promise.all([
     db.select({ id: clients.id, name: clients.name })
       .from(clients)
       .where(and(eq(clients.storeId, storeId), eq(clients.active, true)))
@@ -23,6 +23,7 @@ export default async function OrdenPage({ params }: { params: Promise<{ ordenId:
     ventasDeOrden(db, storeId, ordenId),
     mozosDisponibles(db, storeId),
     listarMesas(db, storeId),
+    cartaDelSalon(db, storeId),
   ]);
   // A dónde se puede pasar: solo mesas libres. Una ocupada sería unir mesas.
   const mesasLibres = mesas
@@ -45,6 +46,7 @@ export default async function OrdenPage({ params }: { params: Promise<{ ordenId:
         titulo={titulo}
         mozos={mozos}
         mesasLibres={mesasLibres}
+        carta={carta}
       />
     </div>
   );

@@ -29,6 +29,8 @@ test("lo que la cocina marca listo sale de la pantalla y el mozo lo ve listo", a
 
   await page.getByPlaceholder(/buscar plato o producto/i).fill("Milanesa");
   await page.getByRole("button", { name: /milanesa/i }).first().click();
+  // Lo elegido va a la bandeja; entra a la comanda al confirmar.
+  await page.getByRole("button", { name: /agregar a la comanda/i }).click();
   const linea = page.getByRole("listitem").filter({ hasText: "Milanesa napolitana" });
   await expect(linea).toHaveCount(1);
   await page.getByRole("button", { name: /mandar a cocina/i }).click();
