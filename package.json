@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsx scripts/migrar-en-deploy.ts && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run --passWithNoTests",

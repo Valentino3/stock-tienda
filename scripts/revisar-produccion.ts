@@ -1,4 +1,5 @@
 import { config } from "dotenv";
+import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { sql } from "drizzle-orm";
@@ -48,6 +49,15 @@ const hallazgos: Hallazgo[] = [];
 const error = (titulo: string, detalle: string) => hallazgos.push({ nivel: "error", titulo, detalle });
 const aviso = (titulo: string, detalle: string) => hallazgos.push({ nivel: "aviso", titulo, detalle });
 
+/** La rama de git de este árbol, o null si no hay git a mano. */
+function ramaActual(): string | null {
+  try {
+    return execSync("git rev-parse --abbrev-ref HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Índices que el schema NO modela y que `drizzle-kit push` borra sin avisar.
  * Cada uno con lo que pasa cuando falta, porque el nombre solo no lo dice.
@@ -73,6 +83,15 @@ async function main() {
   const { db } = await import("../src/db");
 
   // ---- 1. migraciones ----
+  // Lo pendiente se calcula contra el journal de ESTE árbol. Desde una rama que
+  // no tiene las migraciones recién mergeadas, todo parece al día.
+  const rama = ramaActual();
+  if (rama && rama !== "main") {
+    aviso(
+      `Corriendo desde la rama ${rama}, no desde main`,
+      "Las migraciones se comparan contra el journal de esta rama: si main tiene migraciones nuevas, no se ven. `git checkout main && git pull` y volvé a correrlo."
+    );
+  }
   const dir = path.resolve(__dirname, "../drizzle");
   const journal = JSON.parse(fs.readFileSync(path.join(dir, "meta/_journal.json"), "utf8")) as {
     entries: { idx: number; when: number; tag: string }[];
