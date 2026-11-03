@@ -1,0 +1,2 @@
+ALTER TABLE "sale_items" ADD COLUMN "descripcion" text;--> statement-breakpoint
+ALTER TABLE "sale_items" ADD CONSTRAINT "sale_items_descripcion_largo" CHECK ("sale_items"."descripcion" is null or char_length("sale_items"."descripcion") between 1 and 120);

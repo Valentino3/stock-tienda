@@ -243,3 +243,53 @@ export async function getCashSessionHistory(db: any, storeId: number, opts: { li
     .orderBy(desc(cashSessions.closedAt))
     .limit(opts.limit ?? 30);
 }
+
+export type FilaItemLibre = {
+  saleId: number;
+  createdAt: Date;
+  descripcion: string;
+  quantity: number;
+  unitPrice: number;
+  neto: number;
+  /** Quién lo cargó: el precio lo escribió esa persona. */
+  cargadoPor: string;
+};
+
+/**
+ * Lo vendido como ítem libre en el período, sin las ventas anuladas. Es el
+ * control del dueño: el precio de estas líneas lo escribió quien vendió, no el
+ * catálogo.
+ */
+export async function getItemsLibres(
+  db: any,
+  storeId: number,
+  range: { from: Date; to: Date },
+): Promise<FilaItemLibre[]> {
+  const filas = await db
+    .select({
+      saleId: sales.id,
+      createdAt: sales.createdAt,
+      descripcion: saleItems.descripcion,
+      quantity: saleItems.quantity,
+      unitPrice: saleItems.unitPrice,
+      discountAmount: saleItems.discountAmount,
+      cargadoPor: user.name,
+    })
+    .from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .innerJoin(user, eq(sales.registeredBy, user.id))
+    .where(and(
+      eq(sales.storeId, storeId),
+      eq(sales.voided, false),
+      between(sales.createdAt, range.from, range.to),
+      isNotNull(saleItems.descripcion),
+    ))
+    .orderBy(desc(sales.createdAt), desc(saleItems.id));
+  return filas.map((f: {
+    saleId: number; createdAt: Date; descripcion: string; quantity: number; unitPrice: number;
+    discountAmount: number; cargadoPor: string;
+  }) => ({
+    saleId: f.saleId, createdAt: f.createdAt, descripcion: f.descripcion, quantity: f.quantity,
+    unitPrice: f.unitPrice, neto: round2(f.quantity * f.unitPrice - f.discountAmount), cargadoPor: f.cargadoPor,
+  }));
+}
