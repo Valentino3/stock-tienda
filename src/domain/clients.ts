@@ -276,8 +276,10 @@ export async function getClientLedger(
           quantity: saleItems.quantity,
           unitPrice: saleItems.unitPrice,
           discountAmount: saleItems.discountAmount,
-          productName: products.name,
-          variantName: productVariants.name,
+          // Un ítem libre se nombra por lo que se escribió, no por su producto
+          // interno. Ver src/domain/item-libre.ts.
+          productName: sql<string>`coalesce(${saleItems.descripcion}, ${products.name})`,
+          variantName: sql<string>`case when ${saleItems.descripcion} is null then ${productVariants.name} else '' end`,
         })
         .from(saleItems)
         .innerJoin(productVariants, eq(saleItems.variantId, productVariants.id))

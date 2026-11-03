@@ -5,7 +5,7 @@ import { requireStoreOwner } from "@/lib/session";
 import { haceDiasAR, hoyAR, rangoAR } from "@/lib/dates";
 import { money, moneyDiff, number } from "@/lib/format";
 import {
-  getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport,
+  getSalesReport, getTopProducts, getLowStock, getCashSessionHistory, getCashMovementsReport, getItemsLibres,
   getClientAccountReport,
 } from "@/domain/reports";
 import { Badge } from "@/components/ui/badge";
@@ -50,13 +50,14 @@ export default async function ReportesPage({
   // Días de Argentina: ver rangoAR.
   const { from, to, fromValue, toValue } = rangoAR(params);
 
-  const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements, cuentaCorriente] = await Promise.all([
+  const [{ byDay, byMethod }, topProducts, lowStock, cashHistory, cashMovements, cuentaCorriente, itemsLibres] = await Promise.all([
     getSalesReport(db, storeId, { from, to }),
     getTopProducts(db, storeId, { from, to, limit: 10, setName: params.set || undefined }),
     getLowStock(db, storeId, { setName: params.set || undefined }),
     getCashSessionHistory(db, storeId, { limit: 30 }),
     getCashMovementsReport(db, storeId, { from, to }),
     getClientAccountReport(db, storeId, { from, to }),
+    getItemsLibres(db, storeId, { from, to }),
   ]);
 
   const MOVEMENT_LABELS: Record<string, string> = { gasto: "Gastos", egreso: "Egresos" };
@@ -323,6 +324,43 @@ export default async function ReportesPage({
           </Panel>
         )}
       </Section>
+
+      {itemsLibres.length > 0 && (
+        // El precio de estas líneas lo escribió quien vendió, no el catálogo:
+        // es lo que el dueño quiere poder revisar.
+        <Section label="Ítems libres">
+          <Panel flush>
+            <Table aria-label="Ítems libres">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Fecha</TableHead>
+                  <TableHead>Venta</TableHead>
+                  <TableHead>Qué se vendió</TableHead>
+                  <TableHead>Lo cargó</TableHead>
+                  <TableHead className="text-right">Cantidad</TableHead>
+                  <TableHead className="text-right">Precio</TableHead>
+                  <TableHead className="text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {itemsLibres.map((f, i) => (
+                  <TableRow key={i}>
+                    <TableCell className="figure">
+                      {new Date(f.createdAt).toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                    </TableCell>
+                    <TableCell className="figure">#{f.saleId}</TableCell>
+                    <TableCell className="font-medium">{f.descripcion}</TableCell>
+                    <TableCell>{f.cargadoPor}</TableCell>
+                    <TableCell className="figure text-right">{number(f.quantity)}</TableCell>
+                    <TableCell className="figure text-right">{money(f.unitPrice)}</TableCell>
+                    <TableCell className="figure text-right font-medium">{money(f.neto)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </Panel>
+        </Section>
+      )}
 
       <Section label="Stock bajo">
         {lowStock.length === 0 ? (

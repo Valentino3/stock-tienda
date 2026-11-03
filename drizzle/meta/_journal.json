@@ -288,6 +288,13 @@
       "when": 1793636854956,
       "tag": "0040_proveedores_y_compras",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793667996538,
+      "tag": "0041_item_libre",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 "use server";
 import { db } from "@/db";
 import { requireStore } from "@/lib/session";
+import { varianteItemLibre } from "@/domain/item-libre";
 import { createSale, type Discount } from "@/domain/sales";
 import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
 import { searchVariants as searchVariantsQuery } from "@/domain/catalog";
@@ -68,6 +69,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   INVALID_PAYMENT_AMOUNT: "Los montos del pago tienen que ser mayores a cero.",
   SELLER_NOT_IN_STORE: "Ese vendedor no es de esta tienda. Recargá la pantalla y elegilo de nuevo.",
   SELLER_INACTIVE: "Ese vendedor está desactivado. Elegí otro.",
+  ITEM_LIBRE_INVALIDO: "El ítem libre necesita un nombre y un precio mayor a cero.",
 };
 
 // Un uid válido es el crypto.randomUUID() que arma el carrito en el cliente.
@@ -80,7 +82,11 @@ export async function submitSale(input: {
   paymentMethod?: PaymentMethod;
   /** Pago dividido: varios medios que tienen que sumar el total. */
   pagos?: Pago[];
-  items: { variantId: number; quantity: number; discount?: Discount }[];
+  items: {
+    variantId: number; quantity: number; discount?: Discount;
+    /** Ítem libre: el `variantId` que manda el carrito no importa, lo pone el servidor. */
+    libre?: { nombre: string; precio: number };
+  }[];
   saleDiscount?: Discount;
   clientId?: number | null;
   // A quién se le acredita la venta. Ausente = quien está operando, que es lo
@@ -114,7 +120,11 @@ export async function submitSale(input: {
     // que lo derivado del servidor va DESPUÉS del spread. Con el orden viejo
     // (`{ storeId, sellerId, ...input }`) el cliente pisaba el vendedor ya
     // resuelto y se salteaba el `|| operador`.
-    const sale = await createSale(db, { ...input, storeId, sellerId, registeredBy: operador });
+    // El ítem libre va sobre la variante interna de ESTA tienda, la resuelva el
+    // servidor: el carrito no la conoce, y no se le cree un id que mande.
+    const libreId = input.items.some((i) => i.libre) ? await varianteItemLibre(db, storeId) : null;
+    const items = input.items.map((i) => (i.libre ? { ...i, variantId: libreId! } : i));
+    const sale = await createSale(db, { ...input, items, storeId, sellerId, registeredBy: operador });
     return { ok: true as const, saleId: sale.id, total: sale.total, duplicada: sale.duplicada === true };
   } catch (e) {
     // El total del servidor va en el mensaje: si un precio cambio con el

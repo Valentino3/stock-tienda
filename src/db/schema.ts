@@ -779,7 +779,17 @@ export const saleItems = pgTable("sale_items", {
    * una persona.
    */
   isPromo: boolean("is_promo").notNull().default(false),
+  /**
+   * Nombre escrito a mano de un ítem libre ("Torta por encargo"), que no está
+   * en el catálogo. null = una línea común, que se nombra por su producto.
+   * Ver src/domain/item-libre.ts.
+   */
+  descripcion: text("descripcion"),
 }, (t) => [
+  check(
+    "sale_items_descripcion_largo",
+    sql`${t.descripcion} is null or char_length(${t.descripcion}) between 1 and 120`,
+  ),
   // Postgres no indexa las FK solo. Sin esto, todo `inArray(saleItems.saleId,
   // …)` —remitos, cierre, historial— lee la tabla entera, que es la que más
   // crece de toda la base.

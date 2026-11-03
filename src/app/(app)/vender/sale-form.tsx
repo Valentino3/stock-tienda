@@ -13,6 +13,7 @@ import {
 import { Notice } from "@/components/ui/notice";
 import { SectionLabel } from "@/components/ui/section";
 import { cn } from "@/lib/utils";
+import { ItemLibreForm } from "./item-libre-form";
 import { money, number } from "@/lib/format";
 import type { PriceList } from "@/domain/sales";
 import { buscarEnCatalogo, MIN_CARACTERES } from "@/lib/offline/busqueda";
@@ -72,6 +73,12 @@ type CartItem = {
   quantity: number;
   discountKind: DiscountKind;
   discountValue: number;
+  /**
+   * Ítem libre: nombre y precio escritos a mano (ver item-libre-form.tsx). Su
+   * `variantId` es negativo y solo sirve de clave en el carrito: la variante
+   * real la pone el servidor.
+   */
+  libre?: boolean;
 };
 
 const LISTAS: { value: PriceList; label: string; corto: string }[] = [
@@ -609,6 +616,34 @@ export function SaleForm({
     setResults([]);
   }
 
+  function agregarLibre(d: { nombre: string; precio: number; cantidad: number }) {
+    setError("");
+    setCart((prev) => [
+      ...prev,
+      {
+        // Una clave negativa distinta por línea: dos ítems libres de la misma
+        // venta son dos líneas, y ningún variantId real es negativo.
+        variantId: Math.min(0, ...prev.map((i) => i.variantId)) - 1,
+        productName: d.nombre,
+        variantName: null,
+        setName: null,
+        condition: null,
+        foil: false,
+        language: null,
+        price: d.precio,
+        priceCash: null,
+        priceWholesale: null,
+        priceList: "venta" as PriceList,
+        stock: 0,
+        llevaStock: false,
+        quantity: d.cantidad,
+        discountKind: "amount" as DiscountKind,
+        discountValue: 0,
+        libre: true,
+      },
+    ]);
+  }
+
   function step(variantId: number, delta: number) {
     setCart((prev) =>
       prev.map((i) =>
@@ -701,6 +736,12 @@ export function SaleForm({
     const clienteUid = tipoCliente === "uid" ? valorId : null;
 
     if (offline) {
+      // Sin servidor no hay quién resuelva la variante del ítem libre, y el
+      // replay offline cobra el precio que manda el dispositivo.
+      if (cart.some((i) => i.libre)) {
+        setError("Los ítems libres necesitan conexión. Sacalos del carrito o esperá a que vuelva.");
+        return;
+      }
       void guardarVentaOffline(uid, clienteIdNumerico, clienteUid);
       return;
     }
@@ -725,7 +766,9 @@ export function SaleForm({
           quantity: i.quantity,
           discount: i.discountValue > 0 ? { kind: i.discountKind, value: i.discountValue } : undefined,
           // Se manda la LISTA, no el importe: el precio lo resuelve el servidor.
-          priceList: i.priceList,
+          // La única excepción es el ítem libre, cuyo precio es el escrito.
+          priceList: i.libre ? undefined : i.priceList,
+          libre: i.libre ? { nombre: i.productName, precio: i.price } : undefined,
         })),
         saleDiscount: saleDiscountValue > 0 ? { kind: saleDiscountKind, value: saleDiscountValue } : undefined,
         uid,
@@ -929,6 +972,7 @@ export function SaleForm({
               </Button>
             </div>
           )}
+          <ItemLibreForm onAgregar={agregarLibre} offline={offline} />
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -1001,7 +1045,10 @@ export function SaleForm({
                 <li key={item.variantId} className="flex flex-col gap-2.5 py-3 first:pt-0">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <p className="text-sm">{label(item)}</p>
+                      <p className="text-sm">
+                        {label(item)}
+                        {item.libre && <span className="ml-1 text-xs text-muted-foreground">· ítem libre</span>}
+                      </p>
                       <p className="figure text-xs text-muted-foreground">
                         {money(precioDe(item))} c/u
                         {item.priceList !== "venta" && (

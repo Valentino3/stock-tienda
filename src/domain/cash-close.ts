@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import {
   cashMovements, cashSessions, clientAccountMovements, clients, products, productVariants,
@@ -250,8 +250,10 @@ async function armarRemitos(db: any, condicion: any, cerradaEn: Date | null): Pr
           saleId: saleItems.saleId,
           variantId: saleItems.variantId,
           sku: productVariants.sku,
-          productName: products.name,
-          variantName: productVariants.name,
+          // Un ítem libre se nombra por lo que se escribió, no por su producto
+          // interno. Ver src/domain/item-libre.ts.
+          productName: sql<string>`coalesce(${saleItems.descripcion}, ${products.name})`,
+          variantName: sql<string>`case when ${saleItems.descripcion} is null then ${productVariants.name} else '' end`,
           quantity: saleItems.quantity,
           unitPrice: saleItems.unitPrice,
           discountAmount: saleItems.discountAmount,

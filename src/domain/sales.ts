@@ -6,6 +6,7 @@ import {
 } from "@/domain/pagos";
 import { applyStockMovement } from "@/domain/stock";
 import { createSyncNotification } from "@/domain/notifications";
+import { UID_ITEM_LIBRE, validarLibre, type DatosLibre } from "@/domain/item-libre";
 // El mismo mínimo para anular una venta que un movimiento de cuenta.
 import { MOTIVO_MIN } from "@/domain/clients";
 
@@ -120,7 +121,16 @@ export type SaleInput = {
   // menciona listas da el mismo resultado que antes de esta feature, y es lo
   // que hace que gastronomía (que entra por pagarOrden sin mandar lista) no
   // se vea afectada.
-  items: { variantId: number; quantity: number; discount?: Discount; priceList?: PriceList }[];
+  items: {
+    variantId: number; quantity: number; discount?: Discount; priceList?: PriceList;
+    /**
+     * Ítem libre: nombre y precio escritos a mano. Solo vale sobre la variante
+     * del ítem libre de la tienda (ver src/domain/item-libre.ts), y esa
+     * variante no se vende sin esto. Es el único caso donde el precio lo pone
+     * quien vende y no el catálogo.
+     */
+    libre?: DatosLibre;
+  }[];
   // Descuento general aplicado sobre el subtotal ya neto de descuentos por línea.
   saleDiscount?: Discount;
   // Cliente de cuenta corriente — obligatorio cuando paymentMethod = "cuenta".
@@ -244,6 +254,7 @@ export async function createSale(
           isPromo: products.isPromo,
           productName: products.name,
           variantName: productVariants.name,
+          productUid: products.uid,
         })
         .from(productVariants)
         .innerJoin(products, eq(productVariants.productId, products.id))
@@ -267,9 +278,20 @@ export async function createSale(
         throw new Error("INVALID_PRICE_LIST");
       }
 
+      // Ítem libre: los datos van si y solo si la variante es la del ítem
+      // libre. Sin esa regla, un `libre` colado en cualquier línea le pondría
+      // precio a mano a un producto del catálogo.
+      const items = input.items.map((i) => {
+        const esLibre = (porId.get(i.variantId) as any)?.productUid === UID_ITEM_LIBRE;
+        if (esLibre !== (i.libre != null)) throw new Error("ITEM_LIBRE_INVALIDO");
+        if (!esLibre) return { ...i, libre: undefined };
+        if (i.priceList !== undefined && i.priceList !== "venta") throw new Error("ITEM_LIBRE_INVALIDO");
+        return { ...i, libre: validarLibre(i.libre) };
+      });
+
       const { lines, saleDiscount, total } = calcularTotales(
-        input.items,
-        (i) => resolverPrecio(porId.get(i.variantId) as any, i.priceList ?? "venta"),
+        items,
+        (i) => (i.libre ? i.libre.precio : resolverPrecio(porId.get(i.variantId) as any, i.priceList ?? "venta")),
         input.saleDiscount,
       );
 
@@ -366,7 +388,8 @@ export async function createSale(
           priceList: line.priceList ?? "venta",
           // Snapshot: la comisión de un período cerrado no puede cambiar
           // porque la promo terminó y alguien limpió el flag del producto.
-          isPromo: Boolean((porId.get(line.variantId) as any)?.isPromo),
+          isPromo: line.libre ? false : Boolean((porId.get(line.variantId) as any)?.isPromo),
+          descripcion: line.libre?.nombre ?? null,
         });
         // Un producto que no lleva stock no genera movimiento. Sin esta
         // guarda, un plato con existencias en 0 rebota con INSUFFICIENT_STOCK
