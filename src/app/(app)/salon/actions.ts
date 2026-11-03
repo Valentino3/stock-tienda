@@ -5,7 +5,7 @@ import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   agregarItems, borrarMesa, cambiarMesaActiva, crearMesa, dividirItem, editarMesa, faltaStock, moverOrden, pagarOrden,
-  transferirMozo,
+  transferirMozo, agregarItemLibre,
 } from "@/domain/orders";
 import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
 import { money } from "@/lib/format";
@@ -62,6 +62,7 @@ const MENSAJES: Record<string, string> = {
   CLIENT_REQUIRED: "Elegí un cliente para la venta a cuenta.",
   CLIENT_NOT_FOUND: "Cliente no encontrado.",
   EMPTY_NAME: "Poné un nombre.",
+  ITEM_LIBRE_INVALIDO: "Poné qué es y un precio mayor a cero.",
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -498,3 +499,19 @@ export async function agregarVariosALaComanda(orderId: number, items: { variantI
   return { ok: true as const, faltas };
 }
 
+
+/** Lo que no está en la carta, con nombre, precio y cantidad escritos por el mozo. */
+export async function agregarLibreALaComanda(orderId: number, nombre: string, precio: number, quantity: number) {
+  const { storeId } = await requireStore();
+  try {
+    await agregarItemLibre(db, {
+      orderId: Number(orderId), nombre: String(nombre ?? ""), precio: Number(precio), quantity: Number(quantity),
+      storeId,
+    });
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+  revalidatePath(`/salon/${orderId}`);
+  revalidatePath("/salon");
+  return { ok: true as const };
+}

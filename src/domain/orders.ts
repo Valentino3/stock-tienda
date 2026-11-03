@@ -7,6 +7,7 @@ import { createSale, type Discount } from "@/domain/sales";
 import type { Pago, PaymentMethod } from "@/domain/pagos";
 import { MOTIVO_MIN } from "@/domain/clients";
 import { diaOperativo } from "@/lib/dates";
+import { UID_ITEM_LIBRE, validarLibre, varianteItemLibre } from "@/domain/item-libre";
 
 /**
  * Órdenes del salón: la mesa abierta que se cobra al final.
@@ -131,11 +132,14 @@ export async function agregarItem(
         price: productVariants.price,
         basePrice: products.basePrice,
         soldOutOn: products.soldOutOn,
+        productUid: products.uid,
       })
       .from(productVariants)
       .innerJoin(products, eq(productVariants.productId, products.id))
       .where(and(eq(productVariants.id, input.variantId), eq(productVariants.storeId, input.storeId)));
     if (!v) throw new Error("VARIANT_NOT_FOUND");
+    // El ítem libre lleva nombre y precio propios: entra por agregarItemLibre.
+    if (v.productUid === UID_ITEM_LIBRE) throw new Error("ITEM_LIBRE_INVALIDO");
     // La cocina avisó que se acabó: tomarlo igual es un plato que vuelve a la
     // mesa como «no hay», con el cliente esperando.
     if (v.soldOutOn === diaOperativo()) throw new Error("PRODUCTO_AGOTADO");
@@ -554,12 +558,29 @@ export async function pagarOrden(
       0,
     );
 
-    // Se agrupa por variante: dos pedidos de la misma milanesa son una línea de
-    // dos unidades en la venta, como en cualquier venta de mostrador.
+    // Las líneas de ítem libre comparten variante pero no nombre ni precio:
+    // cada una va sola a la venta, con lo que se escribió en la mesa.
+    const [varLibre] = await tx.select({ id: productVariants.id })
+      .from(productVariants)
+      .innerJoin(products, eq(productVariants.productId, products.id))
+      .where(and(eq(products.storeId, input.storeId), eq(products.uid, UID_ITEM_LIBRE)))
+      .limit(1);
+    const esLibre = (i: { variantId: number }) => varLibre != null && i.variantId === varLibre.id;
+
+    // El resto se agrupa por variante: dos pedidos de la misma milanesa son una
+    // línea de dos unidades en la venta, como en cualquier venta de mostrador.
     const porVariante = new Map<number, number>();
     for (const i of aCobrar) {
+      if (esLibre(i)) continue;
       porVariante.set(i.variantId, (porVariante.get(i.variantId) ?? 0) + i.quantity);
     }
+    const lineasLibres = aCobrar.filter(esLibre).map(
+      (i: { variantId: number; quantity: number; nameSnapshot: string; unitPrice: number }) => ({
+        variantId: i.variantId,
+        quantity: i.quantity,
+        libre: { nombre: i.nameSnapshot, precio: i.unitPrice },
+      }),
+    );
 
     // El createSale de siempre, sin modificar: resuelve precios contra el
     // catálogo, descuenta stock donde corresponde, arma la cuenta corriente y
@@ -587,7 +608,7 @@ export async function pagarOrden(
       saleDiscount: input.saleDiscount,
       orderId: orden.id,
       uid,
-      items: [...porVariante].map(([variantId, quantity]) => ({ variantId, quantity })),
+      items: [...[...porVariante].map(([variantId, quantity]) => ({ variantId, quantity })), ...lineasLibres],
     }, {
       // Lo de la mesa ya se sirvió: si el stock cargado no alcanza, se cobra
       // igual y el dueño recibe el aviso. Ver OpcionesDeVenta.
@@ -980,12 +1001,16 @@ export async function agregarItems(
         price: productVariants.price,
         basePrice: products.basePrice,
         soldOutOn: products.soldOutOn,
+        productUid: products.uid,
       })
       .from(productVariants)
       .innerJoin(products, eq(productVariants.productId, products.id))
       .where(and(eq(productVariants.storeId, input.storeId), inArray(productVariants.id, ids)));
     const porId = new Map<number, (typeof variantes)[number]>(variantes.map((v: { id: number }) => [v.id, v]));
     if (porId.size !== ids.length) throw new Error("VARIANT_NOT_FOUND");
+    if (variantes.some((v: { productUid: string | null }) => v.productUid === UID_ITEM_LIBRE)) {
+      throw new Error("ITEM_LIBRE_INVALIDO");
+    }
 
     const hoy = diaOperativo();
     const agotado = variantes.find((v: { soldOutOn: string | null }) => v.soldOutOn === hoy);
@@ -1010,6 +1035,36 @@ export async function agregarItems(
       };
     }));
 
+    return recalcularTotales(tx, input.orderId);
+  });
+}
+
+/**
+ * Ítem libre en la mesa: lo que no está en la carta («Descorche», «Torta de
+ * cumpleaños»), con nombre, precio y cantidad escritos por el mozo. Va en su
+ * propia línea —nunca se junta con otra— y al cobrar pasa a la venta con ese
+ * nombre y ese precio (ver pagarOrden). No tiene estación: no va a la cocina.
+ */
+export async function agregarItemLibre(
+  db: any,
+  input: { storeId: number; orderId: number; nombre: string; precio: number; quantity: number },
+): Promise<Order> {
+  if (!Number.isInteger(input.quantity) || input.quantity <= 0 || input.quantity > 99) {
+    throw new Error("INVALID_QUANTITY");
+  }
+  const libre = validarLibre({ nombre: input.nombre, precio: input.precio });
+  const variantId = await varianteItemLibre(db, input.storeId);
+
+  return db.transaction(async (tx: any) => {
+    await traerOrdenEditable(tx, input.storeId, input.orderId);
+    await tx.insert(orderItems).values({
+      orderId: input.orderId,
+      storeId: input.storeId,
+      variantId,
+      quantity: input.quantity,
+      unitPrice: libre.precio,
+      nameSnapshot: libre.nombre,
+    });
     return recalcularTotales(tx, input.orderId);
   });
 }

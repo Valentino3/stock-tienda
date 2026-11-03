@@ -11,8 +11,9 @@ import {
   crearMesa, dividirItem, faltaStock, getOrden,
   listarMesas, listarOrdenesAbiertas, moverOrden, mozosDisponibles, pagarOrden, resumenDeCuenta,
   transferirMozo, ventasDeOrden, editarMesa, cambiarMesaActiva, borrarMesa, mesasParaAdministrar,
-  agregarItems, cartaDelSalon,
+  agregarItems, cartaDelSalon, agregarItemLibre,
 } from "@/domain/orders";
+import { varianteItemLibre } from "@/domain/item-libre";
 import { diaOperativo } from "@/lib/dates";
 import { voidSale } from "@/domain/sales";
 import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
@@ -1165,5 +1166,79 @@ describe("carta y carga en tanda", () => {
       categoria: "Principales", precio: 8000, agotado: true,
     });
     expect(carta.find((c) => c.variantId === remera)).toMatchObject({ categoria: "Otros", nombre: "Vino — Malbec" });
+  });
+});
+
+describe("ítem libre en la mesa", () => {
+  const libre = (orderId: number, nombre: string, precio: number, quantity = 1) =>
+    agregarItemLibre(db, { storeId: store, orderId, nombre, precio, quantity });
+
+  it("se cobra con su nombre y su precio, cada uno en su línea", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 2 });
+    await libre(o.id, "Descorche", 3000);
+    const conTorta = await libre(o.id, "  Torta de cumpleaños ", 1500, 2);
+    expect(conTorta.total).toBe(8000 * 2 + 3000 + 1500 * 2);
+
+    const r = await cobrar(o.id);
+    expect(r.parcial).toBe(false);
+    expect(r.sale.total).toBe(22000);
+    expect(r.avisoDePrecio).toBeUndefined();
+
+    const lineas = await db.select().from(saleItems).where(eq(saleItems.saleId, r.sale.id));
+    const libres = lineas.filter((l) => l.descripcion != null)
+      .map((l) => ({ d: l.descripcion, q: l.quantity, p: l.unitPrice }))
+      .sort((a, b) => a.p - b.p);
+    expect(libres).toEqual([
+      { d: "Torta de cumpleaños", q: 2, p: 1500 },
+      { d: "Descorche", q: 1, p: 3000 },
+    ]);
+  });
+
+  it("se divide y se cobra por tandas como cualquier línea", async () => {
+    const o = await abrir();
+    await libre(o.id, "Descorche", 3000, 2);
+    const [item] = await db.select().from(orderItems).where(eq(orderItems.orderId, o.id));
+    await dividirItem(db, { storeId: store, orderId: o.id, itemId: item.id, cantidad: 1 });
+
+    const primera = await cobrar(o.id, { itemIds: [item.id] });
+    expect(primera.parcial).toBe(true);
+    expect(primera.sale.total).toBe(3000);
+    const segunda = await cobrar(o.id);
+    expect(segunda.parcial).toBe(false);
+    expect(segunda.sale.total).toBe(3000);
+  });
+
+  it("no va a la cocina", async () => {
+    const o = await abrir();
+    await libre(o.id, "Descorche", 3000);
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+    await mandarACocina(db, { storeId: store, orderId: o.id });
+
+    const comandas = await comandasPendientes(db, store);
+    const nombres = comandas.flatMap((c) => c.lineas.map((l) => l.nombre));
+    expect(nombres).toContain("Milanesa");
+    expect(nombres).not.toContain("Descorche");
+  });
+
+  it("rechaza nombre vacío, precio raro, cantidades raras y una orden cerrada", async () => {
+    const o = await abrir();
+    await expect(libre(o.id, "  ", 100)).rejects.toThrow("ITEM_LIBRE_INVALIDO");
+    await expect(libre(o.id, "Algo", 0)).rejects.toThrow("ITEM_LIBRE_INVALIDO");
+    await expect(libre(o.id, "Algo", 100, 0)).rejects.toThrow("INVALID_QUANTITY");
+    await expect(libre(o.id, "Algo", 100, 1.5)).rejects.toThrow("INVALID_QUANTITY");
+
+    await libre(o.id, "Algo", 100);
+    await cobrar(o.id);
+    await expect(libre(o.id, "Otra", 100)).rejects.toThrow("ORDEN_CERRADA");
+  });
+
+  it("la variante del ítem libre no entra por la carta, que la cobraría a $0", async () => {
+    const o = await abrir();
+    const variantId = await varianteItemLibre(db, store);
+    await expect(agregarItem(db, { storeId: store, orderId: o.id, variantId, quantity: 1 }))
+      .rejects.toThrow("ITEM_LIBRE_INVALIDO");
+    await expect(agregarItems(db, { storeId: store, orderId: o.id, items: [{ variantId, quantity: 1 }] }))
+      .rejects.toThrow("ITEM_LIBRE_INVALIDO");
   });
 });
