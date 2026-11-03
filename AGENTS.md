@@ -20,7 +20,19 @@ producción. Lo verifica `tests/migraciones-journal.test.ts`.
 **Antes de abrir un PR: `npm run verificar`.** Corre tsc, lint, los tests y el
 build de una. Es lo mismo que corre CI.
 
-**Después de desplegar: `npm run check:prod`.** Solo lectura.
+**El deploy de producción migra solo.** `npm run build` corre
+`scripts/migrar-en-deploy.ts` antes de `next build`, y solo hace algo con
+`VERCEL_ENV=production`: local, CI y previews no tocan ninguna base. Si la
+migración falla, Vercel no publica y sigue el código anterior. Si migra bien y
+después falla el build, queda el código anterior contra la base nueva: por eso
+**una migración tiene que funcionar con el código anterior**. Agregar tablas o
+columnas que aceptan null, sí; borrar o renombrar una columna que el código
+actual lee, no en el mismo deploy (primero un deploy que deja de usarla,
+después otro que la borra).
+
+**Después de desplegar: `npm run check:prod`, desde `main` actualizado.** Solo lectura.
+Compara contra el journal del árbol local: corrido desde una rama vieja no ve
+las migraciones nuevas y da OK.
 Reemplaza el "entrá al local y vendé algo a ver si anda": revisa migraciones
 sin aplicar, que los índices únicos parciales sigan existiendo, y las
 corrupciones que esos índices previenen (dos cajas abiertas, comprobantes o
