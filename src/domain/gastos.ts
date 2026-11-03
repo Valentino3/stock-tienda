@@ -1,5 +1,5 @@
 import { and, asc, between, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
-import { cashMovements, cashSessions, gastos, rubros, sales, type Gasto, type Rubro } from "@/db/schema";
+import { cashMovements, cashSessions, compras, gastos, rubros, sales, type Gasto, type Rubro } from "@/db/schema";
 import { MOTIVO_MIN } from "@/domain/clients";
 import { RUBROS_INICIALES, esMedioDeGasto, type MedioDeGasto } from "@/domain/gastos-medios";
 import { finDelDiaAR, inicioDelDiaAR } from "@/lib/dates";
@@ -7,11 +7,13 @@ import { finDelDiaAR, inicioDelDiaAR } from "@/lib/dates";
 /**
  * Gastos del local por rubro.
  *
- * Dos fuentes, a propósito separadas:
+ * Tres fuentes, a propósito separadas:
  *   - `gastos`: lo que NO sale de la caja (sueldos, alquiler, transferencias).
  *     Es historial: no toca ningún arqueo.
  *   - `cash_movements` de tipo gasto: lo que se pagó con efectivo del cajón.
  *     Ya resta del arqueo; acá solo se suma para saber en qué se gastó.
+ *   - `compras`: las facturas de proveedores, por la fecha de la factura. Los
+ *     pagos a proveedores NO entran: son la misma plata que la factura.
  *
  * El resumen las junta por rubro y las compara contra las ventas del mismo
  * período: (gastos del rubro ÷ ventas) × 100. Con "Sueldos y jornales" es el
@@ -163,6 +165,8 @@ export type ResumenDeRubro = {
   nombre: string;
   fueraDeCaja: number;
   enCaja: number;
+  /** Facturas de proveedores del rubro. */
+  compras: number;
   total: number;
   /** (total ÷ ventas del período) × 100. null si no hubo ventas. */
   sobreVentas: number | null;
@@ -207,6 +211,16 @@ export async function resumenPorRubro(
     ))
     .groupBy(cashMovements.rubroId);
 
+  const comprado: { rubroId: number; total: number }[] = await db
+    .select({ rubroId: compras.rubroId, total: sql<number>`coalesce(sum(${compras.total}), 0)`.mapWith(Number) })
+    .from(compras)
+    .where(and(
+      eq(compras.storeId, storeId),
+      isNull(compras.voidedAt),
+      between(compras.fecha, periodo.desde, periodo.hasta),
+    ))
+    .groupBy(compras.rubroId);
+
   const [{ ventas }] = await db
     .select({ ventas: sql<number>`coalesce(sum(${sales.total}), 0)`.mapWith(Number) })
     .from(sales)
@@ -228,7 +242,7 @@ export async function resumenPorRubro(
     if (!f) {
       f = {
         rubroId, nombre: rubroId == null ? "Sin rubro" : nombres.get(rubroId) ?? "—",
-        fueraDeCaja: 0, enCaja: 0, total: 0, sobreVentas: null,
+        fueraDeCaja: 0, enCaja: 0, compras: 0, total: 0, sobreVentas: null,
       };
       porRubro.set(rubroId, f);
     }
@@ -236,9 +250,10 @@ export async function resumenPorRubro(
   };
   for (const g of fuera) fila(g.rubroId).fueraDeCaja = round2(g.total);
   for (const g of enCaja) fila(g.rubroId).enCaja = round2(g.total);
+  for (const g of comprado) fila(g.rubroId).compras = round2(g.total);
 
   const filas = [...porRubro.values()].map((f) => {
-    const total = round2(f.fueraDeCaja + f.enCaja);
+    const total = round2(f.fueraDeCaja + f.enCaja + f.compras);
     return { ...f, total, sobreVentas: ventas > 0 ? round2((total / ventas) * 100) : null };
   }).sort((a, b) => b.total - a.total);
 

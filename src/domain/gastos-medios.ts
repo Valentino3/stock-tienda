@@ -11,6 +11,7 @@ export const MEDIOS_DE_GASTO = [
   { value: "transferencia", label: "Transferencia" },
   { value: "efectivo", label: "Efectivo (fuera de caja)" },
   { value: "tarjeta", label: "Tarjeta" },
+  { value: "cheque", label: "Cheque" },
   { value: "debito_automatico", label: "Débito automático" },
   { value: "otro", label: "Otro" },
 ] as const;

@@ -75,7 +75,8 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
       <Section label="Nuevo gasto fuera de caja">
         <p className="mb-3 text-sm text-muted-foreground">
           Sueldos, alquiler, servicios: lo que no sale del cajón. Lo que se paga
-          con efectivo de la caja se carga en Caja, con su rubro.
+          con efectivo de la caja se carga en Caja, y las facturas de
+          proveedores en Proveedores; las dos suman acá en su rubro.
         </p>
         <NuevoGasto rubros={rubros} hoy={hoy} />
       </Section>
@@ -88,6 +89,7 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
                 <TableHead>Rubro</TableHead>
                 <TableHead className="text-right">Fuera de caja</TableHead>
                 <TableHead className="text-right">Desde la caja</TableHead>
+                <TableHead className="text-right">Compras</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">% de ventas</TableHead>
               </TableRow>
@@ -95,7 +97,7 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
             <TableBody>
               {resumen.rubros.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     No hay gastos en este período.
                   </TableCell>
                 </TableRow>
@@ -104,6 +106,7 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
                   <TableCell className="font-medium">{r.nombre}</TableCell>
                   <TableCell className="figure text-right">{money(r.fueraDeCaja)}</TableCell>
                   <TableCell className="figure text-right">{money(r.enCaja)}</TableCell>
+                  <TableCell className="figure text-right">{money(r.compras)}</TableCell>
                   <TableCell className="figure text-right font-medium">{money(r.total)}</TableCell>
                   <TableCell className="figure text-right">{pct(r.sobreVentas)}</TableCell>
                 </TableRow>
@@ -112,7 +115,7 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
             <TableFooter>
               <TableRow>
                 <TableCell>Total gastos</TableCell>
-                <TableCell colSpan={2} />
+                <TableCell colSpan={3} />
                 <TableCell className="figure text-right font-semibold">{money(resumen.total)}</TableCell>
                 <TableCell className="figure text-right">
                   {pct(resumen.ventas > 0 ? Math.round((resumen.total / resumen.ventas) * 1000) / 10 : null)}
@@ -120,7 +123,7 @@ export default async function GastosPage({ searchParams }: { searchParams: Promi
               </TableRow>
               <TableRow>
                 <TableCell>Ventas del período</TableCell>
-                <TableCell colSpan={2} />
+                <TableCell colSpan={3} />
                 <TableCell className="figure text-right">{money(resumen.ventas)}</TableCell>
                 <TableCell />
               </TableRow>

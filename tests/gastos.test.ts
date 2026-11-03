@@ -73,7 +73,7 @@ describe("gastos fuera de caja", () => {
     const base = { storeId: store, userId: "u1", rubroId: r.id, fecha: "2026-10-01", monto: 100, medio: "transferencia" as const };
     await expect(registrarGasto(db, { ...base, monto: 0 })).rejects.toThrow("INVALID_AMOUNT");
     await expect(registrarGasto(db, { ...base, fecha: "1/10/2026" })).rejects.toThrow("FECHA_INVALIDA");
-    await expect(registrarGasto(db, { ...base, medio: "cheque" as never })).rejects.toThrow("MEDIO_INVALIDO");
+    await expect(registrarGasto(db, { ...base, medio: "trueque" as never })).rejects.toThrow("MEDIO_INVALIDO");
 
     await editarRubro(db, { storeId: store, rubroId: r.id, activo: false });
     await expect(registrarGasto(db, base)).rejects.toThrow("RUBRO_INACTIVO");
