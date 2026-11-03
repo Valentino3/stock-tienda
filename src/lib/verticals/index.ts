@@ -71,6 +71,7 @@ const NAV_ADMIN = (
             ...(extra.precios ? [{ href: "/precios", label: "Precios" }] : []),
             { href: "/reportes", label: "Reportes" },
             { href: "/gastos", label: "Gastos" },
+            { href: "/proveedores", label: "Proveedores" },
             { href: "/comisiones", label: "Comisiones" },
             { href: "/facturacion", label: "Facturación" },
             { href: "/avisos", label: "Avisos", badge: ctx.openAvisos },

@@ -1245,9 +1245,98 @@ export type Sale = typeof sales.$inferSelect;
 export type SaleItem = typeof saleItems.$inferSelect;
 export type StockMovement = typeof stockMovements.$inferSelect;
 export type CashSession = typeof cashSessions.$inferSelect;
+
+/**
+ * Proveedores del local. El rubro es el que se propone al cargarle una
+ * factura (se puede cambiar en cada una: un mayorista vende bebidas y
+ * limpieza). El plazo es el habitual, en días: propone el vencimiento.
+ */
+export const proveedores = pgTable("proveedores", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  nombre: text("nombre").notNull(),
+  cuit: text("cuit"),
+  rubroId: integer("rubro_id").references(() => rubros.id),
+  plazoDias: integer("plazo_dias"),
+  telefono: text("telefono"),
+  notas: text("notas"),
+  activo: boolean("activo").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("proveedores_store_nombre_idx").on(t.storeId, t.nombre),
+  check("proveedores_plazo_no_negativo", sql`${t.plazoDias} is null or ${t.plazoDias} >= 0`),
+]);
+
+/**
+ * Facturas de compra. Es lo que se le debe al proveedor y, por su rubro, lo
+ * que se gastó: el resumen de gastos las suma por la fecha de la factura. Los
+ * pagos (abajo) bajan la deuda pero no son un gasto más, para no contar dos
+ * veces la misma plata.
+ *
+ * Una mal cargada se anula con motivo, igual que un gasto.
+ */
+export const compras = pgTable("compras", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  proveedorId: integer("proveedor_id").notNull().references(() => proveedores.id),
+  rubroId: integer("rubro_id").notNull().references(() => rubros.id),
+  tipo: text("tipo"),
+  numero: text("numero").notNull(),
+  fecha: date("fecha", { mode: "string" }).notNull(),
+  vencimiento: date("vencimiento", { mode: "string" }).notNull(),
+  total: numeric("total", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  detalle: text("detalle"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  voidedAt: timestamp("voided_at"),
+  voidedBy: text("voided_by").references(() => user.id),
+  voidReason: text("void_reason"),
+}, (t) => [
+  index("compras_store_fecha_idx").on(t.storeId, t.fecha),
+  index("compras_proveedor_idx").on(t.proveedorId),
+  check("compras_total_positivo", sql`${t.total} > 0`),
+  check("compras_vence_despues", sql`${t.vencimiento} >= ${t.fecha}`),
+  check(
+    "compras_anulacion_completa",
+    sql`(${t.voidedAt} is null and ${t.voidedBy} is null and ${t.voidReason} is null)
+      or (${t.voidedAt} is not null and ${t.voidedBy} is not null and ${t.voidReason} is not null)`,
+  ),
+]);
+
+/**
+ * Pagos a proveedores. Fuera de la caja (transferencia, cheque): son historial
+ * y no tocan ningún arqueo. Se aplican a las facturas más viejas primero, y
+ * con eso se sabe cuáles siguen pendientes y cuáles vencieron.
+ */
+export const pagosProveedor = pgTable("pagos_proveedor", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  storeId: integer("store_id").notNull().references(() => stores.id),
+  proveedorId: integer("proveedor_id").notNull().references(() => proveedores.id),
+  fecha: date("fecha", { mode: "string" }).notNull(),
+  monto: numeric("monto", { precision: 12, scale: 2, mode: "number" }).notNull(),
+  medio: text("medio").notNull(),
+  detalle: text("detalle"),
+  createdBy: text("created_by").notNull().references(() => user.id),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  voidedAt: timestamp("voided_at"),
+  voidedBy: text("voided_by").references(() => user.id),
+  voidReason: text("void_reason"),
+}, (t) => [
+  index("pagos_proveedor_proveedor_idx").on(t.proveedorId),
+  check("pagos_proveedor_monto_positivo", sql`${t.monto} > 0`),
+  check(
+    "pagos_proveedor_anulacion_completa",
+    sql`(${t.voidedAt} is null and ${t.voidedBy} is null and ${t.voidReason} is null)
+      or (${t.voidedAt} is not null and ${t.voidedBy} is not null and ${t.voidReason} is not null)`,
+  ),
+]);
+
 export type CashMovement = typeof cashMovements.$inferSelect;
 export type Rubro = typeof rubros.$inferSelect;
 export type Gasto = typeof gastos.$inferSelect;
+export type Proveedor = typeof proveedores.$inferSelect;
+export type Compra = typeof compras.$inferSelect;
+export type PagoProveedor = typeof pagosProveedor.$inferSelect;
 export type Commission = typeof commissions.$inferSelect;
 export type StoreFiscalConfig = typeof storeFiscalConfig.$inferSelect;
 export type StorePricingConfig = typeof storePricingConfig.$inferSelect;
