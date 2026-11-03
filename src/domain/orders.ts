@@ -833,3 +833,109 @@ export async function mozosDisponibles(
     .where(and(eq(user.storeId, storeId), or(isNull(user.banned), eq(user.banned, false))))
     .orderBy(user.name);
 }
+
+// ---- administrar mesas ----
+
+export type MesaParaAdministrar = {
+  mesa: DiningTable;
+  /** Tiene una orden viva ahora mismo. */
+  ocupada: boolean;
+  /** Alguna vez tuvo una orden: no se puede borrar sin perder historia. */
+  usada: boolean;
+};
+
+/**
+ * Todas las mesas del local, activas o no, para la pantalla de Mesas. El salón
+ * usa listarMesas, que solo trae las activas.
+ */
+export async function mesasParaAdministrar(db: any, storeId: number): Promise<MesaParaAdministrar[]> {
+  const mesas: DiningTable[] = await db.select().from(diningTables)
+    .where(eq(diningTables.storeId, storeId))
+    .orderBy(diningTables.sector, diningTables.name);
+  const usos = await db
+    .select({
+      tableId: orders.tableId,
+      vivas: sql<number>`count(*) filter (where ${orders.status} in ('abierta', 'a_cobrar'))`.mapWith(Number),
+    })
+    .from(orders)
+    .where(and(eq(orders.storeId, storeId), isNotNull(orders.tableId)))
+    .groupBy(orders.tableId);
+  const porMesa = new Map<number, number>(usos.map((u: { tableId: number; vivas: number }) => [u.tableId, u.vivas]));
+  return mesas.map((mesa) => ({
+    mesa,
+    ocupada: (porMesa.get(mesa.id) ?? 0) > 0,
+    usada: porMesa.has(mesa.id),
+  }));
+}
+
+/** Nombre, sector y lugares. El nombre sigue siendo único dentro del sector. */
+export async function editarMesa(
+  db: any,
+  input: { storeId: number; tableId: number; name: string; sector?: string; capacity?: number | null },
+): Promise<DiningTable> {
+  if (!input.name.trim()) throw new Error("EMPTY_NAME");
+  if (input.capacity != null && (!Number.isInteger(input.capacity) || input.capacity < 1)) {
+    throw new Error("INVALID_QUANTITY");
+  }
+  try {
+    const [mesa] = await db.update(diningTables)
+      .set({
+        name: input.name.trim(),
+        sector: input.sector?.trim() || "Salón",
+        capacity: input.capacity ?? null,
+      })
+      .where(and(eq(diningTables.id, input.tableId), eq(diningTables.storeId, input.storeId)))
+      .returning();
+    if (!mesa) throw new Error("MESA_NO_ENCONTRADA");
+    return mesa;
+  } catch (err) {
+    if (codigoDe(err) === PG_UNIQUE_VIOLATION) throw new Error("MESA_DUPLICADA");
+    throw err;
+  }
+}
+
+/**
+ * Desactivar saca la mesa del salón y del plano sin perder las ventas que se
+ * hicieron en ella: la mesa de la vereda que se guarda en invierno. Una mesa
+ * con gente sentada no se desactiva.
+ */
+export async function cambiarMesaActiva(
+  db: any,
+  input: { storeId: number; tableId: number; activa: boolean },
+): Promise<DiningTable> {
+  return db.transaction(async (tx: any) => {
+    if (!input.activa) {
+      const [viva] = await tx.select({ id: orders.id }).from(orders)
+        .where(and(
+          eq(orders.storeId, input.storeId),
+          eq(orders.tableId, input.tableId),
+          inArray(orders.status, [...EDITABLES]),
+        ))
+        .limit(1);
+      if (viva) throw new Error("MESA_OCUPADA");
+    }
+    const [mesa] = await tx.update(diningTables)
+      .set({ active: input.activa })
+      .where(and(eq(diningTables.id, input.tableId), eq(diningTables.storeId, input.storeId)))
+      .returning();
+    if (!mesa) throw new Error("MESA_NO_ENCONTRADA");
+    return mesa;
+  });
+}
+
+/**
+ * Borra una mesa que nunca se usó: la que se cargó por error. Una que ya tuvo
+ * órdenes se desactiva, porque borrarla dejaría ventas apuntando a la nada.
+ */
+export async function borrarMesa(db: any, input: { storeId: number; tableId: number }): Promise<void> {
+  await db.transaction(async (tx: any) => {
+    const [usada] = await tx.select({ id: orders.id }).from(orders)
+      .where(and(eq(orders.storeId, input.storeId), eq(orders.tableId, input.tableId)))
+      .limit(1);
+    if (usada) throw new Error("MESA_CON_HISTORIAL");
+    const borradas = await tx.delete(diningTables)
+      .where(and(eq(diningTables.id, input.tableId), eq(diningTables.storeId, input.storeId)))
+      .returning({ id: diningTables.id });
+    if (borradas.length === 0) throw new Error("MESA_NO_ENCONTRADA");
+  });
+}

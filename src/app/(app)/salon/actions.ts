@@ -4,7 +4,8 @@ import { db } from "@/db";
 import { requireStore, requireStoreOwner } from "@/lib/session";
 import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
-  crearMesa, dividirItem, faltaStock, moverOrden, pagarOrden, transferirMozo,
+  borrarMesa, cambiarMesaActiva, crearMesa, dividirItem, editarMesa, faltaStock, moverOrden, pagarOrden,
+  transferirMozo,
 } from "@/domain/orders";
 import { esMetodoValido, type Pago, type PaymentMethod } from "@/domain/pagos";
 import { money } from "@/lib/format";
@@ -33,6 +34,8 @@ const MENSAJES: Record<string, string> = {
   MESA_NO_ENCONTRADA: "La mesa no existe.",
   MESA_INACTIVA: "Esa mesa está desactivada.",
   MESA_DUPLICADA: "Ya hay una mesa con ese nombre en el sector.",
+  MESA_OCUPADA: "Esa mesa tiene una comanda abierta: cobrala o cancelala antes.",
+  MESA_CON_HISTORIAL: "Esa mesa ya tuvo ventas: desactivala en vez de borrarla.",
   ORDEN_NO_ENCONTRADA: "La comanda no existe.",
   ORDEN_CERRADA: "La comanda ya está cerrada.",
   ORDEN_SIN_ITEMS: "La comanda está vacía.",
@@ -417,6 +420,50 @@ export async function pasarAMesa(orderId: number, tableId: number) {
     revalidatePath(`/salon/${orderId}`);
     revalidatePath("/salon");
     revalidatePath("/cocina");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+// ---- administrar mesas: configuración del local, del dueño ----
+
+export async function editarMesaDelLocal(
+  tableId: number,
+  datos: { name: string; sector?: string; capacity?: number | null },
+) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await editarMesa(db, {
+      storeId, tableId: Number(tableId),
+      name: String(datos.name ?? ""), sector: datos.sector, capacity: datos.capacity ?? null,
+    });
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function activarMesa(tableId: number, activa: boolean) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await cambiarMesaActiva(db, { storeId, tableId: Number(tableId), activa: activa === true });
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
+    return { ok: true as const };
+  } catch (e) {
+    return { error: traducir(e) };
+  }
+}
+
+export async function eliminarMesa(tableId: number) {
+  const { storeId } = await requireStoreOwner();
+  try {
+    await borrarMesa(db, { storeId, tableId: Number(tableId) });
+    revalidatePath("/mesas");
+    revalidatePath("/salon");
     return { ok: true as const };
   } catch (e) {
     return { error: traducir(e) };

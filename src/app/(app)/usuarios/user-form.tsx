@@ -1,5 +1,6 @@
 "use client";
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -107,13 +108,26 @@ export function ToggleActiveButton({
   userId: string;
   banned: boolean;
 }) {
-  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+  // Estado propio y no el de useTransition: el de la transición recién se
+  // apaga cuando termina de refrescarse la página, y si se activa y desactiva
+  // seguido (dos acciones pegadas) ese refresco puede quedar colgado y el
+  // botón queda en "..." para siempre. Así el botón vuelve apenas contesta la
+  // acción, y la tabla se refresca aparte.
+  const [pending, setPending] = useState(false);
 
-  function handleConfirm() {
-    startTransition(async () => {
+  async function handleConfirm() {
+    if (pending) return;
+    setPending(true);
+    try {
       const res = await setUserActive(userId, banned);
       if ("error" in res && res.error) toast.error(res.error);
-    });
+    } catch {
+      toast.error("No se pudo completar. Revisá la conexión y probá de nuevo.");
+    } finally {
+      setPending(false);
+      router.refresh();
+    }
   }
 
   if (banned) {

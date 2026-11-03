@@ -141,9 +141,9 @@ export const VERTICALS: Record<BusinessType, VerticalConfig> = {
           { href: "/caja", label: "Caja" },
         ],
       },
-      // Sin "Importar": la carga masiva por Excel está pensada para catálogos
-      // de miles de artículos, no para una carta de cincuenta platos.
-      ...NAV_ADMIN(ctx, { importar: false, mesas: true }),
+      // Con "Importar": una carta chica se carga a mano, pero la de un local
+      // con bebidas, vinos y platos del día se arma más rápido desde Excel.
+      ...NAV_ADMIN(ctx, { importar: true, mesas: true }),
     ],
   },
 };

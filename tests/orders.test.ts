@@ -10,7 +10,7 @@ import {
   abrirOrden, agregarItem, anularItem, cambiarCantidad, cambiarComensales, cambiarNota, cancelarOrden,
   crearMesa, dividirItem, faltaStock, getOrden,
   listarMesas, listarOrdenesAbiertas, moverOrden, mozosDisponibles, pagarOrden, resumenDeCuenta,
-  transferirMozo, ventasDeOrden,
+  transferirMozo, ventasDeOrden, editarMesa, cambiarMesaActiva, borrarMesa, mesasParaAdministrar,
 } from "@/domain/orders";
 import { voidSale } from "@/domain/sales";
 import { comandasPendientes, mandarACocina, sinMandar } from "@/domain/kitchen";
@@ -1055,5 +1055,56 @@ describe("pasar la orden a otra mesa", () => {
     await db.update(diningTables).set({ active: true }).where(eq(diningTables.id, otra));
     await expect(moverOrden(db, { storeId: store, orderId: o.id, tableId: otra }))
       .rejects.toThrow("ORDEN_CERRADA");
+  });
+});
+
+describe("administrar mesas", () => {
+  it("se edita nombre, sector y lugares, y el nombre sigue siendo único en el sector", async () => {
+    const otra = await crearMesa(db, { storeId: store, name: "2" });
+    const editada = await editarMesa(db, { storeId: store, tableId: otra.id, name: " 2B ", sector: "Patio", capacity: 6 });
+    expect(editada).toMatchObject({ name: "2B", sector: "Patio", capacity: 6 });
+
+    await expect(editarMesa(db, { storeId: store, tableId: otra.id, name: "1", sector: "Salón" }))
+      .rejects.toThrow("MESA_DUPLICADA");
+    await expect(editarMesa(db, { storeId: store, tableId: otra.id, name: "  " })).rejects.toThrow("EMPTY_NAME");
+  });
+
+  it("una mesa desactivada sale del salón pero conserva su historia", async () => {
+    const o = await abrir();
+    await agregarItem(db, { storeId: store, orderId: o.id, variantId: milanesa, quantity: 1 });
+
+    // Con gente sentada no se desactiva.
+    await expect(cambiarMesaActiva(db, { storeId: store, tableId: mesa, activa: false })).rejects.toThrow("MESA_OCUPADA");
+
+    await cobrar(o.id);
+    await cambiarMesaActiva(db, { storeId: store, tableId: mesa, activa: false });
+    expect(await listarMesas(db, store)).toHaveLength(0);
+    await expect(abrir()).rejects.toThrow("MESA_INACTIVA");
+
+    const [admin] = await mesasParaAdministrar(db, store);
+    expect(admin).toMatchObject({ usada: true, ocupada: false });
+    expect(admin.mesa.active).toBe(false);
+
+    await cambiarMesaActiva(db, { storeId: store, tableId: mesa, activa: true });
+    expect(await listarMesas(db, store)).toHaveLength(1);
+  });
+
+  it("solo se borra una mesa que nunca se usó", async () => {
+    const nueva = await crearMesa(db, { storeId: store, name: "Error" });
+    await borrarMesa(db, { storeId: store, tableId: nueva.id });
+    expect((await mesasParaAdministrar(db, store)).map((m) => m.mesa.name)).toEqual(["1"]);
+
+    const o = await abrir();
+    await cancelarOrden(db, { storeId: store, userId: "u1", orderId: o.id });
+    await expect(borrarMesa(db, { storeId: store, tableId: mesa })).rejects.toThrow("MESA_CON_HISTORIAL");
+  });
+
+  it("no toca mesas de otra tienda", async () => {
+    const store2 = await seedTestStore(db, "t2", "Tienda 2");
+    const ajena = await crearMesa(db, { storeId: store2, name: "9" });
+    await expect(editarMesa(db, { storeId: store, tableId: ajena.id, name: "X" })).rejects.toThrow("MESA_NO_ENCONTRADA");
+    await expect(cambiarMesaActiva(db, { storeId: store, tableId: ajena.id, activa: false }))
+      .rejects.toThrow("MESA_NO_ENCONTRADA");
+    await expect(borrarMesa(db, { storeId: store, tableId: ajena.id })).rejects.toThrow("MESA_NO_ENCONTRADA");
   });
 });

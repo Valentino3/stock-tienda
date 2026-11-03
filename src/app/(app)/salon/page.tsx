@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Notice } from "@/components/ui/notice";
 import { SalonClient } from "./salon-client";
 import { PlanoSalon } from "./plano-salon";
+import { RefrescoSalon } from "./refresco-salon";
 
 /**
  * Salón: el estado de las mesas de un vistazo.
@@ -36,6 +37,7 @@ export default async function SalonPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="Salón" description="Mesas abiertas y comandas en curso." />
+      <RefrescoSalon />
 
       {!caja && (
         <Notice tone="warn">
