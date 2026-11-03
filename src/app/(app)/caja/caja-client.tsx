@@ -43,10 +43,13 @@ type Props = {
   ventasDelTurno?: React.ReactNode;
   /** Mesas que siguen abiertas: si se cierra, se cobran en la caja siguiente. */
   mesasAbiertas?: MesaAbiertaAlCerrar[];
+  /** Rubros activos, para decir en qué se gastó. */
+  rubros?: { id: number; nombre: string }[];
 };
 
 export function CajaClient({
   session, openedByName, totals, movements, cobrosCuenta, isOwner, ventasDelTurno, mesasAbiertas: mesasIniciales = [],
+  rubros = [],
 }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -66,13 +69,15 @@ export function CajaClient({
   const [movKind, setMovKind] = useState<"gasto" | "egreso">("gasto");
   const [movAmount, setMovAmount] = useState("");
   const [movDescription, setMovDescription] = useState("");
+  const [movRubro, setMovRubro] = useState("");
   const [movError, setMovError] = useState("");
 
   function submitMovement(e: React.FormEvent) {
     e.preventDefault();
     startTransition(async () => {
-      const action = movKind === "egreso" ? addEgreso : addGasto;
-      const res = await action(Number(movAmount), movDescription);
+      const res = movKind === "egreso"
+        ? await addEgreso(Number(movAmount), movDescription)
+        : await addGasto(Number(movAmount), movDescription, movRubro ? Number(movRubro) : null);
       if ("error" in res && res.error) {
         setMovError(res.error);
         return;
@@ -359,6 +364,22 @@ export function CajaClient({
                     onChange={(e) => setMovDescription(e.target.value)}
                   />
                 </div>
+                {movKind === "gasto" && rubros.length > 0 && (
+                  // Opcional: sin rubro el gasto igual resta del arqueo, pero
+                  // en el reporte de gastos queda como "Sin rubro".
+                  <div className="space-y-1.5">
+                    <Label htmlFor="mov-rubro" className="ledger-label">Rubro</Label>
+                    <select
+                      id="mov-rubro"
+                      value={movRubro}
+                      onChange={(e) => setMovRubro(e.target.value)}
+                      className="h-9 rounded-lg border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <option value="">Sin rubro</option>
+                      {rubros.map((r) => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                    </select>
+                  </div>
+                )}
                 <Button type="submit" size="sm" disabled={pending}>
                   Registrar
                 </Button>
